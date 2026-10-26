@@ -136,6 +136,7 @@ public class NotifyJob extends JobService {
     static boolean worthNotifying(JSONObject e) {
         String kind = e.optString("kind");
         if (kind.equals("Info")) return e.isNull("to"); // game started / extended / over
+        if (!kind.equals("Good") && !kind.equals("Bad") && !kind.equals("Battle")) return false; // e.g. Sensor reports
         return !e.optString("title").equals("Retreating");
     }
 }
