@@ -410,7 +410,7 @@ pub fn safe_bottom() -> f32 {
 }
 
 /// Game-speed choices on the create screen (game seconds per real second).
-pub const SPEEDS: [f64; 5] = [1.0, 2.0, 4.0, 8.0, 24.0];
+pub const SPEEDS: [f64; 7] = [1.0, 2.0, 4.0, 8.0, 24.0, 72.0, 168.0];
 
 /// "42 h" / "3.5 days" for a real-time duration in hours.
 fn real_len(hours: f64) -> String {
