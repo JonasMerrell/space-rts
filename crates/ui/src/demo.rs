@@ -56,6 +56,8 @@ pub struct DemoBackend {
     research_run: Vec<(usize, BodyId, f64)>,
     /// (body, kind, owner, done_t)
     stations: Vec<(BodyId, String, PlayerId, f64)>,
+    /// "While you were away" report to show (scene `report`).
+    pub report: Option<AwayReport>,
 }
 
 impl Default for DemoBackend {
@@ -80,6 +82,7 @@ impl DemoBackend {
             techs_done: vec![0, 4, 8, 9, 16],
             research_run: vec![],
             stations: vec![],
+            report: None,
             games: vec![
                 GameSummary { code: "K7QX".into(), name: "Friday Night War".into(), day: 3, length_days: 7, players: 4, unread: 3 },
                 GameSummary { code: "ZB2M".into(), name: "Bots practice".into(), day: 1, length_days: 5, players: 3, unread: 0 },
@@ -397,6 +400,7 @@ impl Backend for DemoBackend {
 
     fn act(&mut self, action: UiAction) {
         match action {
+            UiAction::DismissReport => self.report = None,
             UiAction::Login { user, .. } => {
                 self.user = user.clone();
                 self.events.push(BackendEvent::LoggedIn { user });
@@ -644,6 +648,10 @@ impl Backend for DemoBackend {
         Some(ResearchView { techs, labs })
     }
 
+    fn away_report(&self) -> Option<&AwayReport> {
+        self.report.as_ref()
+    }
+
     fn stations(&self, id: BodyId) -> Option<StationsView> {
         let v = self.view.as_ref()?;
         let now = self.now();
@@ -837,4 +845,27 @@ const DEMO_STATIONS: [(&str, &str); 6] = [
 fn demo_station_cost(i: usize) -> Cost {
     let (m, e, h) = [(300.0, 150.0, 4.0), (150.0, 80.0, 2.0), (120.0, 120.0, 2.0), (200.0, 200.0, 3.0), (250.0, 150.0, 3.0), (150.0, 150.0, 2.0)][i];
     Cost { matter: m, energy: e, seconds: h * 3600.0 }
+}
+
+/// A sample "while you were away" report (14 h away) for the demo scene `report`.
+pub fn demo_report(now: f64) -> AwayReport {
+    let h = 3600.0;
+    let it = |dt: f64, section, title: &str, text: &str, focus, tone| ReportItem { t: now - dt * h, section, title: title.into(), text: text.into(), focus, fallback: None, tone };
+    use ReportSection::*;
+    AwayReport {
+        since: now - 14.0 * h,
+        now,
+        items: vec![
+            it(13.2, Empire, "Ship built", "Interceptor 3 at Tethys", Some(Focus::Body(2)), 1),
+            it(11.5, Contacts, "Contact", "Mara: 3 Interceptors, Scout near Gaia Nova", Some(Focus::Ship(10)), -1),
+            it(10.9, Contacts, "Engine burn", "Mara's 3 Interceptors burned near Gaia Nova, heading for Tethys", Some(Focus::Ship(10)), -1),
+            it(9.0, Battles, "Battle sighted", "Fighting at Kraken", Some(Focus::Body(4)), 0),
+            it(7.4, Battles, "Territory", "Kraken changed hands: Ozzy → Bot (hard)", Some(Focus::Body(4)), 0),
+            it(6.0, Contacts, "Contact lost", "Lost track of Mara's Dreadnought near Tethys", Some(Focus::Ship(13)), -1),
+            it(4.2, Battles, "Under attack", "Tethys: enemy ships in orbit", Some(Focus::Body(2)), -1),
+            it(3.9, Battles, "Territory gained", "Gaia Nova is yours", Some(Focus::Body(3)), 1),
+            it(2.0, Empire, "Research done", "Better optics", None, 1),
+            it(0.5, Empire, "Arrived", "Big Gulp is in orbit of Gaia Nova", Some(Focus::Ship(3)), 1),
+        ],
+    }
 }

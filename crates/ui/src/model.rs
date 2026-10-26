@@ -392,3 +392,36 @@ pub struct StationsView {
 
 /// Station kinds (= sim `StationKind`), also the icon names `station_<lowercase>`.
 pub const STATION_KINDS: [&str; 6] = ["Shipyard", "FuelDepot", "Telescope", "Scanner", "Defense", "Relay"];
+
+/// Section of the "while you were away" report.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReportSection {
+    /// battles, planets changing hands
+    Battles,
+    /// what sensors picked up: contacts spotted/lost, engine burns
+    Contacts,
+    /// own builds, arrivals, research
+    Empire,
+}
+
+#[derive(Clone, Debug)]
+pub struct ReportItem {
+    /// game time
+    pub t: f64,
+    pub section: ReportSection,
+    pub title: String,
+    pub text: String,
+    pub focus: Option<Focus>,
+    /// Used when `focus` is a ship that's gone or out of sight now (its body).
+    pub fallback: Option<Focus>,
+    /// -1 hostile, 0 neutral, 1 ours/good
+    pub tone: i8,
+}
+
+/// Everything that happened while the player was away (game times).
+#[derive(Clone, Debug)]
+pub struct AwayReport {
+    pub since: f64,
+    pub now: f64,
+    pub items: Vec<ReportItem>,
+}

@@ -18,6 +18,8 @@ pub enum BackendEvent {
 /// Commands from the UI. Fire-and-forget; results arrive as `BackendEvent`s or a changed view.
 #[derive(Clone, Debug)]
 pub enum UiAction {
+    /// Close the "while you were away" report.
+    DismissReport,
     Login { server: String, user: String, pass: String, register: bool },
     Logout,
     CreateGame { name: String, length_days: u32, bots: Vec<String> },
@@ -106,6 +108,10 @@ pub trait Backend {
     }
     /// Stations at a body and what we could build there.
     fn stations(&self, _id: BodyId) -> Option<StationsView> {
+        None
+    }
+    /// "While you were away" report to show on entering a game (until `UiAction::DismissReport`).
+    fn away_report(&self) -> Option<&AwayReport> {
         None
     }
     /// Signing back in from a saved session as this user (login screen shows a splash, not the form).

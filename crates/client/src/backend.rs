@@ -48,6 +48,8 @@ pub struct ClientBackend {
     last_rx: f64,
     last_ping: f64,
     last_error: Option<String>,
+    /// "While you were away" report waiting to be shown / dismissed.
+    report: Option<m::AwayReport>,
 }
 
 impl ClientBackend {
@@ -91,6 +93,7 @@ impl ClientBackend {
             last_rx: 0.0,
             last_ping: 0.0,
             last_error: None,
+            report: None,
         }
     }
 
@@ -179,6 +182,12 @@ impl ClientBackend {
             ServerMsg::CmdResult { ok, msg } => {
                 if !ok {
                     self.notice(m::NoticeKind::Bad, "Can't do that", &msg, None);
+                }
+            }
+            ServerMsg::Report { code, since, now, events } => {
+                // only worth a sheet after a real absence (not a reconnect blip)
+                if self.code().as_deref() == Some(code.as_str()) && now - since >= REPORT_MIN_AWAY && !events.is_empty() {
+                    self.report = Some(away_report(since, now, &events));
                 }
             }
             ServerMsg::Events(_) | ServerMsg::Pong => {}
@@ -400,6 +409,40 @@ fn to_model_traj(sys: &sim::System, tr: &SimTraj) -> m::Trajectory {
 /// Fog of war: last sightings of enemy ships that are out of sensor range now.
 fn ghosts(game: &Game, me: g::PlayerId) -> impl Iterator<Item = &sim::fog::Contact> {
     game.players.get(me as usize).into_iter().flat_map(|p| p.contacts.iter()).filter(move |c| game.ship(c.ship.id).is_none())
+}
+
+/// Game seconds away before the report sheet is worth showing.
+const REPORT_MIN_AWAY: f64 = 900.0;
+
+fn away_report(since: f64, now: f64, events: &[g::Event]) -> m::AwayReport {
+    let items = events
+        .iter()
+        .map(|e| {
+            let territory = e.title.starts_with("Territory") || e.title == "Battle sighted";
+            let section = match e.kind {
+                g::EventKind::Battle => m::ReportSection::Battles,
+                _ if territory => m::ReportSection::Battles,
+                g::EventKind::Sensor => m::ReportSection::Contacts,
+                _ => m::ReportSection::Empire,
+            };
+            let tone = match e.kind {
+                g::EventKind::Good => 1,
+                g::EventKind::Bad | g::EventKind::Battle => -1,
+                g::EventKind::Sensor if e.title == "Contact" || e.title == "Engine burn" => -1,
+                _ => 0,
+            };
+            m::ReportItem {
+                t: e.t,
+                section,
+                title: e.title.clone(),
+                text: e.body.clone(),
+                focus: e.ship_ref.map(|s| m::Focus::Ship(s.0)).or(e.body_ref.map(|b| m::Focus::Body(b.0))),
+                fallback: e.body_ref.map(|b| m::Focus::Body(b.0)),
+                tone,
+            }
+        })
+        .collect();
+    m::AwayReport { since, now, items }
 }
 
 fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Trajectory>) -> m::GameView {
@@ -663,6 +706,7 @@ impl Backend for ClientBackend {
                     self.send(ClientMsg::Cmd { code, cmd: Command::CancelDeparture { ship: g::ShipId(ship) } });
                 }
             }
+            UiAction::DismissReport => self.report = None,
             UiAction::Chat(text) => {
                 if let Some(code) = code {
                     self.send(ClientMsg::Cmd { code, cmd: Command::Chat { text } });
@@ -941,6 +985,10 @@ impl Backend for ClientBackend {
             .collect();
         debug_assert!(Branch::ALL.iter().zip(m::TECH_BRANCHES).all(|(b, n)| b.label() == n));
         Some(m::ResearchView { techs, labs })
+    }
+
+    fn away_report(&self) -> Option<&m::AwayReport> {
+        self.report.as_ref()
     }
 
     fn stations(&self, id: BodyId) -> Option<m::StationsView> {

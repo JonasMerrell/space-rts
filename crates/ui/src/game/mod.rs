@@ -3,6 +3,7 @@
 pub mod details;
 pub mod map;
 mod panels;
+mod report;
 mod research;
 
 use crate::backend::{Backend, UiAction};
@@ -81,6 +82,8 @@ pub struct GameScreen {
     /// Station picker open for this body, and the highlighted kind.
     pub stations_for: Option<BodyId>,
     pub station_pick: Option<String>,
+    /// "While you were away" sheet state.
+    pub report: report::ReportState,
     /// For sound cues: chat length and bodies we owned last frame.
     seen_chat: usize,
     owned: Vec<BodyId>,
@@ -114,6 +117,7 @@ impl GameScreen {
             research_branch: 0,
             stations_for: None,
             station_pick: None,
+            report: Default::default(),
             seen_chat: usize::MAX,
             owned: vec![],
             last_selected: None,
@@ -186,6 +190,7 @@ impl GameScreen {
             if self.research_open {
                 research::research_screen(self, inp, be_ref, view);
             }
+            report::away_report(self, inp, be_ref, view);
         }
         for a in self.out.drain(..) {
             be.act(a);

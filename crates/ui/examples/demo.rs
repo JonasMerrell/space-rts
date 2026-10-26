@@ -82,6 +82,7 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                     }
                     g.selected = Some(Focus::Body(3));
                 }
+                "report" => be.report = Some(ui::demo::demo_report(v.now)),
                 "rock" => g.selected = Some(Focus::Body(9)),
                 "res_energy" => g.res_open = Some(1),
                 "detail_up" => {
