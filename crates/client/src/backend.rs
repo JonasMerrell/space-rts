@@ -33,6 +33,9 @@ pub struct ClientBackend {
     plan_cache: RefCell<HashMap<(ShipId, BodyId, i64), Option<m::TransferPlan>>>,
     /// background planner jobs keyed like `plan_cache`
     plan_jobs: RefCell<HashMap<(ShipId, BodyId, i64), std::sync::mpsc::Receiver<Option<m::TransferPlan>>>>,
+    /// asteroid impact previews keyed by (asteroid, target), and their background jobs
+    impact_cache: RefCell<HashMap<(BodyId, BodyId), Option<m::ImpactPreview>>>,
+    impact_jobs: RefCell<HashMap<(BodyId, BodyId), std::sync::mpsc::Receiver<Option<m::ImpactPreview>>>>,
     reconnect_at: f64,
     /// Signing in from the saved session (shown by the login screen instead of the form).
     auto_user: Option<String>,
@@ -78,6 +81,8 @@ impl ClientBackend {
             was_running: false,
             plan_cache: RefCell::new(HashMap::new()),
             plan_jobs: RefCell::new(HashMap::new()),
+            impact_cache: RefCell::new(HashMap::new()),
+            impact_jobs: RefCell::new(HashMap::new()),
             reconnect_at: 0.0,
             auto_user: None,
             online: false,
@@ -190,6 +195,8 @@ impl ClientBackend {
             self.last_event_seq = game.events_for(me).last().map(|e| e.seq).unwrap_or(0);
             self.was_running = false;
             self.plan_cache.borrow_mut().clear();
+        self.impact_cache.borrow_mut().clear();
+            self.impact_cache.borrow_mut().clear();
         }
         // notices for events we haven't seen
         let fresh: Vec<g::Event> = game.events_for(me).filter(|e| e.seq > self.last_event_seq).cloned().collect();
@@ -253,6 +260,42 @@ impl ClientBackend {
     fn ship_ids(&self, id: ShipId) -> Vec<g::ShipId> {
         vec![g::ShipId(id)]
     }
+}
+
+/// Plan the cheapest push of `ast` into `target` on a snapshot of the game (worker thread).
+/// None if the asteroid isn't ours to push, the tech is missing, or no course hits.
+fn compute_impact(g: &Game, me: g::PlayerId, now: f64, ast: BodyId, target: BodyId) -> Option<m::ImpactPreview> {
+    let (a, t) = (SimBody(ast), SimBody(target));
+    if a.0 as usize >= g.bodies.len() || t.0 as usize >= g.bodies.len() || !g.can_drive_asteroids(me) {
+        return None;
+    }
+    let here = g.ships.iter().any(|s| s.owner == me && s.parked_at() == Some(a));
+    if g.bodies[a.0 as usize].owner != Some(me) && !here {
+        return None;
+    }
+    let p = sim::asteroid::plan_impact(g, a, t, now)?;
+    let imp = p.impact?;
+    let busy = g.drives.iter().any(|d| d.body == a);
+    Some(m::ImpactPreview {
+        asteroid: ast,
+        target,
+        burn_t: p.burn.t - p.burn_s / 2.0,
+        burn_s: p.burn_s,
+        dv: p.dv,
+        fuel: p.fuel,
+        fuel_available: sim::asteroid::fuel_available(g, me, a),
+        drive_cost: if busy {
+            m::Cost { matter: 0.0, energy: 0.0, seconds: 0.0 }
+        } else {
+            m::Cost { matter: sim::asteroid::DRIVE_MATTER, energy: sim::asteroid::DRIVE_ENERGY, seconds: sim::asteroid::INSTALL_S }
+        },
+        impact_t: Some(imp.t),
+        impact_speed: imp.v,
+        // GJ → J
+        impact_energy: imp.energy * 1e9,
+        severity: imp.severity,
+        path: to_model_traj(&g.system, &p.traj),
+    })
 }
 
 /// Auto-plan a transfer on a snapshot of the game (runs on a worker thread for the async path).
@@ -363,6 +406,8 @@ fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Tr
     let bodies = sys
         .bodies
         .iter()
+        // asteroids that crashed into something no longer exist
+        .filter(|b| !game.bodies[b.id.0 as usize].gone)
         .map(|b| {
             let st = &game.bodies[b.id.0 as usize];
             let orbit_path = match b.orbit {
@@ -392,7 +437,13 @@ fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Tr
                         stations: game.stations.iter().filter(|st| st.body == b.id && st.owner != me).map(|st| st.kind.label().to_string()).collect(),
                     })
                 },
-                art: if b.kind == SimKind::GasGiant { Some("planet_gas".into()) } else { None },
+                art: if st.shattered {
+                    Some("rubble".into())
+                } else if b.kind == SimKind::GasGiant {
+                    Some("planet_gas".into())
+                } else {
+                    None
+                },
                 orbit_path,
             }
         })
@@ -540,8 +591,11 @@ impl Backend for ClientBackend {
                 self.logged_in = false;
                 self.connect(register);
             }
-            // impact planning + command arrive with the combat branch
-            UiAction::AimAsteroid { .. } => {}
+            UiAction::AimAsteroid { body, target } => {
+                if let Some(code) = code {
+                    self.send(ClientMsg::Cmd { code, cmd: Command::AimAsteroid { body: SimBody(body), target: SimBody(target) } });
+                }
+            }
             UiAction::Reconnect => {
                 self.reconnect_at = 0.0;
                 self.retry_delay = 1.0;
@@ -696,6 +750,36 @@ impl Backend for ClientBackend {
         let res = compute_plan(self.game.as_ref()?, self.now(), ship, target, after);
         self.plan_cache.borrow_mut().insert(key, res.clone());
         res
+    }
+
+    fn plan_impact_async(&self, asteroid: BodyId, target: BodyId) -> ui::ImpactPoll {
+        let key = (asteroid, target);
+        if let Some(p) = self.impact_cache.borrow().get(&key) {
+            return ui::ImpactPoll::Done(p.clone());
+        }
+        let mut jobs = self.impact_jobs.borrow_mut();
+        if let Some(rx) = jobs.get(&key) {
+            return match rx.try_recv() {
+                Ok(res) => {
+                    jobs.remove(&key);
+                    self.impact_cache.borrow_mut().insert(key, res.clone());
+                    ui::ImpactPoll::Done(res)
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => ui::ImpactPoll::Pending,
+                Err(_) => {
+                    jobs.remove(&key);
+                    ui::ImpactPoll::Done(None)
+                }
+            };
+        }
+        let Some(game) = self.game.clone() else { return ui::ImpactPoll::Done(None) };
+        let (now, me) = (self.now(), self.me);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(compute_impact(&game, me, now, asteroid, target));
+        });
+        jobs.insert(key, rx);
+        ui::ImpactPoll::Pending
     }
 
     fn plan_transfer_async(&self, ship: ShipId, target: BodyId, after: f64) -> ui::PlanPoll {
