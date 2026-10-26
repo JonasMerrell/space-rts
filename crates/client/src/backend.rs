@@ -762,7 +762,7 @@ impl Backend for ClientBackend {
     fn body_info(&self, id: BodyId) -> Option<m::BodyInfo> {
         let g = self.game.as_ref()?;
         let b = SimBody(id);
-        let st = g.bodies.get(id as usize)?;
+        g.bodies.get(id as usize)?;
         let mine = st.owner == Some(self.me);
         let pending = |u: g::Upgrade| st.queue.iter().filter(|j| matches!(j.kind, g::JobKind::Upgrade(x) if x == u)).count() as u8;
         let upgrades = g::Upgrade::ALL
@@ -864,11 +864,12 @@ impl Backend for ClientBackend {
         let g = self.game.as_ref()?;
         let me = self.me;
         let b = SimBody(id);
-        let st = g.bodies.get(id as usize)?;
+        g.bodies.get(id as usize)?;
         if g.system.body(b).is_star() {
             return None;
         }
-        let present = st.owner == Some(me) || g.ships.iter().any(|s| s.owner == me && s.parked_at() == Some(b));
+        let workers = g.workers(me, b);
+        let present = workers > 0;
         let here = g
             .stations
             .iter()
@@ -876,7 +877,8 @@ impl Backend for ClientBackend {
             .map(|s| m::StationInfo {
                 kind: format!("{:?}", s.kind),
                 owner: s.owner,
-                building_until: (s.done_t > g.t).then_some(s.done_t),
+                building_until: s.building().then_some(s.done_t),
+                progress: if s.building() { (1.0 - s.work_left / s.kind.cost().2).clamp(0.0, 1.0) as f32 } else { 1.0 },
                 hp: (s.hp / s.kind.max_hp()) as f32,
             })
             .collect();
@@ -893,7 +895,7 @@ impl Backend for ClientBackend {
                 }
             })
             .collect();
-        Some(m::StationsView { here, options, present })
+        Some(m::StationsView { here, options, present, constructors: g.constructors_at(me, b), workers })
     }
 
     fn preview_nodes(&self, ship: ShipId, nodes: &[m::ManeuverNode]) -> Option<m::Trajectory> {

@@ -557,12 +557,13 @@ impl Backend for DemoBackend {
             }
             UiAction::BuildStation { body, kind } => {
                 let now = self.now();
+                let workers = self.stations(body).map(|v| v.workers).unwrap_or(1).max(1) as f64;
                 if let Some(i) = STATION_KINDS.iter().position(|k| *k == kind) {
                     let c = demo_station_cost(i);
                     if let Some(v) = self.view.as_mut() {
                         v.resources.matter -= c.matter;
                         v.resources.energy -= c.energy;
-                        self.stations.push((body, kind, v.me, now + c.seconds));
+                        self.stations.push((body, kind, v.me, now + c.seconds / workers));
                     }
                 }
             }
@@ -648,12 +649,18 @@ impl Backend for DemoBackend {
     fn stations(&self, id: BodyId) -> Option<StationsView> {
         let v = self.view.as_ref()?;
         let now = self.now();
-        let present = v.body(id)?.owner == Some(v.me) || v.ships.iter().any(|s| s.owner == v.me && s.parked_at == Some(id) && s.trajectory.is_none());
+        let constructors: usize = v.ships.iter().filter(|s| s.owner == v.me && s.class == ShipClass::Constructor && s.parked_at == Some(id) && s.trajectory.is_none()).map(|s| s.count as usize).sum();
+        let workers = (constructors + (v.body(id)?.owner == Some(v.me)) as usize).min(6);
+        let present = workers > 0;
         let here = self
             .stations
             .iter()
             .filter(|s| s.0 == id)
-            .map(|s| StationInfo { kind: s.1.clone(), owner: s.2, building_until: (s.3 > now).then_some(s.3), hp: 1.0 })
+            .map(|s| {
+                let total = demo_station_cost(STATION_KINDS.iter().position(|k| *k == s.1).unwrap_or(0)).seconds / workers.max(1) as f64;
+                let progress = (1.0 - (s.3 - now) / total).clamp(0.0, 1.0) as f32;
+                StationInfo { kind: s.1.clone(), owner: s.2, building_until: (s.3 > now).then_some(s.3), progress, hp: 1.0 }
+            })
             .collect();
         let scanning = self.techs_done.contains(&17);
         let platforms = self.techs_done.contains(&15);
@@ -662,7 +669,7 @@ impl Backend for DemoBackend {
             .enumerate()
             .map(|(i, k)| {
                 let blocker = if !present {
-                    Some("needs a ship in orbit".to_string())
+                    Some("needs a construction ship in orbit".to_string())
                 } else if (*k == "Scanner" || *k == "Relay") && !scanning {
                     Some("needs Scanning stations".to_string())
                 } else if *k == "Defense" && !platforms {
@@ -675,7 +682,7 @@ impl Backend for DemoBackend {
                 StationOption { kind: k.to_string(), name: DEMO_STATIONS[i].0.to_string(), desc: DEMO_STATIONS[i].1.to_string(), cost: demo_station_cost(i), blocker }
             })
             .collect();
-        Some(StationsView { here, options, present })
+        Some(StationsView { here, options, present, constructors, workers })
     }
 
     fn plan_impact_async(&self, asteroid: BodyId, target: BodyId) -> crate::ImpactPoll {

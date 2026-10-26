@@ -373,8 +373,10 @@ pub struct StationInfo {
     /// One of `STATION_KINDS`.
     pub kind: String,
     pub owner: PlayerId,
-    /// Under construction until then.
+    /// Under construction: estimated finish (INFINITY = paused, no workers there).
     pub building_until: Option<f64>,
+    /// Construction progress 0..1 (1 when finished).
+    pub progress: f32,
     /// 0..1
     pub hp: f32,
 }
@@ -396,8 +398,12 @@ pub struct StationsView {
     /// Stations we know of in orbit here (ours always, others when sensors see them).
     pub here: Vec<StationInfo>,
     pub options: Vec<StationOption>,
-    /// We own the body or have a ship parked there, so building is possible at all.
+    /// We have workers here (constructors, or our own shipyard), so building is possible at all.
     pub present: bool,
+    /// Our construction ships parked here.
+    pub constructors: usize,
+    /// Workers on our sites here (constructors + our shipyard, capped); build speed multiplier.
+    pub workers: usize,
 }
 
 /// Station kinds (= sim `StationKind`), also the icon names `station_<lowercase>`.
