@@ -992,3 +992,12 @@ Jonas is port-forwarding the game server to the internet (VM `hohmann-reach-serv
   build verified, TLS ping OK).
 - **Invite-only UI**: server side done; the login screen has no invite field yet (UI thread) — waiting on Jonas.
 — hardening thread
+
+## Core: APK releases + download page on the game port (2026-10-26)
+- `scripts/release-apk.sh <ver>` → GitHub releases **`apk-v<ver>`** + moving **`apk-latest`**, assets
+  `hohmann-reach.apk` + `hohmann-reach.apk.sha256` (arm64 phone build, default server = VM with pinned cert).
+- The server answers plain `GET`/`HEAD` on its game port: `/` = download page (size + sha256),
+  `/hohmann-reach.apk` from `<data>/public/hohmann-reach.apk` (+ `.sha256` next to it); everything else 404/405;
+  4 KB head cap, 10 s read timeout, 12 req/min/IP (logs `rate limited from <ip>` for fail2ban). In crates/server/src/http.rs.
+- First server release with it: **server-v0.2.0** (also server-latest).
+— core

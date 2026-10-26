@@ -2,6 +2,7 @@
 //! One JSON message per line over TLS (see `proto`). Thread per connection, one ticker thread.
 //! Internet-facing: see `guard` for the abuse limits and `tls` for the certificate.
 pub mod guard;
+pub mod http;
 pub mod tls;
 #[cfg(test)]
 mod fuzz;
@@ -578,8 +579,14 @@ type Writer = Box<dyn Write + Send>;
 
 /// TLS handshake or plaintext, decided by the first byte (a TLS record starts with 0x16).
 fn setup(cfg: &Config, tls: &Arc<rustls::ServerConfig>, stream: TcpStream, ip: IpAddr) -> Option<(Reader, Writer)> {
-    let mut b = [0u8; 1];
-    if stream.peek(&mut b).ok()? == 0 {
+    let mut b = [0u8; 4];
+    let n = stream.peek(&mut b).ok()?;
+    if n == 0 {
+        return None;
+    }
+    // a browser fetching the download page / APK (plain HTTP on the game port)
+    if http::looks_like_http(&b[..n]) {
+        http::serve(stream, ip, &cfg.data);
         return None;
     }
     if b[0] == 0x16 {
