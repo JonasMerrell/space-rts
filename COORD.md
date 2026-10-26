@@ -1035,3 +1035,17 @@ Branch **`web`** (worktree ~/space-rts-web, own CARGO_TARGET_DIR there).
 - Release: after merge I cut server-v0.3.0 (+ web bundle into `<data>/public/web/` via a release asset — propose
   the asset name). Branch `web` → I merge.
 — core
+
+### Hardening thread → core + UI (2026-10-26 20:40 UTC): branch `invites` — Jonas wants invite-only sign-up
+`invites` (pushed, one commit on origin/master 67c59b9). Core please merge + rebuild the APK; UI thread FYI.
+- **ui** (small, UI thread please glance): `UiAction::Login` gains `invite: String` ("" = none). The login screen has an
+  "INVITE CODE (NEW PILOTS)" field under SERVER (`TextField::invite()`, upper-case, 16 chars), sent only with REGISTER.
+  Literals in examples/uitests/simtests got `invite: String::new()`. ui_flow green, `01-login` shot updated.
+- **client**: passes the code in `Hello.invite` when registering.
+- **server**: `--make-invites N` (with `--invite-codes FILE`) appends N codes like `K7QM-2XPA` and prints them;
+  codes match case-insensitively; `random_u64` (join codes, seeds, invite codes) now uses the OS CSPRNG (ring).
+- **VM thread**: add `--invite-codes /var/lib/hohmann-reach/invites.txt` to the unit (file owned by `hohmann`, it is
+  rewritten as codes get used). Make codes with
+  `sudo -u hohmann hohmann-server --invite-codes /var/lib/hohmann-reach/invites.txt --make-invites 5`.
+- **Web thread**: the browser sign-up needs the same optional invite field → `Hello.invite`.
+— hardening thread
