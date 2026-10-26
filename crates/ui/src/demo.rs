@@ -189,6 +189,7 @@ impl DemoBackend {
             destination: None,
             retreat: false,
             seen_at: None,
+            members: vec![],
             planned: None,
         };
         let mut ships = vec![
@@ -200,6 +201,12 @@ impl DemoBackend {
             ship(11, "Choir", ShipClass::Gunship, 3, 2, Some(4)),
             ship(12, "Miner swarm", ShipClass::Bomber, 4, 6, Some(5)),
         ];
+        // our multi-ship tokens are fleets; a few loose ships at Borealis to group
+        for sh in ships.iter_mut().filter(|s| s.owner == 1 && s.count > 1) {
+            sh.members = (0..sh.count).map(|k| FleetMember { id: 100 * sh.id + k, name: format!("{} {}", sh.class.label(), k + 1), class: sh.class, fuel: 300.0 + 20.0 * k as f32, fuel_max: 400.0 }).collect();
+        }
+        ships.push(ship(5, "Wasp", ShipClass::Interceptor, 1, 1, Some(2)));
+        ships.push(ship(6, "Sparrow", ShipClass::Scout, 1, 1, Some(2)));
         // fog of war: an enemy dreadnought last seen 5 h ago (drawn as a fading ghost)
         ships.push(Ship { seen_at: Some(now - 5.0 * 3600.0), ..ship(13, "Dreadnought", ShipClass::Dreadnought, 2, 1, Some(2)) });
         self.view = Some(GameView {
@@ -394,7 +401,7 @@ impl Backend for DemoBackend {
         if let Some(v) = self.view.as_mut() {
             for (body, label, _, class) in done {
                 let id = v.ships.iter().map(|s| s.id).max().unwrap_or(0) + 1;
-                v.ships.push(Ship { id, name: format!("New {label}"), class, owner: v.me, count: 1, fuel: 200.0, fuel_max: 400.0, parked_at: Some(body), trajectory: None, nodes: vec![], destination: None, retreat: false, seen_at: None, planned: None });
+                v.ships.push(Ship { id, name: format!("New {label}"), class, owner: v.me, count: 1, fuel: 200.0, fuel_max: 400.0, parked_at: Some(body), trajectory: None, nodes: vec![], destination: None, retreat: false, seen_at: None, members: vec![], planned: None });
                 self.events.push(BackendEvent::Notice(Notice { kind: NoticeKind::Good, title: format!("{label} ready"), body: "Fresh from the shipyard".into(), focus: Some(Focus::Ship(id)) }));
             }
         }
@@ -579,6 +586,30 @@ impl Backend for DemoBackend {
                     v.ends_at += days as f64 * 86400.0;
                 }
             }
+            UiAction::FormFleet { ships, name } => demo_regroup(self.view.as_mut(), &ships, &[], Some(name)),
+            UiAction::JoinFleet { fleet, ships } => {
+                let name = self.view.as_ref().and_then(|v| v.ship(fleet)).map(|s| s.name.clone());
+                let all: Vec<ShipId> = std::iter::once(fleet).chain(ships).collect();
+                demo_regroup(self.view.as_mut(), &all, &[], name);
+            }
+            UiAction::MergeFleets { into, from } => {
+                let name = self.view.as_ref().and_then(|v| v.ship(into)).map(|s| s.name.clone());
+                demo_regroup(self.view.as_mut(), &[into, from], &[], name);
+            }
+            UiAction::LeaveFleet { ships, split } => demo_regroup(self.view.as_mut(), &[], &ships, split),
+            UiAction::RenameFleet { fleet, name } => {
+                if let Some(s) = self.view.as_mut().and_then(|v| v.ships.iter_mut().find(|s| s.id == fleet)) {
+                    s.name = name;
+                }
+            }
+            UiAction::DisbandFleet { fleet } => {
+                if let Some(v) = self.view.as_mut() {
+                    if let Some(i) = v.ships.iter().position(|s| s.id == fleet) {
+                        let f = v.ships.remove(i);
+                        v.ships.extend(demo_split(&f));
+                    }
+                }
+            }
             UiAction::SetSpeed { speed } => {
                 if let Some(v) = self.view.as_mut() {
                     v.speed = speed;
@@ -712,6 +743,7 @@ impl Backend for DemoBackend {
         // Pretend the rock is a parked ship and reuse the Hohmann planner for the path.
         let rock = Ship {
             seen_at: None,
+            members: vec![],
             id: u32::MAX,
             name: String::new(),
             class: ShipClass::Tanker,
@@ -844,6 +876,57 @@ const DEMO_TECHS: [(&str, &str, &str); 20] = [
     ("SignatureDamping", "Signature damping", "Your ships are 30% harder to see."),
     ("DeepSpaceArray", "Deep-space array", "Sensor range +40% more."),
 ];
+
+/// Fake fleet bookkeeping: `tokens` (whole tokens) merge into one fleet named `name`;
+/// `leavers` (member ids) come out of their fleets, as a new fleet if `name` is set.
+fn demo_regroup(view: Option<&mut GameView>, tokens: &[ShipId], leavers: &[ShipId], name: Option<String>) {
+    let Some(v) = view else { return };
+    let mut loose: Vec<Ship> = vec![];
+    for &t in tokens {
+        if let Some(i) = v.ships.iter().position(|s| s.id == t) {
+            loose.extend(demo_split(&v.ships.remove(i)));
+        }
+    }
+    for sh in v.ships.iter_mut().filter(|s| s.is_fleet()) {
+        let (out, keep): (Vec<FleetMember>, Vec<FleetMember>) = sh.members.drain(..).partition(|m| leavers.contains(&m.id));
+        sh.members = keep;
+        sh.count = sh.members.len() as u32;
+        let base = sh.clone();
+        loose.extend(out.into_iter().map(|m| Ship { id: m.id, name: m.name, class: m.class, count: 1, fuel: m.fuel, fuel_max: m.fuel_max, members: vec![], ..base.clone() }));
+    }
+    // a one-ship fleet dissolves
+    let mut ones = vec![];
+    v.ships.retain(|s| {
+        if s.is_fleet() && s.members.len() < 2 {
+            ones.push(s.clone());
+            false
+        } else {
+            true
+        }
+    });
+    for o in ones {
+        v.ships.extend(demo_split(&o));
+    }
+    match name {
+        Some(n) if loose.len() >= 2 => {
+            let id = 0x4000_0000 + v.ships.iter().chain(&loose).map(|s| s.id & 0xffff).max().unwrap_or(0) + 1;
+            let members: Vec<FleetMember> =
+                loose.iter().map(|s| FleetMember { id: s.id, name: s.name.clone(), class: s.class, fuel: s.fuel, fuel_max: s.fuel_max }).collect();
+            let weakest = members.iter().min_by(|a, b| (a.fuel / a.fuel_max).total_cmp(&(b.fuel / b.fuel_max))).unwrap();
+            let name = if n.trim().is_empty() { format!("Fleet {}", id & 0xffff) } else { n.trim().to_string() };
+            v.ships.push(Ship { id, name, count: members.len() as u32, fuel: weakest.fuel, fuel_max: weakest.fuel_max, members, ..loose[0].clone() });
+        }
+        _ => v.ships.extend(loose),
+    }
+}
+
+/// A token's ships as single ships (just itself when it isn't a fleet).
+fn demo_split(f: &Ship) -> Vec<Ship> {
+    if !f.is_fleet() {
+        return vec![f.clone()];
+    }
+    f.members.iter().map(|m| Ship { id: m.id, name: m.name.clone(), class: m.class, count: 1, fuel: m.fuel, fuel_max: m.fuel_max, members: vec![], ..f.clone() }).collect()
+}
 
 fn demo_tech_cost(i: usize) -> Cost {
     let k = (i % 4) as f64 + 1.0;

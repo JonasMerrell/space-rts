@@ -105,6 +105,27 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                     }
                 }
                 "ship" => g.selected = Some(Focus::Ship(1)),
+                "fleet" | "fleet_new" => {
+                    let (anchor, other) = if scene == "fleet" { (1, 5) } else { (5, 6) };
+                    g.selected = Some(Focus::Ship(anchor));
+                    let mut fs = ui::game::fleet::FleetSheet::new(anchor, Some(Focus::Ship(anchor)));
+                    if scene == "fleet" {
+                        fs.members.push(101);
+                    }
+                    fs.others.push(other);
+                    g.fleet = Some(fs);
+                }
+                "fleet_formed" => {
+                    be.act(ui::UiAction::FormFleet { ships: vec![5, 6, 4], name: "Strike Group".into() });
+                    be.act(ui::UiAction::LeaveFleet { ships: vec![101, 102], split: Some("Red Fang B".into()) });
+                    let id = be.view.as_ref().unwrap().ships.iter().find(|s| s.name == "Strike Group").unwrap().id;
+                    g.selected = Some(Focus::Ship(id));
+                    g.fleet = Some(ui::game::fleet::FleetSheet::new(id, Some(Focus::Ship(id))));
+                }
+                "fleet_bar" => {
+                    g.selected = Some(Focus::Ship(5));
+                    g.mode = Mode::Target(5);
+                }
                 "target" => {
                     g.selected = Some(Focus::Ship(1));
                     g.mode = Mode::Target(1);
@@ -155,6 +176,7 @@ fn add_builders(be: &mut DemoBackend, body: BodyId, n: u32) {
             retreat: false,
             seen_at: None,
             planned: None,
+            members: vec![],
         });
     }
 }

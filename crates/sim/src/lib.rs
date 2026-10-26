@@ -4,6 +4,7 @@ pub mod asteroid;
 pub mod bot;
 pub mod combat;
 pub mod fog;
+pub mod fleet;
 pub mod game;
 pub mod kepler;
 pub mod plan;

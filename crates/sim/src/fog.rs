@@ -439,6 +439,7 @@ impl Game {
             let mut g = self.clone();
             g.ships.clear();
             g.stations.clear();
+            g.fleets.clear();
             g.drives.clear();
             g.bodies = vec![BodyState::default(); g.bodies.len()];
             for pl in g.players.iter_mut() {
@@ -484,6 +485,8 @@ impl Game {
             }
         }
         g.events.retain(|e| e.to.is_none() || e.to == Some(p));
+        g.fleets.retain(|f| f.owner == p);
+        g.next_fleet = 0;
         g
     }
 }

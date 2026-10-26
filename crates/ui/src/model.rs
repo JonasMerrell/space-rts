@@ -180,6 +180,24 @@ pub struct Ship {
     pub seen_at: Option<f64>,
     /// Only on the time scrubber: a ship that is still in a build queue now, ready at this time.
     pub planned: Option<f64>,
+    /// Non-empty when this token is one of our fleets: its ships (real ship ids, not the token's).
+    pub members: Vec<FleetMember>,
+}
+
+impl Ship {
+    pub fn is_fleet(&self) -> bool {
+        !self.members.is_empty()
+    }
+}
+
+/// One ship inside a fleet token.
+#[derive(Clone, Debug)]
+pub struct FleetMember {
+    pub id: ShipId,
+    pub name: String,
+    pub class: ShipClass,
+    pub fuel: f32,
+    pub fuel_max: f32,
 }
 
 #[derive(Clone, Debug)]

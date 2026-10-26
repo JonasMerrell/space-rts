@@ -1,6 +1,7 @@
 //! In-game screen: map + HUD + time scrubber + selection sheet + planner/node editor + chat + toasts.
 
 pub mod details;
+pub mod fleet;
 pub mod map;
 mod panels;
 mod report;
@@ -92,6 +93,8 @@ pub struct GameScreen {
     pub station_pick: Option<String>,
     /// "While you were away" sheet state.
     pub report: report::ReportState,
+    /// Fleet sheet (group / split / merge ships parked together).
+    pub fleet: Option<fleet::FleetSheet>,
     /// For sound cues: chat length and bodies we owned last frame.
     seen_chat: usize,
     owned: Vec<BodyId>,
@@ -130,6 +133,7 @@ impl GameScreen {
             stations_for: None,
             station_pick: None,
             report: Default::default(),
+            fleet: None,
             seen_chat: usize::MAX,
             owned: vec![],
             last_selected: None,

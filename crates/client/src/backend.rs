@@ -316,7 +316,26 @@ impl ClientBackend {
     }
 
     fn ship_ids(&self, id: ShipId) -> Vec<g::ShipId> {
-        vec![g::ShipId(id)]
+        vec![self.lead(id)]
+    }
+
+    fn lead(&self, id: ShipId) -> g::ShipId {
+        self.game.as_ref().map(|g| lead(g, id)).unwrap_or(g::ShipId(id))
+    }
+
+    fn fleet_cmd(&self, a: UiAction) -> Option<sim::fleet::FleetCommand> {
+        use sim::fleet::FleetCommand as F;
+        let g = self.game.as_ref()?;
+        let fleet = |id: ShipId| token_fleet(g, id).map(|f| f.id);
+        Some(match a {
+            UiAction::FormFleet { ships, name } => F::Form { ships: real_ships(g, &ships), name },
+            UiAction::JoinFleet { fleet: f, ships } => F::Join { fleet: fleet(f)?, ships: real_ships(g, &ships) },
+            UiAction::LeaveFleet { ships, split } => F::Leave { ships: real_ships(g, &ships), split },
+            UiAction::MergeFleets { into, from } => F::Merge { into: fleet(into)?, from: fleet(from)? },
+            UiAction::RenameFleet { fleet: f, name } => F::Rename { fleet: fleet(f)?, name },
+            UiAction::DisbandFleet { fleet: f } => F::Disband { fleet: fleet(f)? },
+            _ => return None,
+        })
     }
 }
 
@@ -356,9 +375,43 @@ fn compute_impact(g: &Game, me: g::PlayerId, now: f64, ast: BodyId, target: Body
     })
 }
 
+/// Fleets are shown as one map token with id `FLEET_TOKEN + fleet id`, so they never collide
+/// with ship ids (those count up from 1) or forecast-only ships (from `PLANNED_BASE` up).
+const FLEET_TOKEN: u32 = 0x4000_0000;
+
+fn fleet_token(f: &sim::fleet::Fleet) -> ShipId {
+    FLEET_TOKEN + f.id.0
+}
+
+fn token_fleet(g: &Game, id: ShipId) -> Option<&sim::fleet::Fleet> {
+    if !(FLEET_TOKEN..PLANNED_BASE).contains(&id) {
+        return None;
+    }
+    g.fleet(sim::fleet::FleetId(id - FLEET_TOKEN))
+}
+
+/// The real ship behind a token: the fleet's first ship for a fleet token. The sim applies
+/// orders on one member to the whole fleet.
+fn lead(g: &Game, id: ShipId) -> g::ShipId {
+    match token_fleet(g, id) {
+        Some(f) => f.ships.iter().copied().find(|&s| g.ship(s).is_some()).unwrap_or(g::ShipId(id)),
+        None => g::ShipId(id),
+    }
+}
+
+/// Real ship ids for a list of tokens (fleet tokens expand to all their ships).
+fn real_ships(g: &Game, ids: &[ShipId]) -> Vec<g::ShipId> {
+    ids.iter()
+        .flat_map(|&id| match token_fleet(g, id) {
+            Some(f) => f.ships.clone(),
+            None => vec![g::ShipId(id)],
+        })
+        .collect()
+}
+
 /// Auto-plan a transfer on a snapshot of the game (runs on a worker thread for the async path).
 fn compute_plan(g: &Game, now: f64, ship: ShipId, target: BodyId, after: f64) -> Option<m::TransferPlan> {
-    let s = g.ship(g::ShipId(ship))?;
+    let s = g.ship(lead(g, ship))?;
     let depart = if after > now + 120.0 { Some(after) } else { None };
     let mut game = g.clone();
     game.t = now;
@@ -367,7 +420,16 @@ fn compute_plan(g: &Game, now: f64, ship: ShipId, target: BodyId, after: f64) ->
     let first = p.to;
     let span = sim::plan::search_span(&g.system, from, first);
     let windows = sim::plan::windows(&g.system, from, first, now, span).into_iter().map(|w| w.depart_t).collect();
-    let dep_fuel = s.fuel_for(p.depart_dv);
+    // fuel for every ship that flies (the whole fleet for a fleet token)
+    let fuel_needed: f64 = g
+        .with_fleetmates(s.id)
+        .iter()
+        .filter_map(|&id| g.ship(id))
+        .map(|m| {
+            let dep = m.fuel_for(p.depart_dv);
+            dep + g::fuel_needed(m.class, (m.fuel - dep).max(0.0), p.capture_dv)
+        })
+        .sum();
     Some(m::TransferPlan {
         ship,
         target,
@@ -375,7 +437,7 @@ fn compute_plan(g: &Game, now: f64, ship: ShipId, target: BodyId, after: f64) ->
         arrive_t: p.arrive_t,
         dv_depart: p.depart_dv,
         dv_capture: p.capture_dv,
-        fuel_needed: (dep_fuel + g::fuel_needed(s.class, (s.fuel - dep_fuel).max(0.0), p.capture_dv)) as f32,
+        fuel_needed: fuel_needed as f32,
         path: to_model_traj(&g.system, &p.traj),
         windows,
     })
@@ -487,6 +549,7 @@ pub(crate) fn ship_model(s: &g::Ship, trajectory: Option<m::Trajectory>) -> m::S
         retreat: s.order == g::StandingOrder::Retreat,
         seen_at: None,
         planned: None,
+        members: vec![],
     }
 }
 
@@ -522,6 +585,40 @@ fn away_report(since: f64, now: f64, events: &[g::Event]) -> m::AwayReport {
         })
         .collect();
     m::AwayReport { since, now, items }
+}
+
+/// Replace our fleets' ship models with one token per fleet (models of other ships pass through).
+fn group_fleets(game: &Game, me: g::PlayerId, ships: Vec<m::Ship>) -> Vec<m::Ship> {
+    let fleets: Vec<&sim::fleet::Fleet> = game.fleets.iter().filter(|f| f.owner == me).collect();
+    let mut out = vec![];
+    let mut groups: Vec<Vec<m::Ship>> = vec![vec![]; fleets.len()];
+    for s in ships {
+        match fleets.iter().position(|f| f.ships.contains(&g::ShipId(s.id))) {
+            Some(k) => groups[k].push(s),
+            None => out.push(s),
+        }
+    }
+    for (f, mut ms) in fleets.into_iter().zip(groups) {
+        if ms.is_empty() {
+            continue;
+        }
+        // members in fleet order; the first one leads (position, course, orders)
+        ms.sort_by_key(|s| f.ships.iter().position(|x| x.0 == s.id));
+        let weakest = ms.iter().min_by(|a, b| (a.fuel / a.fuel_max.max(1.0)).total_cmp(&(b.fuel / b.fuel_max.max(1.0)))).unwrap();
+        // the most common class names the token's sprite
+        let class = ms.iter().map(|s| s.class).max_by_key(|c| ms.iter().filter(|s| s.class == *c).count()).unwrap();
+        out.push(m::Ship {
+            id: fleet_token(f),
+            name: f.name.clone(),
+            class,
+            count: ms.len() as u32,
+            fuel: weakest.fuel,
+            fuel_max: weakest.fuel_max,
+            members: ms.iter().map(|s| m::FleetMember { id: s.id, name: s.name.clone(), class: s.class, fuel: s.fuel, fuel_max: s.fuel_max }).collect(),
+            ..ms[0].clone()
+        });
+    }
+    out
 }
 
 fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Trajectory>) -> m::GameView {
@@ -575,6 +672,9 @@ fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Tr
         .ships
         .iter()
         .map(|s| ship_model(s, paths.get(&s.id.0).cloned()))
+        .collect::<Vec<_>>();
+    let ships = group_fleets(game, me, ships)
+        .into_iter()
         .chain(ghosts(game, me).map(|c| {
             let s = &c.ship;
             m::Ship {
@@ -595,6 +695,7 @@ fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Tr
                 retreat: false,
                 seen_at: Some(c.seen_t),
                 planned: None,
+                members: vec![],
             }
         }))
         .collect();
@@ -771,12 +872,12 @@ impl Backend for ClientBackend {
             UiAction::SetNodes { ship, nodes } => {
                 if let Some(code) = code {
                     let burns = nodes.iter().map(|n| Burn { t: n.t, prograde: n.prograde, radial: n.radial }).collect();
-                    self.send(ClientMsg::Cmd { code, cmd: Command::SetBurns { ship: g::ShipId(ship), burns } });
+                    self.send(ClientMsg::Cmd { code, cmd: Command::SetBurns { ship: self.lead(ship), burns } });
                 }
             }
             UiAction::CancelFlight { ship } => {
                 if let Some(code) = code {
-                    self.send(ClientMsg::Cmd { code, cmd: Command::CancelDeparture { ship: g::ShipId(ship) } });
+                    self.send(ClientMsg::Cmd { code, cmd: Command::CancelDeparture { ship: self.lead(ship) } });
                 }
             }
             UiAction::DismissReport => self.report = None,
@@ -797,7 +898,7 @@ impl Backend for ClientBackend {
             UiAction::SetOrder { ship, retreat } => {
                 if let Some(code) = code {
                     let order = if retreat { g::StandingOrder::Retreat } else { g::StandingOrder::Hold };
-                    self.send(ClientMsg::Cmd { code, cmd: Command::SetOrder { ship: g::ShipId(ship), order } });
+                    self.send(ClientMsg::Cmd { code, cmd: Command::SetOrder { ship: self.lead(ship), order } });
                 }
             }
             UiAction::SetSpeed { speed } => {
@@ -814,6 +915,16 @@ impl Backend for ClientBackend {
                 (Some(code), Some(tech)) => self.send(ClientMsg::Cmd { code, cmd: Command::Research { body: SimBody(body), tech } }),
                 _ => self.notice(m::NoticeKind::Bad, "Unknown tech", &tech, None),
             },
+            UiAction::FormFleet { .. }
+            | UiAction::JoinFleet { .. }
+            | UiAction::LeaveFleet { .. }
+            | UiAction::MergeFleets { .. }
+            | UiAction::RenameFleet { .. }
+            | UiAction::DisbandFleet { .. } => {
+                if let (Some(code), Some(cmd)) = (code, self.fleet_cmd(action)) {
+                    self.send(ClientMsg::Cmd { code, cmd: Command::Fleet(cmd) });
+                }
+            }
             UiAction::BuildStation { body, kind } => match (code, station_by_name(&kind)) {
                 (Some(code), Some(kind)) => self.send(ClientMsg::Cmd { code, cmd: Command::BuildStation { body: SimBody(body), kind } }),
                 _ => self.notice(m::NoticeKind::Bad, "Unknown station", &kind, None),
@@ -848,6 +959,7 @@ impl Backend for ClientBackend {
 
     fn ship_pos(&self, id: ShipId, t: f64) -> Option<[f64; 2]> {
         let g = self.game.as_ref()?;
+        let id = lead(g, id).0;
         if let Some((_, _, f)) = self.frame_at(t) {
             // ghosts (last sightings) aren't in the forecast; they keep coasting below
             if !self.view.as_ref().is_some_and(|v| v.ship(id).is_some_and(|s| s.seen_at.is_some())) {
@@ -965,8 +1077,9 @@ impl Backend for ClientBackend {
             .ships
             .iter()
             .map(|s| m::Ship { trajectory: s.path.as_deref().cloned(), ..s.model.clone() })
-            .chain(v.ships.iter().filter(|s| s.seen_at.is_some()).cloned())
             .collect();
+        v.ships = group_fleets(self.game.as_ref()?, self.me, v.ships);
+        v.ships.extend(self.view.as_ref()?.ships.iter().filter(|s| s.seen_at.is_some()).cloned());
         for b in v.bodies.iter_mut() {
             b.owner = f.owners.get(b.id as usize).copied().flatten();
         }
@@ -1187,11 +1300,36 @@ impl Backend for ClientBackend {
 
     fn preview_nodes(&self, ship: ShipId, nodes: &[m::ManeuverNode]) -> Option<m::Trajectory> {
         let g = self.game.as_ref()?;
-        let s = g.ship(g::ShipId(ship))?;
+        let s = g.ship(lead(g, ship))?;
         let ShipState::Flying(f) = &s.state else { return None };
         let mut burns: Vec<Burn> = nodes.iter().map(|n| Burn { t: n.t, prograde: n.prograde, radial: n.radial }).collect();
         burns.sort_by(|a, b| a.t.total_cmp(&b.t));
         let tr = sim::traj::predict(&g.system, f.start, &burns, f.dest, f.start.t + g::Flight::HORIZON);
         Some(to_model_traj(&g.system, &tr))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fleets_show_as_one_token_that_maps_back_to_its_ships() {
+        let settings = g::Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 86_400.0, speed: 1.0 };
+        let mut game = Game::new("FLT2".into(), settings, 5, "ann");
+        game.add_player("bob", None).unwrap();
+        game.start();
+        let gs: Vec<g::ShipId> = game.ships.iter().filter(|s| s.owner == 0 && s.class == g::ShipClass::Gunship).map(|s| s.id).collect();
+        game.apply(0, Command::Fleet(sim::fleet::FleetCommand::Form { ships: gs.clone(), name: "Hammer".into() })).unwrap();
+        let v = build_view(&game, 0, game.t, &HashMap::new());
+        let tok = v.ships.iter().find(|s| s.is_fleet()).expect("fleet token");
+        assert_eq!((tok.name.as_str(), tok.count, tok.members.len()), ("Hammer", gs.len() as u32, gs.len()));
+        assert!(tok.id >= FLEET_TOKEN && tok.id < PLANNED_BASE);
+        assert!(v.ships.iter().all(|s| gs.iter().all(|g| g.0 != s.id)), "members aren't drawn on their own");
+        assert_eq!(lead(&game, tok.id), gs[0]);
+        assert_eq!(real_ships(&game, &[tok.id]), gs);
+        // other players see neither the fleet nor its name
+        let bob = game.view_for(1);
+        assert!(build_view(&bob, 1, game.t, &HashMap::new()).ships.iter().all(|s| !s.is_fleet()));
     }
 }
