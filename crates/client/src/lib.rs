@@ -3,6 +3,7 @@ pub mod backend;
 pub mod forecast;
 pub mod net;
 pub mod notify;
+pub mod tls;
 
 use macroquad::prelude::*;
 
@@ -34,7 +35,7 @@ async fn main() {
     }
 }
 
-fn server_file() -> std::path::PathBuf {
+pub(crate) fn server_file() -> std::path::PathBuf {
     // Android: the app's private files dir; desktop: the config dir
     if cfg!(target_os = "android") {
         std::path::PathBuf::from("/data/data/net.lego.hohmannsreach/files/server.txt")

@@ -1,31 +1,103 @@
 //! Authoritative game server: accounts, lobbies with join codes, persistent real-time games.
-//! One JSON message per line over TCP (see `proto`). Thread per connection, one ticker thread.
-use proto::{decode, encode, unix_now, ClientMsg, GameSummary, ServerMsg};
+//! One JSON message per line over TLS (see `proto`). Thread per connection, one ticker thread.
+//! Internet-facing: see `guard` for the abuse limits and `tls` for the certificate.
+pub mod guard;
+pub mod tls;
+
+use guard::{Bucket, Guard, Limits};
+use proto::{decode, encode, unix_now, wire, ClientMsg, GameSummary, ServerMsg};
 use sha2::{Digest, Sha256};
 use sim::game::{Game, PlayerId, Settings, Status};
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{IpAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
 struct Account {
+    /// argon2id PHC string. Accounts from before it have only `salt` + `hash` (sha256) and are
+    /// upgraded on their next good login.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    phc: Option<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     salt: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     hash: String,
 }
+
+/// Lines queued for a slow client before we give up on it (a State is sent every 20 s at most).
+const SEND_QUEUE: usize = 256;
 
 struct Conn {
     user: Option<String>,
     open: Option<String>,
-    tx: Sender<String>,
+    tx: SyncSender<String>,
+    ip: IpAddr,
+    /// to cut off a client that stops reading
+    sock: Option<TcpStream>,
+}
+
+impl Conn {
+    fn push(&self, line: String) {
+        if let Err(TrySendError::Full(_)) = self.tx.try_send(line) {
+            if let Some(s) = &self.sock {
+                let _ = s.shutdown(std::net::Shutdown::Both);
+            }
+        }
+    }
+}
+
+/// How the server listens. `Config::new(data)` = self-signed TLS, plaintext only from the LAN.
+#[derive(Clone, Debug)]
+pub struct Config {
+    pub data: PathBuf,
+    pub tls_cert: Option<PathBuf>,
+    pub tls_key: Option<PathBuf>,
+    pub plain: Plain,
+    /// Invite-only registration: one code per line, each used once (removed from the file).
+    pub invites: Option<PathBuf>,
+    pub limits: Limits,
+}
+
+/// Who may connect without TLS (old app builds, LAN tools, tests).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Plain {
+    Never,
+    /// loopback and private (RFC 1918 / ULA / link-local) addresses only
+    Lan,
+}
+
+impl Config {
+    pub fn new(data: PathBuf) -> Config {
+        Config { data, tls_cert: None, tls_key: None, plain: Plain::Lan, invites: None, limits: Limits::default() }
+    }
+}
+
+fn is_lan(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v) => v.is_loopback() || v.is_private() || v.is_link_local(),
+        IpAddr::V6(v) => {
+            if let Some(v4) = v.to_ipv4_mapped() {
+                return is_lan(IpAddr::V4(v4));
+            }
+            let seg = v.segments()[0];
+            v.is_loopback() || (seg & 0xfe00) == 0xfc00 || (seg & 0xffc0) == 0xfe80
+        }
+    }
+}
+
+fn ok_username(u: &str) -> bool {
+    !u.is_empty() && u.chars().count() <= 24 && u.chars().all(|c| !c.is_control() && c != '\u{200b}' && c != '\u{feff}')
 }
 
 pub struct Server {
     data: PathBuf,
+    invites: Option<PathBuf>,
+    guard: Option<Arc<Guard>>,
     accounts: HashMap<String, Account>,
     games: HashMap<String, Game>,
     conns: HashMap<u64, Conn>,
@@ -35,7 +107,7 @@ pub struct Server {
     changed: HashSet<String>,
 }
 
-fn hash(salt: &str, pass: &str) -> String {
+fn legacy_hash(salt: &str, pass: &str) -> String {
     let mut h = Sha256::new();
     h.update(salt.as_bytes());
     h.update(b":");
@@ -46,7 +118,7 @@ fn hash(salt: &str, pass: &str) -> String {
 fn random_u64() -> u64 {
     use std::hash::{BuildHasher, Hasher};
     let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-    h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
     h.finish()
 }
 
@@ -75,7 +147,7 @@ impl Server {
             }
         }
         eprintln!("loaded {} accounts, {} games from {}", accounts_len(&accounts), games.len(), data.display());
-        Server { data, accounts, games, conns: HashMap::new(), next_conn: 1, dirty: HashSet::new(), changed: HashSet::new() }
+        Server { data, invites: None, guard: None, accounts, games, conns: HashMap::new(), next_conn: 1, dirty: HashSet::new(), changed: HashSet::new() }
     }
 
     fn save(&mut self) {
@@ -128,7 +200,7 @@ impl Server {
 
     fn send(&self, conn: u64, msg: &ServerMsg) {
         if let Some(c) = self.conns.get(&conn) {
-            let _ = c.tx.send(encode(msg));
+            c.push(encode(msg));
         }
     }
 
@@ -145,7 +217,7 @@ impl Server {
             if c.open.as_deref() == Some(code) {
                 if let Some(me) = c.user.as_deref().and_then(|u| g.player_by_name(u)).map(|p| p.id) {
                     let line = lines.entry(me).or_insert_with(|| Self::state_line(g, me));
-                    let _ = c.tx.send(line.clone());
+                    c.push(line.clone());
                 }
             }
         }
@@ -155,33 +227,18 @@ impl Server {
         let user = self.conns.get(&conn).and_then(|c| c.user.clone());
         let reply = |s: &Server, m: ServerMsg| s.send(conn, &m);
         let err = |s: &Server, m: &str| s.send(conn, &ServerMsg::Error { msg: m.into() });
+        if let ClientMsg::Ping = msg {
+            return reply(self, ServerMsg::Pong);
+        }
+        let Some(user) = user else { return err(self, "log in first") };
+        // a game this player is in; any other code gets the same answer so codes can't be probed
+        let member = |s: &Server, code: &str| s.games.get(code).is_some_and(|g| g.player_by_name(&user).is_some());
         match msg {
-            ClientMsg::Ping => reply(self, ServerMsg::Pong),
-            ClientMsg::Hello { user, pass, register } => {
-                let user = user.trim().to_string();
-                if user.is_empty() || user.len() > 24 || pass.is_empty() {
-                    return err(self, "enter a username (max 24 chars) and password");
-                }
-                match self.accounts.get(&user) {
-                    Some(a) if a.hash == hash(&a.salt, &pass) => {}
-                    Some(_) => return err(self, "wrong password"),
-                    None if register => {
-                        let salt = format!("{:016x}", random_u64());
-                        let h = hash(&salt, &pass);
-                        self.accounts.insert(user.clone(), Account { salt, hash: h });
-                        self.save_accounts();
-                    }
-                    None => return err(self, "no such account (tap Register to create it)"),
-                }
-                if let Some(c) = self.conns.get_mut(&conn) {
-                    c.user = Some(user.clone());
-                }
-                reply(self, ServerMsg::Welcome { user });
-                self.handle(conn, ClientMsg::ListGames);
-            }
-            _ if user.is_none() => err(self, "log in first"),
+            ClientMsg::Ping => {}
+            // handled outside the lock by `hello` (password hashing is slow)
+            ClientMsg::Hello { .. } => err(self, "already logged in"),
             ClientMsg::ListGames => {
-                let u = user.unwrap();
+                let u = user.clone();
                 let mut list: Vec<GameSummary> = self.games.values().filter_map(|g| self.summary(g, &u)).collect();
                 list.sort_by(|a, b| a.code.cmp(&b.code));
                 reply(self, ServerMsg::Games(list));
@@ -189,15 +246,16 @@ impl Server {
             ClientMsg::CreateGame { name, size, length_days, speed, max_players, bots } => {
                 let code = self.new_code();
                 let settings = Settings {
-                    name: if name.trim().is_empty() { format!("{}'s game", user.as_ref().unwrap()) } else { name.trim().chars().take(40).collect() },
+                    name: if name.trim().is_empty() { format!("{}'s game", &user) } else { name.trim().chars().take(40).collect() },
                     size,
                     max_players: max_players.clamp(2, 8),
                     length: length_days.clamp(0.1, 60.0) * 86_400.0,
                     speed: speed.clamp(1.0, 1000.0),
                 };
-                let mut g = Game::new(code.clone(), settings, random_u64(), user.as_ref().unwrap());
-                for (i, b) in bots.iter().enumerate() {
-                    let _ = g.add_player(&format!("Bot {} ({b})", i + 1), Some(b.clone()));
+                let mut g = Game::new(code.clone(), settings, random_u64(), &user);
+                for (i, b) in bots.iter().take(7).enumerate() {
+                    let b = if ["easy", "normal", "hard"].contains(&b.as_str()) { b.as_str() } else { "normal" };
+                    let _ = g.add_player(&format!("Bot {} ({b})", i + 1), Some(b.to_string()));
                 }
                 self.games.insert(code.clone(), g);
                 self.dirty.insert(code.clone());
@@ -206,13 +264,16 @@ impl Server {
             }
             ClientMsg::JoinGame { code } => {
                 let code = code.trim().to_uppercase();
-                let Some(g) = self.games.get_mut(&code) else { return err(self, "no game with that code") };
-                if g.player_by_name(user.as_ref().unwrap()).is_none() {
+                let Some(g) = self.games.get_mut(&code) else {
+                    self.bad_code(conn);
+                    return err(self, "no game with that code");
+                };
+                if g.player_by_name(&user).is_none() {
                     // joining is open only while the game waits for its host to press start
                     if g.status != Status::Lobby {
                         return err(self, "that game has already started, joining is closed");
                     }
-                    if let Err(e) = g.add_player(user.as_ref().unwrap(), None) {
+                    if let Err(e) = g.add_player(&user, None) {
                         return err(self, &e);
                     }
                 }
@@ -221,9 +282,20 @@ impl Server {
                 self.open(conn, &code);
                 self.handle(conn, ClientMsg::ListGames);
             }
+            ClientMsg::AddBot { code, .. }
+            | ClientMsg::RemoveBot { code, .. }
+            | ClientMsg::SetFaction { code, .. }
+            | ClientMsg::StartGame { code }
+            | ClientMsg::Open { code }
+            | ClientMsg::Cmd { code, .. }
+                if !member(self, &code) =>
+            {
+                err(self, "you're not in that game")
+            }
             ClientMsg::AddBot { code, difficulty } => {
+                let difficulty = if ["easy", "normal", "hard"].contains(&difficulty.as_str()) { difficulty } else { "normal".to_string() };
                 let Some(g) = self.games.get_mut(&code) else { return err(self, "no such game") };
-                if g.player_by_name(user.as_ref().unwrap()).map(|p| p.id) != Some(g.host) {
+                if g.player_by_name(&user).map(|p| p.id) != Some(g.host) {
                     return err(self, "only the host can add bots");
                 }
                 let n = (1..).find(|n| !g.players.iter().any(|p| p.name.starts_with(&format!("Bot {n} ")))).unwrap_or(1);
@@ -235,7 +307,7 @@ impl Server {
             }
             ClientMsg::RemoveBot { code, player } => {
                 let Some(g) = self.games.get_mut(&code) else { return err(self, "no such game") };
-                if g.player_by_name(user.as_ref().unwrap()).map(|p| p.id) != Some(g.host) {
+                if g.player_by_name(&user).map(|p| p.id) != Some(g.host) {
                     return err(self, "only the host can remove bots");
                 }
                 if g.players.get(player as usize).is_none_or(|p| p.bot.is_none()) {
@@ -252,7 +324,7 @@ impl Server {
                 if g.status != Status::Lobby {
                     return err(self, "factions are locked once the game starts");
                 }
-                if let Some(p) = g.players.iter_mut().find(|p| Some(&p.name) == user.as_ref()) {
+                if let Some(p) = g.players.iter_mut().find(|p| p.name == user) {
                     p.faction = faction.chars().take(20).collect();
                 }
                 self.dirty.insert(code.clone());
@@ -260,7 +332,7 @@ impl Server {
             }
             ClientMsg::StartGame { code } => {
                 let Some(g) = self.games.get_mut(&code) else { return err(self, "no such game") };
-                if g.player_by_name(user.as_ref().unwrap()).map(|p| p.id) != Some(g.host) {
+                if g.player_by_name(&user).map(|p| p.id) != Some(g.host) {
                     return err(self, "only the host can start the game");
                 }
                 if g.status != Status::Lobby {
@@ -272,14 +344,14 @@ impl Server {
                 self.changed.insert(code);
             }
             ClientMsg::Open { code } => {
-                if !self.games.get(&code).is_some_and(|g| g.player_by_name(user.as_ref().unwrap()).is_some()) {
+                if !self.games.get(&code).is_some_and(|g| g.player_by_name(&user).is_some()) {
                     return err(self, "you're not in that game");
                 }
                 self.open(conn, &code);
             }
             ClientMsg::Cmd { code, cmd } => {
                 let Some(g) = self.games.get_mut(&code) else { return err(self, "no such game") };
-                let Some(me) = g.player_by_name(user.as_ref().unwrap()).map(|p| p.id) else { return err(self, "you're not in that game") };
+                let Some(me) = g.player_by_name(&user).map(|p| p.id) else { return err(self, "you're not in that game") };
                 if g.status == Status::Running {
                     let t = g.time_at(unix_now());
                     g.advance_to(t);
@@ -294,7 +366,7 @@ impl Server {
                 reply(self, ServerMsg::CmdResult { ok, msg });
             }
             ClientMsg::Events { since } => {
-                let u = user.unwrap();
+                let u = user.clone();
                 let mut out = vec![];
                 for g in self.games.values() {
                     let Some(me) = g.player_by_name(&u).map(|p| p.id) else { continue };
@@ -333,7 +405,7 @@ impl Server {
             let g = &self.games[code];
             let line = Self::state_line(g, me);
             if let Some(c) = self.conns.get(&conn) {
-                let _ = c.tx.send(line);
+                c.push(line);
             }
         }
     }
@@ -343,7 +415,7 @@ impl Server {
         let now = unix_now();
         let codes: Vec<String> = self.games.keys().cloned().collect();
         for code in codes {
-            let g = self.games.get_mut(&code).unwrap();
+            let Some(g) = self.games.get_mut(&code) else { continue };
             if g.status == Status::Running {
                 let before = (g.next_event, g.ships.len(), g.status);
                 let t = g.time_at(now);
@@ -381,52 +453,226 @@ fn lock(s: &Mutex<Server>) -> std::sync::MutexGuard<'_, Server> {
     s.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn client_thread(server: Arc<Mutex<Server>>, stream: TcpStream) {
+fn argon2_hash(pass: &str) -> Option<String> {
+    use argon2::password_hash::PasswordHasher;
+    argon2::Argon2::default().hash_password(pass.as_bytes()).ok().map(|h| h.to_string())
+}
+
+/// Does `pass` match `a`? (argon2id, or the old salted sha256)
+fn verify(a: &Account, pass: &str) -> bool {
+    use argon2::password_hash::PasswordVerifier;
+    match &a.phc {
+        Some(phc) => argon2::Argon2::default().verify_password(pass.as_bytes(), phc.as_str()).is_ok(),
+        None => {
+            let h = legacy_hash(&a.salt, pass);
+            !a.hash.is_empty() && h.len() == a.hash.len() && h.bytes().zip(a.hash.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+        }
+    }
+}
+
+impl Server {
+    /// Count a bad join code against this connection's IP (codes are short; don't let them be swept).
+    fn bad_code(&self, conn: u64) {
+        if let (Some(g), Some(c)) = (&self.guard, self.conns.get(&conn)) {
+            g.login_failed(c.ip, None);
+        }
+    }
+
+    /// Take one invite code out of the invite file. Ok(()) when registration is open.
+    fn use_invite(&self, code: Option<&str>) -> Result<(), &'static str> {
+        let Some(path) = &self.invites else { return Ok(()) };
+        let code = code.map(str::trim).filter(|c| !c.is_empty()).ok_or("this server is invite-only: enter an invite code")?;
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        let mut found = false;
+        let rest: Vec<&str> = text
+            .lines()
+            .filter(|l| {
+                let hit = !found && l.trim() == code;
+                found |= hit;
+                !hit
+            })
+            .collect();
+        if !found {
+            return Err("that invite code isn't valid (or was already used)");
+        }
+        write_atomic(path, &(rest.join("\n") + "\n"));
+        Ok(())
+    }
+}
+
+/// Log in or register. The slow part (argon2) runs without the server lock.
+fn hello(server: &Mutex<Server>, guard: &Guard, id: u64, ip: IpAddr, user: String, pass: String, register: bool, invite: Option<String>) {
+    let err = |m: &str| lock(server).send(id, &ServerMsg::Error { msg: m.into() });
+    let user = user.trim().to_string();
+    if !ok_username(&user) || pass.is_empty() {
+        return err("enter a username (max 24 chars) and password");
+    }
+    if let Err(e) = guard.may_login(ip, &user) {
+        return err(&e);
+    }
+    let acct = lock(server).accounts.get(&user).cloned();
+    match acct {
+        Some(a) => {
+            if !guard.hashing(|| verify(&a, &pass)) {
+                guard.login_failed(ip, Some(&user));
+                return err("wrong password");
+            }
+            if a.phc.is_none() {
+                if let Some(phc) = guard.hashing(|| argon2_hash(&pass)) {
+                    let mut s = lock(server);
+                    s.accounts.insert(user.clone(), Account { phc: Some(phc), ..Account::default() });
+                    s.save_accounts();
+                }
+            }
+        }
+        None if register => {
+            if user.to_lowercase().starts_with("bot ") {
+                return err("names starting with \"Bot\" are kept for bots");
+            }
+            if let Err(e) = guard.may_register(ip) {
+                return err(&e);
+            }
+            let Some(phc) = guard.hashing(|| argon2_hash(&pass)) else { return err("couldn't create the account") };
+            let mut s = lock(server);
+            if s.accounts.contains_key(&user) {
+                drop(s);
+                return err("that name was just taken");
+            }
+            if let Err(e) = s.use_invite(invite.as_deref()) {
+                drop(s);
+                guard.login_failed(ip, None);
+                return err(e);
+            }
+            s.accounts.insert(user.clone(), Account { phc: Some(phc), ..Account::default() });
+            s.save_accounts();
+            guard.registered(ip);
+        }
+        None => {
+            guard.login_failed(ip, None);
+            return err("no such account (tap Register to create it)");
+        }
+    }
+    let mut s = lock(server);
+    if let Some(c) = s.conns.get_mut(&id) {
+        c.user = Some(user.clone());
+    }
+    s.send(id, &ServerMsg::Welcome { user });
+    s.handle(id, ClientMsg::ListGames);
+}
+
+type Reader = Box<dyn BufRead + Send>;
+type Writer = Box<dyn Write + Send>;
+
+/// TLS handshake or plaintext, decided by the first byte (a TLS record starts with 0x16).
+fn setup(cfg: &Config, tls: &Arc<rustls::ServerConfig>, stream: TcpStream, ip: IpAddr) -> Option<(Reader, Writer)> {
+    let mut b = [0u8; 1];
+    if stream.peek(&mut b).ok()? == 0 {
+        return None;
+    }
+    if b[0] == 0x16 {
+        let conn = rustls::ServerConnection::new(tls.clone()).ok()?;
+        let (r, w) = wire::split(conn, stream).ok()?;
+        return Some((Box::new(BufReader::with_capacity(16 * 1024, r)), Box::new(w)));
+    }
+    if cfg.plain == Plain::Lan && is_lan(ip) {
+        let w = stream.try_clone().ok()?;
+        return Some((Box::new(BufReader::new(stream)), Box::new(w)));
+    }
+    // an old app build: tell it why instead of just hanging up
+    let mut s = stream;
+    let _ = s.write_all(encode(&ServerMsg::Error { msg: "this server needs the updated app (secure connection)".into() }).as_bytes());
+    None
+}
+
+fn client_thread(server: Arc<Mutex<Server>>, guard: Arc<Guard>, cfg: Arc<Config>, tls: Arc<rustls::ServerConfig>, stream: TcpStream, ip: IpAddr) {
+    let l = &guard.limits;
     let _ = stream.set_nodelay(true);
-    let (tx, rx) = channel::<String>();
+    let _ = stream.set_read_timeout(Some(l.handshake_timeout));
+    let _ = stream.set_write_timeout(Some(l.write_timeout));
+    let kill = stream.try_clone().ok();
+    let Some((mut reader, mut w)) = setup(&cfg, &tls, stream, ip) else { return };
+    if let Some(k) = &kill {
+        let _ = k.set_read_timeout(Some(l.idle_timeout));
+    }
+    let (tx, rx): (SyncSender<String>, Receiver<String>) = sync_channel(SEND_QUEUE);
     let id = {
         let mut s = lock(&server);
         let id = s.next_conn;
         s.next_conn += 1;
-        s.conns.insert(id, Conn { user: None, open: None, tx });
+        s.conns.insert(id, Conn { user: None, open: None, tx, sock: kill.as_ref().and_then(|k| k.try_clone().ok()), ip });
         id
     };
-    let mut w = match stream.try_clone() {
-        Ok(w) => w,
-        Err(_) => return,
-    };
-    thread::spawn(move || {
+    let writer = thread::spawn(move || {
         for line in rx {
             if w.write_all(line.as_bytes()).is_err() {
                 break;
             }
         }
-        let _ = w.shutdown(std::net::Shutdown::Both);
     });
-    let reader = BufReader::new(stream);
-    for line in reader.lines() {
-        let Ok(line) = line else { break };
+    let mut bucket = Bucket::new(l);
+    loop {
+        let line = match wire::read_line(&mut reader, wire::MAX_CLIENT_LINE) {
+            Ok(Some(line)) => line,
+            Ok(None) => break,
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::InvalidData {
+                    lock(&server).send(id, &ServerMsg::Error { msg: format!("bad message: {e}") });
+                }
+                break;
+            }
+        };
         if line.trim().is_empty() {
             continue;
         }
-        let mut s = lock(&server);
-        match decode::<ClientMsg>(&line) {
+        if !bucket.take(l) {
+            lock(&server).send(id, &ServerMsg::Error { msg: "too many messages, slow down".into() });
+            break;
+        }
+        let msg = decode::<ClientMsg>(&line).and_then(|m| m.check().map(|_| m).map_err(String::from));
+        match msg {
+            Ok(ClientMsg::Hello { user, pass, register, invite }) => {
+                let logged_in = lock(&server).conns.get(&id).is_some_and(|c| c.user.is_some());
+                if logged_in {
+                    lock(&server).send(id, &ServerMsg::Error { msg: "already logged in".into() });
+                } else if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| hello(&server, &guard, id, ip, user, pass, register, invite))).is_err() {
+                    lock(&server).send(id, &ServerMsg::Error { msg: "internal error logging in".into() });
+                }
+            }
             Ok(m) => {
+                let mut s = lock(&server);
                 // a bug in one command must never take the whole server down
                 let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| s.handle(id, m)));
                 if r.is_err() {
                     s.send(id, &ServerMsg::Error { msg: "internal error handling that request".into() });
                 }
             }
-            Err(e) => s.send(id, &ServerMsg::Error { msg: format!("bad message: {e}") }),
+            Err(e) => lock(&server).send(id, &ServerMsg::Error { msg: format!("bad message: {}", e.chars().take(200).collect::<String>()) }),
         }
     }
-    lock(&server).conns.remove(&id);
+    lock(&server).conns.remove(&id); // drops tx: the writer drains what's queued, then ends
+    let _ = writer.join();
+    if let Some(k) = kill {
+        let _ = k.shutdown(std::net::Shutdown::Both);
+    }
 }
 
-/// Run the server on `listener` forever, persisting to `data`.
+/// Run the server on `listener` forever, persisting to `data` (self-signed TLS, plaintext from the LAN).
 pub fn serve(listener: TcpListener, data: PathBuf) {
-    let server = Arc::new(Mutex::new(Server::load(data)));
+    if let Err(e) = serve_with(listener, Config::new(data)) {
+        eprintln!("server: {e}");
+    }
+}
+
+/// Run the server with `cfg`. Returns only if the TLS setup fails.
+pub fn serve_with(listener: TcpListener, cfg: Config) -> Result<(), String> {
+    let (tls, fp) = tls::load(&cfg.data, cfg.tls_cert.as_deref(), cfg.tls_key.as_deref())?;
+    eprintln!("TLS cert sha256 {fp}");
+    let guard = Guard::new(cfg.limits.clone());
+    let mut srv = Server::load(cfg.data.clone());
+    srv.invites = cfg.invites.clone();
+    srv.guard = Some(guard.clone());
+    let server = Arc::new(Mutex::new(srv));
+    let cfg = Arc::new(cfg);
     {
         let server = server.clone();
         thread::spawn(move || {
@@ -449,8 +695,23 @@ pub fn serve(listener: TcpListener, data: PathBuf) {
             }
         });
     }
-    for stream in listener.incoming().flatten() {
-        let server = server.clone();
-        thread::spawn(move || client_thread(server, stream));
+    for stream in listener.incoming() {
+        let stream = match stream {
+            Ok(s) => s,
+            Err(_) => {
+                // e.g. out of file descriptors: don't spin
+                thread::sleep(Duration::from_millis(50));
+                continue;
+            }
+        };
+        let Ok(peer) = stream.peer_addr() else { continue };
+        let ip = peer.ip();
+        let Some(ticket) = guard.admit(ip) else { continue };
+        let (server, guard, cfg, tls) = (server.clone(), guard.clone(), cfg.clone(), tls.clone());
+        thread::spawn(move || {
+            let _ticket = ticket;
+            client_thread(server, guard, cfg, tls, stream, ip);
+        });
     }
+    Ok(())
 }

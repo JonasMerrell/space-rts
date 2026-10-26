@@ -17,7 +17,7 @@ fn running_game() -> Game {
 
 fn client_msgs() -> Vec<ClientMsg> {
     vec![
-        ClientMsg::Hello { user: "jonas".into(), pass: "pä$$ \"quoted\"\nnewline".into(), register: true },
+        ClientMsg::Hello { user: "jonas".into(), pass: "pä$$ \"quoted\"\nnewline".into(), register: true, invite: None },
         ClientMsg::ListGames,
         ClientMsg::CreateGame { name: "Friday".into(), size: SystemSize::Large, length_days: 7.0, speed: 1.0, max_players: 4, bots: vec!["easy".into(), "hard".into()] },
         ClientMsg::JoinGame { code: "K7QX".into() },

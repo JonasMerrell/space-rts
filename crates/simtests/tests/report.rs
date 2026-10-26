@@ -200,7 +200,7 @@ fn server_sends_a_report_on_open_covering_the_time_away() {
     std::thread::spawn(move || server::serve(l, dir));
 
     let mut c = Client::connect(addr);
-    c.send(&ClientMsg::Hello { user: "ann".into(), pass: "pw".into(), register: true });
+    c.send(&ClientMsg::Hello { user: "ann".into(), pass: "pw".into(), register: true, invite: None });
     c.wait(5.0, |m| matches!(m, ServerMsg::Welcome { .. }).then_some(()));
     // 600 game seconds per real second
     c.send(&ClientMsg::CreateGame { name: "away".into(), size: SystemSize::Small, length_days: 7.0, speed: 600.0, max_players: 2, bots: vec!["easy".into()] });
@@ -219,7 +219,7 @@ fn server_sends_a_report_on_open_covering_the_time_away() {
     // away for ~2 s real = ~20 game minutes
     std::thread::sleep(Duration::from_millis(2000));
     let mut c = Client::connect(addr);
-    c.send(&ClientMsg::Hello { user: "ann".into(), pass: "pw".into(), register: false });
+    c.send(&ClientMsg::Hello { user: "ann".into(), pass: "pw".into(), register: false, invite: None });
     c.wait(5.0, |m| matches!(m, ServerMsg::Welcome { .. }).then_some(()));
     c.send(&ClientMsg::Open { code: code.clone() });
     // the Report comes before the State

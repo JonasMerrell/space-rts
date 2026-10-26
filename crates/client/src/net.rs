@@ -1,6 +1,7 @@
-//! Background TCP connection to the game server (JSON lines). Never blocks the render loop.
-use proto::{decode, encode, ClientMsg, ServerMsg};
-use std::io::{BufRead, BufReader, Write};
+//! Background TLS connection to the game server (JSON lines). Never blocks the render loop.
+use crate::tls;
+use proto::{decode, encode, wire, ClientMsg, ServerMsg};
+use std::io::{BufReader, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::thread;
@@ -48,24 +49,45 @@ impl Net {
 }
 
 fn run(addr: String, hello: ClientMsg, out_rx: Receiver<ClientMsg>, in_tx: Sender<NetEvent>) {
+    let (addr, pin) = tls::split_pin(&addr);
     let addr = if addr.contains(':') { addr } else { format!("{addr}:{}", proto::DEFAULT_PORT) };
+    let fail = |m: String| {
+        let _ = in_tx.send(NetEvent::Failed(m));
+    };
     let sock = match addr.to_socket_addrs().ok().and_then(|mut a| a.next()) {
         Some(a) => a,
-        None => {
-            let _ = in_tx.send(NetEvent::Failed(format!("can't resolve {addr}")));
-            return;
-        }
+        None => return fail(format!("can't resolve {addr}")),
     };
     let stream = match TcpStream::connect_timeout(&sock, Duration::from_secs(6)) {
         Ok(s) => s,
-        Err(e) => {
-            let _ = in_tx.send(NetEvent::Failed(format!("can't reach {addr}: {e}")));
-            return;
-        }
+        Err(e) => return fail(format!("can't reach {addr}: {e}")),
     };
     let _ = stream.set_nodelay(true);
+    let (cfg, first_seen) = match tls::config(&addr, pin) {
+        Ok(c) => c,
+        Err(e) => return fail(format!("TLS setup: {e}")),
+    };
+    let conn = match tls::server_name(&addr).and_then(|n| rustls::ClientConnection::new(cfg, n).map_err(|e| e.to_string())) {
+        Ok(c) => c,
+        Err(e) => return fail(e),
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
+    let Ok(sock2) = stream.try_clone() else { return fail("socket error".into()) };
+    let (r, mut w) = match wire::split(conn, sock2) {
+        Ok(rw) => rw,
+        Err(e) => {
+            let msg = e.to_string();
+            return fail(if msg.contains(tls::CHANGED) {
+                format!("{addr}: {}. If you trust it, re-enter the server as {addr}#<new sha256>, or reinstall.", tls::CHANGED)
+            } else {
+                format!("secure connection to {addr} failed: {msg}")
+            });
+        }
+    };
+    tls::remember(&addr, &first_seen);
+    // the app's heartbeat notices a dead server; no socket timeout once connected
+    let _ = stream.set_read_timeout(None);
     let _ = in_tx.send(NetEvent::Connected);
-    let mut w = stream.try_clone().expect("clone");
     // writer
     thread::spawn(move || {
         if w.write_all(encode(&hello).as_bytes()).is_err() {
@@ -76,12 +98,11 @@ fn run(addr: String, hello: ClientMsg, out_rx: Receiver<ClientMsg>, in_tx: Sende
                 break;
             }
         }
-        let _ = w.shutdown(std::net::Shutdown::Both);
+        w.shutdown();
     });
     // reader
-    let reader = BufReader::with_capacity(1 << 20, stream);
-    for line in reader.lines() {
-        let Ok(line) = line else { break };
+    let mut reader = BufReader::with_capacity(1 << 20, r);
+    while let Ok(Some(line)) = wire::read_line(&mut reader, wire::MAX_SERVER_LINE) {
         match decode::<ServerMsg>(&line) {
             Ok(m) => {
                 if in_tx.send(NetEvent::Msg(m)).is_err() {

@@ -132,7 +132,7 @@ impl ClientBackend {
 
     fn connect(&mut self, register: bool) {
         if let Some((u, p)) = &self.creds {
-            self.net = Some(Net::connect(self.server.clone(), ClientMsg::Hello { user: u.clone(), pass: p.clone(), register }));
+            self.net = Some(Net::connect(self.server.clone(), ClientMsg::Hello { user: u.clone(), pass: p.clone(), register, invite: None }));
         }
     }
 

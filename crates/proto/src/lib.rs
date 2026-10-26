@@ -1,4 +1,6 @@
-//! Wire protocol between the game client and server: one JSON object per line over TCP.
+//! Wire protocol between the game client and server: one JSON object per line over TLS (TCP).
+pub mod wire;
+
 use serde::{Deserialize, Serialize};
 use sim::game::{Command, Event, Game, PlayerId};
 use sim::system::SystemSize;
@@ -8,7 +10,14 @@ pub const DEFAULT_PORT: u16 = 7777;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ClientMsg {
     /// Log in (or create the account when `register`).
-    Hello { user: String, pass: String, register: bool },
+    Hello {
+        user: String,
+        pass: String,
+        register: bool,
+        /// Needed to register when the server is invite-only.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        invite: Option<String>,
+    },
     ListGames,
     CreateGame { name: String, size: SystemSize, length_days: f64, speed: f64, max_players: usize, bots: Vec<String> },
     JoinGame { code: String },
@@ -23,6 +32,35 @@ pub enum ClientMsg {
     /// Notification poll: events for me that happened after unix time `since`, across all my games.
     Events { since: f64 },
     Ping,
+}
+
+/// Longest password the server will hash.
+pub const MAX_PASS: usize = 256;
+
+impl ClientMsg {
+    /// Size limits on everything a client controls, checked before the server acts on a message.
+    /// (`sim::Game::apply` checks a command's numbers and ids itself.)
+    pub fn check(&self) -> Result<(), &'static str> {
+        let short = |s: &str| s.len() <= 64;
+        let ok_f = |x: f64| x.is_finite();
+        let ok = match self {
+            ClientMsg::Hello { user, pass, invite, .. } => user.len() <= 64 && pass.len() <= MAX_PASS && invite.as_deref().is_none_or(short),
+            ClientMsg::CreateGame { name, length_days, speed, bots, .. } => {
+                name.len() <= 200 && ok_f(*length_days) && ok_f(*speed) && bots.len() <= 16 && bots.iter().all(|b| short(b))
+            }
+            ClientMsg::JoinGame { code } | ClientMsg::StartGame { code } | ClientMsg::Open { code } | ClientMsg::RemoveBot { code, .. } => short(code),
+            ClientMsg::AddBot { code, difficulty } => short(code) && short(difficulty),
+            ClientMsg::SetFaction { code, faction } => short(code) && short(faction),
+            ClientMsg::Cmd { code, .. } => short(code),
+            ClientMsg::Events { since } => !since.is_nan(),
+            ClientMsg::ListGames | ClientMsg::Ping => true,
+        };
+        if ok {
+            Ok(())
+        } else {
+            Err("message fields out of range")
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
