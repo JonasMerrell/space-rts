@@ -42,21 +42,32 @@ fn a_player_always_sees_all_of_their_own_stuff() {
     }
 }
 
+/// `view_for` must agree with the vision the server computed at the last tick (`Player.vision`):
+/// nothing outside it, and no enemy plans unless a scanner covers that ship.
 #[test]
-#[ignore = "fog merge: view_for uses tick-time vision (stacking/flares); test recomputes sensors now — fog + tests threads to reconcile"]
 fn hidden_things_stay_hidden() {
-    let g = game4(2);
+    let mut g = game4(2);
+    g.advance_to(g.t + 3.0 * TICK); // a few ticks so vision/intel are current
     for p in 0..4 {
         let v = g.view_for(p);
-        let sensors = g.sensors(p);
+        let vis = &g.players[p as usize].vision;
         for s in &v.ships {
             if s.owner != p {
-                assert!(g.sees_ship(&sensors, s), "player {p} got an unseen enemy ship {}", s.name);
-                assert!(s.route.is_empty(), "enemy route leaked");
-                match &s.state {
-                    ShipState::Parked { departure, .. } => assert!(departure.is_none(), "enemy departure plan leaked"),
-                    ShipState::Flying(f) => assert!(f.burns.is_empty(), "enemy burns leaked"),
+                assert!(vis.ships.binary_search(&s.id).is_ok(), "player {p} got enemy ship {} outside its vision", s.id.0);
+                if vis.scanned.binary_search(&s.id).is_err() {
+                    assert!(s.route.is_empty(), "enemy route leaked");
+                    assert_eq!(s.fuel, 0.0, "enemy fuel leaked");
+                    match &s.state {
+                        ShipState::Parked { departure, .. } => assert!(departure.is_none(), "enemy departure plan leaked"),
+                        ShipState::Flying(f) => assert!(f.burns.is_empty(), "enemy burns leaked"),
+                    }
                 }
+            }
+        }
+        // every ship in vision does reach the client (no silent drops either)
+        for id in &vis.ships {
+            if g.ship(*id).is_some() {
+                assert!(v.ship(*id).is_some(), "player {p} lost ship {} that it can see", id.0);
             }
         }
         for pl in &v.players {
@@ -66,10 +77,15 @@ fn hidden_things_stay_hidden() {
             }
         }
         assert!(v.events.iter().all(|e| e.to.is_none() || e.to == Some(p)), "someone else's events leaked");
-        // far enemy homes: owner/queue come only from intel, never live
-        for (i, b) in g.bodies.iter().enumerate() {
-            if b.owner.is_some() && b.owner != Some(p) && !g.sees_body(&sensors, BodyId(i as u32)) {
-                assert!(v.bodies[i].queue.is_empty(), "build queue of an unseen body leaked");
+        // other players' build queues never leak, seen or not
+        for (i, b) in v.bodies.iter().enumerate() {
+            assert!(b.queue.iter().all(|j| j.owner == p), "player {p} sees someone else's build queue at body {i}");
+            if g.bodies[i].owner.is_some() && g.bodies[i].owner != Some(p) && vis.bodies.binary_search(&BodyId(i as u32)).is_err() {
+                // unseen enemy body: whatever the client has comes from old intel, not live state
+                let live = serde_json::to_string(&g.bodies[i]).unwrap();
+                let shown = serde_json::to_string(b).unwrap();
+                let intel = g.players[p as usize].intel.get(i).cloned().flatten().map(|x| serde_json::to_string(&x.state).unwrap());
+                assert!(shown != live || intel.as_deref() == Some(&shown[..]), "player {p} gets live state of unseen body {i}");
             }
         }
     }

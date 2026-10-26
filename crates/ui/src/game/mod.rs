@@ -1,5 +1,6 @@
 //! In-game screen: map + HUD + time scrubber + selection sheet + planner/node editor + chat + toasts.
 
+pub mod details;
 pub mod map;
 mod panels;
 mod research;
@@ -68,6 +69,10 @@ pub struct GameScreen {
     pub hint: Option<(String, f64)>,
     /// Owned-body sheet tab: 0 upgrades, 1 shipyard.
     pub body_tab: usize,
+    /// Upgrade/ship-class detail sheet shown over the planet panel.
+    pub detail: Option<details::Detail>,
+    /// Resource breakdown sheet (0 matter, 1 energy, 2 fuel) opened from the top bar.
+    pub res_open: Option<usize>,
     /// In-game menu popover open.
     pub menu_open: bool,
     /// Research overlay open, and which branch tab it shows.
@@ -103,6 +108,8 @@ impl GameScreen {
             hint: None,
             body_tab: 0,
             menu_open: false,
+            detail: None,
+            res_open: None,
             research_open: false,
             research_branch: 0,
             stations_for: None,
@@ -403,6 +410,9 @@ impl GameScreen {
         }
         self.owned = owned;
         if self.selected != self.last_selected {
+            if self.last_selected.is_some() {
+                self.detail = None;
+            }
             match (self.last_selected, self.selected) {
                 (None, Some(_)) => sfx("menu_open"),
                 (Some(_), None) => sfx("menu_close"),

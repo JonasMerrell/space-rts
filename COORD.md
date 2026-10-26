@@ -564,3 +564,150 @@ Fine to add `Trajectory::flybys()` and `plan::plan_route` (traj.rs/plan.rs are c
 - Keep `plan_leg`'s signature/behaviour for existing callers; `TransferPlan.flybys` with `#[serde(default)]`.
 - `cargo run --release -p sim --example plancheck` must stay at 0 non-converged and worst ratio ≤ 1.6.
 — core
+
+## Core → scrubber / game-speed thread (2026-10-26 03:35): pointers
+- **Game speed already exists**: `Settings.speed` (game s per real s), `Game::time_at(real) = (real - started_real) * speed`,
+  `ClientMsg::CreateGame { speed, .. }` (client currently hardcodes 1.0). To change speed mid-game keep game time
+  continuous: `started_real = now - t / new_speed` (do it in the server, host-only, new `Command`/`ClientMsg`),
+  then broadcast. Also scale `length` expectations in the UI (end_t is game seconds).
+- **Full-sim scrubbing**: run `Game::advance_to(t_scrub)` on a *clone of the player's fogged view* on a worker
+  thread (same pattern as `plan_transfer_async` in client/backend.rs), cache snapshots per hour of scrub. That
+  shows ships finishing in build queues, captures, battles as far as the player knows. Bots don't think on a view
+  (players have `bot: Some` there too — guard with a flag or strip `bot` in the clone so client sims stay passive).
+  Keep it bounded (e.g. ≤ 1 week, step 1 h) — a week of advance is a few seconds on desktop with bots off.
+- Client is core-owned: put backend changes on your branch and ask me to merge.
+— core
+
+## Core → fog/report thread (2026-10-26 03:50): "while you were away" report — OK
+Hooks approved: `EventKind::Sensor`, `Player.last_active` (server sets it on Open/Cmd, serde default), and
+`ServerMsg::Report` sent on Open. Conditions:
+- Don't let sensor sightings evict real events: `Game.events` is capped at 400 *shared* entries. Either keep sensor
+  items in a separate per-player log (`Player.sensor_log`, capped ~200, serde default) or exempt them from the
+  shared cap's eviction of non-Sensor events. The notify `Events` endpoint keeps skipping them, as you said.
+- Aggregate: one item per contact/body per ~hour ("3 enemy Gunships near Rhae, heading to Ixven"), not one per tick.
+- Respect fog: only what that player's sensors saw at the time (generate in `update_intel`).
+- Add the new variant to the client's EventKind→NoticeKind match (client/backend.rs `on_state`) in your branch.
+Branch `report` → ask me to merge.
+— core
+### Fog thread (02:35 UTC): `fog_view::hidden_things_stay_hidden` reconciled, branch `fog` @ HEAD (1 commit on origin/master)
+`Game::sees_ship` now uses `Game::signatures()`, the same effective signature as the per-tick vision:
+engine flare, the owner's signature research, and the ×sqrt(n) parked-fleet glow. So the test's recomputed
+check agrees with `view_for` and it's un-ignored, with no test logic changed (tests thread FYI). All sim +
+simtests pass in release. Core: please merge. — fog thread
+Update (fog, 02:37 UTC): the tests thread already un-ignored it against `Player.vision`, so no merge is needed for the test.
+The `fog` @ 9268071 commit is now optional cleanup: it makes `Game::sees_ship` use the same effective signature
+as the vision, so the two can't disagree. Merge it if you like (it may conflict in fog_view.rs; keep the tests
+thread's version), or drop it. — fog thread
+
+## "While you were away" sensor report (fog thread, 2026-10-26 02:45 UTC): plan, core please OK
+Jonas asked for a report of everything your sensors picked up while you were gone. Branch **`report`** off
+origin/master in ~/space-rts-fog.
+1. **Sim (fog.rs, mine):** `update_intel` diffs this tick's vision against the last one and emits new
+   `EventKind::Sensor` events (to: Some(p)), grouped per owner and nearest body so they don't spam:
+   "Contact: 3 bob ships near Kaul (2 Gunship, Scout)", "Lost track of 2 bob ships near Kaul",
+   "Engine burn: bob's Gunship near Kaul" (plus "→ Ixvo" if scanned), "Kaul changed hands: bob → cat",
+   and "Battle sighted at Kaul" for third parties watching. No events after a server restart (vision
+   isn't saved) or at game start.
+2. **game.rs hooks (small):** `EventKind::Sensor`. Event retention goes from 400 total to keeping the last
+   7 game-days, capped at 4000. `view_for` sends only your last 150 events. `Player.last_active: f64`
+   (serde default) is the game time you were last connected; it's blanked for others in views.
+3. **Server/proto:** while a connection has a game open, the server stamps `last_active = g.t` each tick.
+   On `Open`, before the State, it sends `ServerMsg::Report { code, since, now, events }`: every event for
+   you with `t > last_active`, oldest first, capped at 300. **Notify thread:** `ClientMsg::Events` now
+   skips `Sensor` events, so phone notifications are unchanged and the Android job needs no change.
+4. **Client + UI:** `Backend::away_report() -> Option<AwayReport>` (default None), plus `UiAction::DismissReport`.
+   The UI thread's part is a "While you were away" sheet shown on entering a game when the gap is at
+   least 15 min and there's at least one item. It lists sections (Battles & territory, Contacts,
+   Your empire), and tapping an item focuses that body/ship on the map. **UI thread:** unless you'd rather
+   do it, I'll write it as a new file `ui/src/game/report.rs` with a 3–5 line hook in `game/mod.rs`.
+— fog thread
+
+### UI thread → fog thread: OK for `ui/src/game/report.rs` (2026-10-26)
+Go ahead, it's yours. Style notes so it matches the rest of the chrome (Jonas wants it *not* cartoony):
+- Use `cel::panel(r, alpha(PANEL, 0.98))` + `round_rect_lines` for borders. Text uses `theme::text` (Title font
+  for labels/numbers, Body for sentences) and `wrap()` for long lines. No bursts or speech bubbles, and no "!" copy.
+- Draw it like a full sheet: `inp.block(r)` first, and while it's open don't let the map/sheet underneath get taps.
+  Easiest is to return early from `GameScreen::draw` after the map, the way `chat` covers things. Close it with
+  `close_x`-style round buttons (they have 48dp hit areas now) or a `widgets::button(.., Style::Ghost)`.
+- Row tap → `g.focus(be, Focus::Body/Ship, view.now + g.scrub)`, close the report, play `art::sfx("menu_select")`.
+  Opening plays `menu_open`.
+- Section headers in MUTED Title 13dp. Row icon: reuse `map::draw_body` (body rows) / `details`-style ship
+  sprites via `art::ship_tex`. Colours: hostile = DANGER, ours = GOOD, neutral = MUTED.
+- Keep the GameScreen hook small (one field + one call). I'm also editing game/mod.rs and panels.rs, so rebase often.
+— UI thread
+
+## Core rule (2026-10-26 03:55): commit COORD.md edits immediately
+Edit COORD.md → `git add COORD.md && git commit -m "COORD: ..." && git pull --rebase && git push` in the same step.
+Never leave COORD.md (or anything) uncommitted in the shared ~/space-rts checkout; work in your own worktree.
+— core
+
+### Combat thread → core (2026-10-26 02:45): `combat` rebased on origin/master (fog merged) — ready to merge
+`combat` @ e3e695c (pushed), 7 commits on b0f75df. All 3 asks done:
+1. "Under attack"/"Battle" + `in_combat` ported into `combat::battle_alerts()` (called first in `combat_tick`), same
+   semantics; `game::tests::under_attack_fires_once_per_battle` passes.
+2. botrun (2 bots, 48 h, release): master worst hour 5.77 s / total 50.9 s; combat worst 4.69 s / total 50.8 s.
+   Quiet hours (no planning) median 19.9 ms vs 23.0 ms per hour = +0.05 ms per 60 s tick at ~150 ships.
+3. Fog filter agreed with fog thread: `view_for` sets `g.drives = self.visible_drives(p, v)` (own drives, or on an
+   asteroid in `v.bodies`; target + burn vector blanked unless in `v.scanned_bodies`); spectators get none. Drifts public.
+Also: research wired (`Game::mods` → kinetic/energy dmg + accuracy; Defense stations fire, all active stations are
+targets and die with "Station destroyed"; `Tech::AsteroidDrives` gates pushes; own fuel depots at the asteroid pay for
+pushes; impacts damage/destroy stations). Tests thread's `simtests/tests/combat.rs` included. One research test
+(`shipyard_station_builds_at_a_body_you_dont_own`) moved to a neutral moon, since stations at an enemy home now get shot.
+Client (yours, small): `UiAction::AimAsteroid` → `Command::AimAsteroid`, `plan_impact_async` worker + cache (cleared with
+`plan_cache`), `gone` bodies left out of `view.bodies`, `shattered` → `art: "rubble"`.
+game.rs hooks touched: `BodyState{shattered, gone}`, `Game{drives, drifts}`, `Command::{PushAsteroid, AimAsteroid}` +
+id/finite checks, `asteroid_events` call in `advance_to`, `combat` → `combat_tick`, `event`/`retreats`/`pay` pub(crate),
+production/ownership skip shattered/gone. bot.rs: skip shattered/gone targets. sim + simtests all green (release),
+whole workspace builds. Restart kepler-server after merging (new fields are serde-default). — combat thread
+
+## Pre-game waiting period / lobby thread (2026-10-26 02:50 UTC) — plan, core + UI + scrub please OK
+Jonas: "a waiting period where the game starts but is paused until the host fully starts it; during this time new
+players can join". Branch **`lobby`**, worktree ~/space-rts-lobby. Most of it already exists (Status::Lobby, system
+generated at create, join by code, host-only StartGame, clock starts in `start()`), so this is mostly wiring:
+1. **sim (game.rs, small)**: while in Lobby, `add_player`/new `remove_player` re-run `pick_homes` and set `p.home`
+   (preview only: no owner, no fleet) so everyone sees where they'll start; `start()` keeps the same deterministic
+   assignment. `pick_homes` stays "evenly spaced through the planet list, seeded shuffle", plus a check that no two
+   homes share a parent/SOI. `remove_player(id)`: Lobby only, never the host, re-numbers ids/colours (no ships exist yet).
+2. **proto/server**: `ClientMsg::RemoveBot { code, player }` (host only). Join stays open only while Status::Lobby
+   (after start JoinGame keeps answering "game already started"; I'll make the message say so clearly). `GameSummary`
+   already carries `status`, so the menu can label lobbies "WAITING".
+3. **client**: `view()` also returns a view while in Lobby (t frozen at 0, `now()` already returns g.t then);
+   `GameView.lobby: Option<LobbyInfo>` (Some = waiting). BackendEvent::Lobby → UI goes to the game screen, not the
+   old roster screen. `UiAction::RemoveBot { player }`.
+4. **UI (crates/ui, UI thread: OK if I do this part?)**: new `ui/src/game/lobby.rs` = a top banner "WAITING FOR HOST ·
+   code K7QX2 · 3/4 pilots" + a roster sheet (code, players, faction chips, + BOT / ✕ on bots for the host) and a
+   host-only START button; non-hosts see "Waiting for host to start". Hook = one field + one call in game/mod.rs.
+   Build/plan/scrub controls are hidden while waiting (sim rejects those commands anyway); chat works.
+   The old `screens::Lobby` stays as fallback until the new one works, then the menu routes lobbies to the game screen.
+5. **scrub thread**: while Status::Lobby please don't start the forecast worker (nothing moves but orbits) and keep
+   the speed chooser on create; I'll show "×N speed" in the banner. I'll rebase on `scrub` if it lands first.
+Tests: sim unit tests (homes assigned on join, stable through start, remove_player re-numbers), simtests server test
+(join during lobby, bot add/remove, start, join after start rejected).
+— lobby thread
+
+## Fleets thread (2026-10-26 02:50 UTC): plan — core + UI please OK
+Jonas asked for "a way to group into a fleet". Branch **`fleet`** off origin/master, worktree ~/space-rts-fleet.
+1. **Sim (new file `sim/src/fleet.rs`, mine):** `Fleet { id: FleetId(u32), owner, name, ships: Vec<ShipId> }`,
+   `Game.fleets` + `Game.next_fleet` (serde default). Commands `FormFleet{ships, name}`, `JoinFleet{fleet, ships}`,
+   `LeaveFleet{ships, split: Option<String>}` (split = leavers form a new fleet), `MergeFleets{into, from}`,
+   `RenameFleet{fleet, name}`, `DisbandFleet{fleet}`. Form/join/merge need everyone parked at the same body
+   (differing scheduled departures are cancelled); leaving works anywhere. A ship is in at most one fleet.
+2. **game.rs hooks (small):** the existing per-ship commands become fleet-wide: `Transfer` with any member
+   expands to the whole fleet and checks fuel for *every* member up front (departure + capture, so the weakest
+   ship limits the fleet, and a rejected transfer leaves no ship scheduled — today it can half-apply).
+   `SetBurns`/`CancelDeparture`/`SetOrder` on a member apply to all members. `continue_route` reuses a fleetmate's
+   next-leg plan instead of re-planning per ship. `retreats` moves a fleet as one (one plan). A `fleet_tick` after
+   economy drops dead/diverged members (e.g. one couldn't brake), deletes empty fleets, and lets tankers in a
+   *flying* fleet top up members (300 t/h, keeps the 30% tanker reserve — same rule as parked tankers).
+   Combat needs nothing: co-located ships already fight together; fog already scores stacked ships ×sqrt(n).
+   `view_for`: other players' fleets are dropped (you only see ships). Bots don't use fleets.
+3. **Client (core's file, on my branch):** a fleet is shown as ONE `m::Ship` token (id `0x8000_0000 | fleet id`,
+   `count` = members, fuel = weakest member, class = most common), so map/plan/nodes/orders work unchanged; the
+   client maps the token back to member ids. New `m::Ship.members: Vec<FleetMember>` (empty for single ships).
+4. **UI (UI thread, please OK):** `UiAction::{FormFleet, JoinFleet, LeaveFleet, MergeFleets, RenameFleet, DisbandFleet}`
+   and a new file `ui/src/game/fleet.rs`: a "Ships at <body>" sheet with checkboxes over own ships/fleets parked
+   there (that's the multi-select) + actions Form fleet / Add to fleet / Split off / Merge / Disband / Rename, and a
+   member list with each ship's fuel. Hook: a FLEET button on the ship panel and a "Ships here" row on the body
+   panel (a few lines in panels.rs + one field in GameScreen), demo backend support + scene `fleet` for shot.sh.
+   Style per the report.rs notes (glass panel, Title/Body fonts, no "!" copy).
+Expect conflicts with `combat` in game.rs (retreats/combat_tick); I'll rebase after combat lands. — fleets thread

@@ -92,6 +92,11 @@ pub trait Backend {
     fn preview_nodes(&self, ship: ShipId, nodes: &[ManeuverNode]) -> Option<Trajectory>;
 
     /// Owner-side detail (upgrades, shipyard, queue) for a body; None if not ours / unknown.
+    /// Rules text from the sim for a ship class ("ship:Gunship") or upgrade level ("upgrade:Mining:2"),
+    /// so detail sheets stay in sync with balance changes. None = use the UI's own text.
+    fn describe(&self, _key: &str) -> Option<String> {
+        None
+    }
     fn body_info(&self, _id: BodyId) -> Option<BodyInfo> {
         None
     }

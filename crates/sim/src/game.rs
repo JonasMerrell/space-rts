@@ -108,6 +108,39 @@ impl ShipClass {
             _ => 1.0,
         }
     }
+
+    /// Player-facing description generated from the live stats, so UI text follows balance changes.
+    pub fn describe(self) -> String {
+        let s = self.stats();
+        let strong: Vec<&str> = ShipClass::ALL.iter().filter(|&&c| self.vs(c) > 1.0 && c != ShipClass::Tanker).map(|c| c.stats().name).collect();
+        let weak: Vec<&str> = ShipClass::ALL.iter().filter(|&&c| self.vs(c) < 1.0).map(|c| c.stats().name).collect();
+        let weapon = match s.weapon {
+            Weapon::Kinetic => "kinetic slugs (hard-hitting, slow projectiles)",
+            Weapon::Energy => "lasers (light-speed, lighter hits)",
+            Weapon::None => "no weapons",
+        };
+        let dv = s.ve * ((s.dry_mass + s.fuel_cap) / s.dry_mass).ln();
+        let mut out = format!(
+            "{} — {:.0} hull, {:.0} damage/h, {weapon}. Δv {:.1} km/s on full tanks ({:.0} t fuel). Signature {:.1}×.",
+            s.name, s.hp, s.attack, dv, s.fuel_cap, s.signature
+        );
+        if !strong.is_empty() {
+            out += &format!(" Strong vs {}.", strong.join(", "));
+        }
+        if !weak.is_empty() {
+            out += &format!(" Weak vs {}.", weak.join(", "));
+        }
+        if self.vs_defense() != 1.0 {
+            out += &format!(" {:.1}× vs planetary defenses.", self.vs_defense());
+        }
+        if self == ShipClass::Tanker {
+            out += " Refuels friendly ships parked with it.";
+        }
+        if s.min_shipyard > 1 {
+            out += &format!(" Needs shipyard level {}.", s.min_shipyard);
+        }
+        out
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -277,6 +310,21 @@ impl Upgrade {
         let k = level as f64;
         (m * k, e * k, 1800.0 * k)
     }
+    /// Player-facing effect of reaching `level`, generated from the same numbers the rules use.
+    pub fn describe(self, level: u8) -> String {
+        let l = level as f64;
+        match self {
+            Upgrade::Mining => format!("Matter output ×{:.0} (60/h base per body).", 1.0 + l),
+            Upgrade::Solar => format!("+{:.0} energy/h at 1 AU-equivalent; falls off with distance² from the star.", 60.0 * l),
+            Upgrade::Reactor => format!("+{:.0} energy/h anywhere. Costs the same as solar.", 60.0 * l),
+            Upgrade::Refinery => format!("Refines {:.0} t fuel/h (0.5 energy per t); fuel stock cap {:.0} t.", 120.0 * l, 500.0 + 1500.0 * l),
+            Upgrade::Shipyard => format!("Builds ships ×{:.1} speed{}.", 1.0 + 0.5 * (l - 1.0).max(0.0), if level >= 2 { "; can build Dreadnoughts" } else { "" }),
+            Upgrade::Defense => format!("Planetary guns: {:.0} damage/h, {:.0} hp, regenerate 10%/h.", 40.0 * l, 250.0 * l),
+            Upgrade::Telescope => format!("Sensor range {:.0} Mm from this body.", (60_000.0 + 250_000.0 * l) / 1000.0),
+            Upgrade::Research => format!("Research lab level {level}: runs one project; higher tiers need higher labs."),
+        }
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Upgrade::Mining => "Mining",
