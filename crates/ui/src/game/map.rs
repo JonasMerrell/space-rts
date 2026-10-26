@@ -343,29 +343,48 @@ pub fn status_badge(c: Vec2, st: ShipStatus) {
     }
 }
 
-/// What's under a tap: ships first (they're small), then bodies.
-pub fn hit_test(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64, p: Vec2) -> Option<Focus> {
-    let mut best: Option<(f32, Focus)> = None;
-    for sh in &view.ships {
-        if let Some((sp, _)) = ship_screen(be, view, cam, sh, t) {
-            let d = sp.distance(p);
-            if d < 22.0 * s() && best.is_none_or(|(bd, _)| d < bd) {
-                best = Some((d, Focus::Ship(sh.id)));
-            }
-        }
-    }
-    if best.is_some() {
-        return best.map(|b| b.1);
-    }
+/// What's under a tap. Bodies win: a tap on or near a planet/asteroid selects the body, and the ships
+/// parked around it only become tappable once that body (or one of its ships) is selected.
+/// Ships out in open space are always tappable.
+pub fn hit_test(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64, p: Vec2, selected: Option<Focus>) -> Option<Focus> {
+    // Nearest body whose tap zone (body + its parked-ship ring) contains p.
+    let mut body: Option<(f32, &Body)> = None;
     for b in &view.bodies {
         let c = cam.to_screen(be.body_pos(b.id, t));
-        let r = body_radius_px(b, cam).max(22.0 * s());
+        let zone = (body_radius_px(b, cam) + 30.0 * s()).max(26.0 * s());
         let d = c.distance(p);
-        if d < r && best.is_none_or(|(bd, _)| d < bd) {
-            best = Some((d, Focus::Body(b.id)));
+        if d < zone && body.is_none_or(|(bd, _)| d < bd) {
+            body = Some((d, b));
         }
     }
-    best.map(|b| b.1)
+    // The body the current selection "lives at": the body itself or the parking spot of a selected ship.
+    let open_body = match selected {
+        Some(Focus::Body(b)) => Some(b),
+        Some(Focus::Ship(sid)) => view.ship(sid).filter(|sh| !is_flying(sh, t)).and_then(|sh| sh.parked_at),
+        None => None,
+    };
+    let mut ship: Option<(f32, ShipId)> = None;
+    for sh in &view.ships {
+        let Some((sp, _)) = ship_screen(be, view, cam, sh, t) else { continue };
+        let d = sp.distance(p);
+        if d >= 22.0 * s() || ship.is_some_and(|(bd, _)| d >= bd) {
+            continue;
+        }
+        let allowed = if is_flying(sh, t) {
+            // in transit: only blocked when it's passing right over a body that isn't open
+            body.is_none_or(|(_, b)| open_body == Some(b.id))
+        } else {
+            sh.parked_at.is_none() || sh.parked_at == open_body
+        };
+        if allowed {
+            ship = Some((d, sh.id));
+        }
+    }
+    match (ship, body) {
+        (Some((_, id)), _) => Some(Focus::Ship(id)),
+        (None, Some((_, b))) => Some(Focus::Body(b.id)),
+        _ => None,
+    }
 }
 
 /// Nearest time on a timed polyline to screen point `p`, if within `max_px`.
