@@ -168,7 +168,10 @@ impl GameScreen {
             panels::hud(self, inp, view);
             panels::sheet(self, inp, be_ref, view);
             panels::scrubber(self, inp, view);
-            panels::toasts(self, inp, be_ref, view);
+            // Toasts sit over the chat panel's corner; hold them while chatting.
+            if !self.chat_open {
+                panels::toasts(self, inp, be_ref, view);
+            }
             panels::hint(self);
             if self.chat_open {
                 panels::chat(self, inp, view);

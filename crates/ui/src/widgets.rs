@@ -49,7 +49,9 @@ pub fn button(inp: &mut Input, r: Rect, label: &str, st: Style) -> bool {
 
 /// Round button with a short label or an "@icon" name. `fill` tints the ring when not plain.
 pub fn round_button(inp: &mut Input, c: Vec2, rad: f32, label: &str, fill: Color, badge: usize) -> bool {
-    let r = Rect::new(c.x - rad, c.y - rad, rad * 2.0, rad * 2.0);
+    // Touch target is at least 48dp across even when the button is drawn smaller.
+    let hit = rad.max(24.0 * s());
+    let r = Rect::new(c.x - hit, c.y - hit, hit * 2.0, hit * 2.0);
     inp.block(r);
     let down = inp.holding(r);
     let ring = if fill == PAPER { Color::new(1.0, 1.0, 1.0, 0.3) } else { alpha(fill, 0.8) };

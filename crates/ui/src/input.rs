@@ -4,7 +4,8 @@
 use crate::theme::s;
 use macroquad::prelude::*;
 
-const TAP_SLOP_DP: f32 = 10.0;
+/// Movement allowed before a touch counts as a drag (fingers wobble more than mice).
+const TAP_SLOP_DP: f32 = 16.0;
 const LONG_PRESS_S: f64 = 0.5;
 
 #[derive(Default)]
