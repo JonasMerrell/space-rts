@@ -194,3 +194,36 @@ fn per_ip_connection_cap() {
     w.write_all(encode(&ClientMsg::Ping).as_bytes()).unwrap();
     assert!(matches!(next(&mut r), Some(ServerMsg::Pong)), "slots come back");
 }
+
+#[test]
+fn register_with_an_invite_through_the_app_backend() {
+    use space_rts::backend::ClientBackend;
+    use ui::{Backend, BackendEvent, UiAction};
+    let data = temp_dir("invite-app");
+    let inv = data.join("invites.txt");
+    let codes = server::make_invites(&inv, 2).unwrap();
+    assert!(codes.iter().all(|c| c.len() == 9 && c.as_bytes()[4] == b'-'), "{codes:?}");
+    let addr = start(Config { invites: Some(inv.clone()), ..Config::new(data) });
+    let wait = |be: &mut ClientBackend| -> Result<String, String> {
+        let end = Instant::now() + Duration::from_secs(20);
+        while Instant::now() < end {
+            for e in be.poll() {
+                match e {
+                    BackendEvent::LoggedIn { user } => return Ok(user),
+                    BackendEvent::LoginFailed(m) => return Err(m),
+                    _ => {}
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Err("timeout".into())
+    };
+    let mut be = ClientBackend::new(addr.clone());
+    be.act(UiAction::Login { server: addr.clone(), user: "zoe".into(), pass: "pw".into(), register: true, invite: String::new() });
+    assert!(wait(&mut be).unwrap_err().contains("invite"));
+    let mut be = ClientBackend::new(addr.clone());
+    // typed lower-case: codes match case-insensitively
+    be.act(UiAction::Login { server: addr.clone(), user: "zoe".into(), pass: "pw".into(), register: true, invite: codes[0].to_lowercase() });
+    assert_eq!(wait(&mut be), Ok("zoe".into()));
+    assert_eq!(std::fs::read_to_string(&inv).unwrap().trim(), codes[1]);
+}

@@ -20,7 +20,8 @@ pub enum BackendEvent {
 pub enum UiAction {
     /// Close the "while you were away" report.
     DismissReport,
-    Login { server: String, user: String, pass: String, register: bool },
+    /// `invite`: code for invite-only servers when registering ("" = none)
+    Login { server: String, user: String, pass: String, register: bool, invite: String },
     Logout,
     /// `speed`: game seconds per real second (1 = real time; 4 = a 7-day game takes 42 real hours).
     CreateGame { name: String, length_days: u32, speed: f64, bots: Vec<String> },

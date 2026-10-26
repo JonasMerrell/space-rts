@@ -43,7 +43,7 @@ async fn main() {
     ui::art::set_muted(true);
     let mut ui = Ui::new();
     let mut be = ClientBackend::new(addr);
-    be.act(UiAction::Login { server: String::new(), user: "Jonas".into(), pass: "pw".into(), register: true });
+    be.act(UiAction::Login { server: String::new(), user: "Jonas".into(), pass: "pw".into(), register: true, invite: String::new() });
     pump(&mut be, 5.0, |_, ev| ev.iter().any(|e| matches!(e, BackendEvent::LoggedIn { .. })));
     be.act(UiAction::CreateGame { name: "Scrub test".into(), length_days: 7, speed, bots: vec!["normal".into()] });
     pump(&mut be, 5.0, |_, ev| ev.iter().any(|e| matches!(e, BackendEvent::Lobby(_))));
