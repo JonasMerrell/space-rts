@@ -3,6 +3,8 @@
 //! Internet-facing: see `guard` for the abuse limits and `tls` for the certificate.
 pub mod guard;
 pub mod tls;
+#[cfg(test)]
+mod fuzz;
 
 use guard::{Bucket, Guard, Limits};
 use proto::{decode, encode, unix_now, wire, ClientMsg, GameSummary, ServerMsg};
