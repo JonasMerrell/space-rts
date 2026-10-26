@@ -164,6 +164,9 @@ pub struct Ship {
     pub destination: Option<BodyId>,
     /// Standing order while the player is away: retreat when outgunned (else hold and fight).
     pub retreat: bool,
+    /// Fog of war: `Some(t)` = an enemy ship last seen at game time t, drawn as a fading ghost on
+    /// its last known course; `None` = live.
+    pub seen_at: Option<f64>,
 }
 
 #[derive(Clone, Debug)]

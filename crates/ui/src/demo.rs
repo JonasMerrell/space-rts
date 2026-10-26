@@ -185,6 +185,7 @@ impl DemoBackend {
             nodes: vec![],
             destination: None,
             retreat: false,
+            seen_at: None,
         };
         let mut ships = vec![
             ship(1, "Red Fang", ShipClass::Gunship, 1, 3, Some(2)),
@@ -385,7 +386,7 @@ impl Backend for DemoBackend {
         if let Some(v) = self.view.as_mut() {
             for (body, label, _, class) in done {
                 let id = v.ships.iter().map(|s| s.id).max().unwrap_or(0) + 1;
-                v.ships.push(Ship { id, name: format!("New {label}"), class, owner: v.me, count: 1, fuel: 200.0, fuel_max: 400.0, parked_at: Some(body), trajectory: None, nodes: vec![], destination: None, retreat: false });
+                v.ships.push(Ship { id, name: format!("New {label}"), class, owner: v.me, count: 1, fuel: 200.0, fuel_max: 400.0, parked_at: Some(body), trajectory: None, nodes: vec![], destination: None, retreat: false, seen_at: None });
                 self.events.push(BackendEvent::Notice(Notice { kind: NoticeKind::Good, title: format!("{label} ready"), body: "Fresh from the shipyard".into(), focus: Some(Focus::Ship(id)) }));
             }
         }

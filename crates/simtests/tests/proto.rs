@@ -101,15 +101,18 @@ fn state_message_size_is_reasonable_for_a_phone() {
     assert!(n < 512 * 1024, "State is {n} bytes");
 }
 
-/// Design: planet contents are hidden without telescopes and small ships are hard to see. `State`
-/// currently ships the whole `Game`, so every client gets every enemy fleet. Un-ignore once the
-/// server sends a per-player view.
+/// Design: planet contents are hidden without telescopes and small ships are hard to see. The
+/// server sends each player `Game::view_for(me)` (see `server::send_state`).
 #[test]
-#[ignore = "not implemented yet: fog of war (State sends the full game to every player)"]
 fn state_hides_enemy_ships_outside_sensor_range() {
     let g = running_game();
-    let line = encode(&ServerMsg::State { game: Box::new(g.clone()), me: 0, real_time: 0.0 });
+    let line = encode(&ServerMsg::State { game: Box::new(g.view_for(0)), me: 0, real_time: 0.0 });
     let ServerMsg::State { game, .. } = decode::<ServerMsg>(&line).unwrap() else { panic!() };
-    let enemy_far = game.ships.iter().filter(|s| s.owner != 0 && s.class == ShipClass::Scout).count();
+    // (homes can be neighbours at conjunction — seed 77 has two 64 000 km apart — so only count
+    // scouts whose home is well outside player 0's home telescope)
+    let h0 = g.system.pos(g.players[0].home.unwrap(), g.t);
+    let far = |b: Option<BodyId>| b.is_some_and(|b| g.system.pos(b, g.t).dist(h0) > 400_000.0);
+    let enemy_far = game.ships.iter().filter(|s| s.owner != 0 && s.class == ShipClass::Scout && far(s.parked_at())).count();
+    assert!(g.ships.iter().filter(|s| s.owner != 0 && s.class == ShipClass::Scout && far(s.parked_at())).count() > 0, "test needs far homes");
     assert_eq!(enemy_far, 0, "client can see {enemy_far} enemy scouts parked at their far-away homes");
 }

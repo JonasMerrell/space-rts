@@ -2,7 +2,7 @@
 //! fleets) is only known from sensors: telescopes at owned bodies, sensor stations, and ships'
 //! own sensors. A ship is seen when it is within `range * sqrt(signature)` of a sensor, so small
 //! ships are hard to spot, dreadnoughts are visible from far away, a fleet parked together glows
-//! brighter than one ship, and an engine burn lights a ship up for a while.
+//! brighter than one ship (× sqrt(n)), and an engine burn lights a ship up for a while.
 //!
 //! Visibility is evaluated once per tick (`update_intel`) and cached per player, so the server
 //! can cut `Game::view_for(p)` cheaply for every State it sends.
@@ -155,23 +155,23 @@ impl Game {
     pub(crate) fn update_intel(&mut self) {
         let pos = self.ship_positions();
         let t = self.t;
-        // parked ships of one owner at one body are detected as a group: signatures add up
-        let mut group_sig: Vec<(BodyId, PlayerId, f64)> = vec![];
+        // parked ships of one owner at one body glow together: each is seen at its own
+        // signature × sqrt(group size), so a fleet is easier to spot but its scouts still less so
+        let mut groups: Vec<(BodyId, PlayerId, f64)> = vec![];
         for s in &self.ships {
             if let Some(b) = s.parked_at() {
-                let x = signature(s, t);
-                match group_sig.iter_mut().find(|g| g.0 == b && g.1 == s.owner) {
-                    Some(g) => g.2 += x,
-                    None => group_sig.push((b, s.owner, x)),
+                match groups.iter_mut().find(|g| g.0 == b && g.1 == s.owner) {
+                    Some(g) => g.2 += 1.0,
+                    None => groups.push((b, s.owner, 1.0)),
                 }
             }
         }
         let sig: Vec<f64> = self
             .ships
             .iter()
-            .map(|s| match s.parked_at() {
-                Some(b) => group_sig.iter().find(|g| g.0 == b && g.1 == s.owner).map(|g| g.2).unwrap_or(0.0),
-                None => signature(s, t),
+            .map(|s| {
+                let n = s.parked_at().and_then(|b| groups.iter().find(|g| g.0 == b && g.1 == s.owner)).map(|g| g.2).unwrap_or(1.0);
+                signature(s, t) * n.sqrt()
             })
             .collect();
         for p in 0..self.players.len() {
@@ -299,6 +299,9 @@ impl Game {
         for pl in g.players.iter_mut() {
             if pl.id != p {
                 blank_player(pl);
+            } else {
+                // ghosts are only for ships that are out of sight now
+                pl.contacts.retain(|c| g.ships.iter().all(|s| s.id != c.ship.id));
             }
         }
         g.events.retain(|e| e.to.is_none() || e.to == Some(p));

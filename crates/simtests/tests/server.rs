@@ -174,7 +174,8 @@ fn four_players_join_by_code_and_play() {
     assert!(ok, "{msg}");
     cs[0].state(30.0, |g, _| g.chat.iter().any(|m| m.text == "hello from cat"));
     // rule violations come back as CmdResult, not as a dropped connection
-    let (g, _) = cs[1].state(30.0, |_, _| true);
+    // (ann's own state: with fog of war bob may not see any of ann's ships)
+    let (g, _) = cs[0].state(30.0, |_, _| true);
     let anns = g.ships.iter().find(|s| s.owner == 0).unwrap().id;
     let (ok, msg) = cs[1].cmd(&code, Command::SetOrder { ship: anns, order: sim::game::StandingOrder::Retreat });
     assert!(!ok && msg.contains("not your ship"), "{msg}");

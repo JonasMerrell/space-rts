@@ -232,6 +232,14 @@ impl ClientBackend {
                 self.paths.insert(s.id.0, to_model_traj(&sys, &tr));
             }
         }
+        let me = self.me;
+        for c in game.players.get_mut(me as usize).map(|p| p.contacts.as_mut_slice()).unwrap_or_default() {
+            // ghosts coast on their last known arc
+            if let ShipState::Flying(f) = &mut c.ship.state {
+                let tr = f.trajectory(&sys).clone();
+                self.paths.insert(c.ship.id.0, to_model_traj(&sys, &tr));
+            }
+        }
         for s in &game.ships {
             if let ShipState::Parked { departure: Some(d), .. } = &s.state {
                 let tr = sim::traj::predict(&sys, d.state, &[], Some(d.to), d.state.t + g::Flight::HORIZON);
@@ -345,6 +353,11 @@ fn to_model_traj(sys: &sim::System, tr: &SimTraj) -> m::Trajectory {
     m::Trajectory { points }
 }
 
+/// Fog of war: last sightings of enemy ships that are out of sensor range now.
+fn ghosts(game: &Game, me: g::PlayerId) -> impl Iterator<Item = &sim::fog::Contact> {
+    game.players.get(me as usize).into_iter().flat_map(|p| p.contacts.iter()).filter(move |c| game.ship(c.ship.id).is_none())
+}
+
 fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Trajectory>) -> m::GameView {
     let sys = &game.system;
     let bodies = sys
@@ -410,8 +423,30 @@ fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Tr
                 nodes,
                 destination,
                 retreat: s.order == g::StandingOrder::Retreat,
+                seen_at: None,
             }
         })
+        .chain(ghosts(game, me).map(|c| {
+            let s = &c.ship;
+            m::Ship {
+                id: s.id.0,
+                name: s.name.clone(),
+                class: ship_class(s.class),
+                owner: s.owner,
+                count: 1,
+                fuel: 0.0,
+                fuel_max: s.class.stats().fuel_cap as f32,
+                parked_at: s.parked_at().map(|b| b.0),
+                trajectory: paths.get(&s.id.0).cloned(),
+                nodes: vec![],
+                destination: match &s.state {
+                    ShipState::Flying(f) => f.dest.map(|d| d.0),
+                    _ => None,
+                },
+                retreat: false,
+                seen_at: Some(c.seen_t),
+            }
+        }))
         .collect();
     let mut res = m::Resources::default();
     if let Some(p) = game.players.get(me as usize) {
@@ -634,7 +669,7 @@ impl Backend for ClientBackend {
 
     fn ship_pos(&self, id: ShipId, t: f64) -> Option<[f64; 2]> {
         let g = self.game.as_ref()?;
-        let s = g.ship(g::ShipId(id))?;
+        let s = g.ship(g::ShipId(id)).or_else(|| ghosts(g, self.me).find(|c| c.ship.id.0 == id).map(|c| &c.ship))?;
         match &s.state {
             ShipState::Parked { body, departure } => {
                 if let (Some(d), Some(p)) = (departure, self.paths.get(&id)) {
