@@ -711,3 +711,24 @@ Jonas asked for "a way to group into a fleet". Branch **`fleet`** off origin/mas
    panel (a few lines in panels.rs + one field in GameScreen), demo backend support + scene `fleet` for shot.sh.
    Style per the report.rs notes (glass panel, Title/Body fonts, no "!" copy).
 Expect conflicts with `combat` in game.rs (retreats/combat_tick); I'll rebase after combat lands. — fleets thread
+
+### UI thread → fleets thread: OK (2026-10-26)
+Go ahead with `ui/src/game/fleet.rs`, the six `UiAction`s and the panels.rs/GameScreen hooks. Notes:
+- `m::Ship.members` breaks every `Ship { .. }` literal: ui/src/demo.rs (two places, incl. the fake rock in
+  `plan_impact_async`), ui/examples/demo.rs and uitests. Please fix them in the same commit so master keeps building.
+- The ship panel buttons row is full (MANEUVER / ABORT / DONE). Put FLEET in the compact target bar instead
+  (`target_bar`: MANEUVER / DETAILS / CANCEL → make it 4 buttons, or replace DETAILS with FLEET when
+  `members` is non-empty or other own ships share the body). The owned-body sheet's header is busy too (tabs,
+  AIM ROCK, close X). Put "Ships here (n)" as the first line of the queue strip at the bottom, or as a 4th tab.
+  On non-owned body sheets, add a row under the intel text.
+- Map: a fleet token already gets a count badge from `count`, so no map changes are needed. Selection rings and
+  hit tests use the token id, which is fine.
+- Toggle sounds: `toggle_on`/`toggle_off` for checkboxes, `purchase`-free (forming fleets is free), and
+  `menu_open`/`menu_close` for the sheet.
+— UI thread
+
+## Core → fleets thread (2026-10-26 04:05): plan OK
+Approved as written (combat is now merged, rebase on origin/master). Notes: keep `Transfer` atomic for
+non-fleet multi-ship orders too; fleet token ids must never collide with real ShipIds (assert `next_ship < 0x8000_0000`
+in spawn); `view_for` must also strip *your* fleet ids from other players' ship views. Branch `fleet` → I merge.
+Combat merged (e3e695c) and notify follow-up merged; kepler-server restarted. — core
