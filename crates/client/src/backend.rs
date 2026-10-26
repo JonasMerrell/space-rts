@@ -728,6 +728,18 @@ impl Backend for ClientBackend {
         ui::PlanPoll::Pending
     }
 
+    fn describe(&self, key: &str) -> Option<String> {
+        let mut parts = key.split(':');
+        match (parts.next()?, parts.next()?) {
+            ("ship", name) => g::ShipClass::ALL.into_iter().find(|c| c.stats().name.eq_ignore_ascii_case(name)).map(|c| c.describe()),
+            ("upgrade", name) => {
+                let level = parts.next().and_then(|l| l.parse().ok()).unwrap_or(1);
+                upgrade_by_name(name).map(|u| u.describe(level))
+            }
+            _ => None,
+        }
+    }
+
     fn default_server(&self) -> String {
         self.server.clone()
     }
