@@ -386,9 +386,9 @@ FYI core: at seed 77 Small two homes are 64 000 km apart at t=600 (adjacent plan
 — fog thread
 
 ### Tests thread (2026-10-26, later)
-- Server crash regression test now active (thanks). Fog of war: `simtests/tests/fog.rs` (6 pass) —
+- Server crash regression test now active (thanks). Fog of war: `simtests/tests/fog_view.rs` (6 pass; renamed so it doesn't collide with the fog branch's `fog.rs`) —
   own stuff complete, unseen enemy ships/plans/stockpiles/intel/events never in `view_for`, big ships
-  seen further than scouts, intel is a stale snapshot until re-observed. Removed the proto fog stub.
+  seen further than scouts, intel is a stale snapshot until re-observed. Proto fog stub left in place for the fog branch to un-ignore.
 - `simtests/tests/client_e2e.rs`: 4 real `ClientBackend`s vs in-process server (no window): login,
   LoginFailed, create/join by code, start, identical body prediction across clients,
   `plan_transfer_async` returns in <100 ms and matches sync, schedule, re-login sees order, chat,
@@ -401,3 +401,30 @@ game.rs hooks (last_burn_t, contacts, vision) and the client ghost paths look go
 saved games and State JSON don't grow forever; (2) `vision` is recomputed every tick, so mark it `#[serde(skip)]`
 unless the client needs it (then keep it only in `view_for(me)` output). Merge once research has landed.
 — core
+- (notifications, 2026-10-26 03:05) **Branch `notify` ready to merge**, rebased on origin/master de26970, pushed.
+  Tested on emulator against a test server (:7787): login writes notify.json, forced job run posted
+  "Under attack" + "Game started" (grouped, red alert channel), second run only posted new events.
+  Sim test `under_attack_fires_once_per_battle` passes. Core: please ack and I'll fast-forward master
+  (or merge it yourself). Restart kepler-server after merging (new `in_combat` field is serde-default, old saves load).
+
+## Scrub / forecast + game-speed thread (2026-10-26 02:40) — plan, core + UI please OK
+Jonas: scrubbing must *fully simulate* (builds finish → ships appear, scheduled burns/departures/captures, combat,
+ownership), keep the focused thing centred, let him give orders to ships that are still being built, scrub ranges
+1h/10h/1d/3d/1w, and a game-speed multiplier at game creation. Branch **`scrub`**, worktree ~/space-rts-scrub.
+1. **Forecast (client)**: new `client/src/forecast.rs` worker thread. Takes the fog-filtered view `Game` the client
+   already has, runs the real sim forward (`advance_to` minute by minute, **no bots**: their plans are unknown) to
+   now+1 week (or game end) and records a keyframe whenever ships/states/owners/queues change. Restarted on every
+   snapshot / own order. Forecast-born ships get ids ≥ 0x8000_0000 and remember which build job made them.
+2. **Backend API (ui/backend.rs, tiny)**: `fn predicted(&self, t) -> Option<Rc<GameView>>` (view at t, incl. future
+   ships with `m::Ship.planned: Option<f64>` = ready time) + `fn forecast_until(&self) -> f64`; `ship_pos` handles t > now.
+3. **Orders for unbuilt ships (sim, small hooks in game.rs)**: `Job.then: Option<QueuedOrder{to, depart_t}>`
+   (serde default) + `Command::QueueOrder{body, done_t, to, depart_t}`; when the job spawns the ship it runs the
+   transfer. `Game::forecast_to(t)` = `advance_to` without `bot::think_all`. proto unchanged (Command is inside Cmd).
+4. **UI (crates/ui — UI thread, I'll keep it to the scrubber + map draw)**: range chips 1H 10H 1D 3D 1W (SCRUB_SPAN →
+   `GameScreen.scrub_span`), forecast progress on the bar, camera follows the selected ship/body while scrubbing,
+   map/sheet draw from `predicted(t)` when scrubbed, planned ships drawn as "building → ready +Xh", tap one at a
+   scrubbed time → normal target/plan flow → `ScheduleTransfer` (backend maps it to QueueOrder).
+5. **Game speed**: create-game screen gets a SPEED chooser (1× 2× 4× 8× 24×), `UiAction::CreateGame.speed`; server
+   already clamps/uses `settings.speed`. Lobby/menu show real length.
+Tests: simtests forecast (built ship appears at done_t, queued order departs, forecast never invents enemy moves).
+— scrub thread
