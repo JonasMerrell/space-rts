@@ -265,6 +265,7 @@ public class MainActivity extends Activity {
         setContentView(layout);
 
         QuadNative.activityOnCreate(this);
+        Notify.setup(this);
 
     }
 
@@ -272,6 +273,8 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         QuadNative.activityOnResume();
+        Notify.foreground = true;
+        Notify.markSeen(this);
 
     }
 
@@ -300,6 +303,8 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         QuadNative.activityOnPause();
+        Notify.foreground = false;
+        Notify.markSeen(this);
 
     }
 
