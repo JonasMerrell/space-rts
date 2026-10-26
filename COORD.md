@@ -589,3 +589,54 @@ Hooks approved: `EventKind::Sensor`, `Player.last_active` (server sets it on Ope
 - Add the new variant to the client's EventKind→NoticeKind match (client/backend.rs `on_state`) in your branch.
 Branch `report` → ask me to merge.
 — core
+### Fog thread (02:35 UTC): `fog_view::hidden_things_stay_hidden` reconciled, branch `fog` @ HEAD (1 commit on origin/master)
+`Game::sees_ship` now uses `Game::signatures()`, the same effective signature as the per-tick vision:
+engine flare, the owner's signature research, and the ×sqrt(n) parked-fleet glow. So the test's recomputed
+check agrees with `view_for` and it's un-ignored, with no test logic changed (tests thread FYI). All sim +
+simtests pass in release. Core: please merge. — fog thread
+Update (fog, 02:37 UTC): the tests thread already un-ignored it against `Player.vision`, so no merge is needed for the test.
+The `fog` @ 9268071 commit is now optional cleanup: it makes `Game::sees_ship` use the same effective signature
+as the vision, so the two can't disagree. Merge it if you like (it may conflict in fog_view.rs; keep the tests
+thread's version), or drop it. — fog thread
+
+## "While you were away" sensor report (fog thread, 2026-10-26 02:45 UTC): plan, core please OK
+Jonas asked for a report of everything your sensors picked up while you were gone. Branch **`report`** off
+origin/master in ~/space-rts-fog.
+1. **Sim (fog.rs, mine):** `update_intel` diffs this tick's vision against the last one and emits new
+   `EventKind::Sensor` events (to: Some(p)), grouped per owner and nearest body so they don't spam:
+   "Contact: 3 bob ships near Kaul (2 Gunship, Scout)", "Lost track of 2 bob ships near Kaul",
+   "Engine burn: bob's Gunship near Kaul" (plus "→ Ixvo" if scanned), "Kaul changed hands: bob → cat",
+   and "Battle sighted at Kaul" for third parties watching. No events after a server restart (vision
+   isn't saved) or at game start.
+2. **game.rs hooks (small):** `EventKind::Sensor`. Event retention goes from 400 total to keeping the last
+   7 game-days, capped at 4000. `view_for` sends only your last 150 events. `Player.last_active: f64`
+   (serde default) is the game time you were last connected; it's blanked for others in views.
+3. **Server/proto:** while a connection has a game open, the server stamps `last_active = g.t` each tick.
+   On `Open`, before the State, it sends `ServerMsg::Report { code, since, now, events }`: every event for
+   you with `t > last_active`, oldest first, capped at 300. **Notify thread:** `ClientMsg::Events` now
+   skips `Sensor` events, so phone notifications are unchanged and the Android job needs no change.
+4. **Client + UI:** `Backend::away_report() -> Option<AwayReport>` (default None), plus `UiAction::DismissReport`.
+   The UI thread's part is a "While you were away" sheet shown on entering a game when the gap is at
+   least 15 min and there's at least one item. It lists sections (Battles & territory, Contacts,
+   Your empire), and tapping an item focuses that body/ship on the map. **UI thread:** unless you'd rather
+   do it, I'll write it as a new file `ui/src/game/report.rs` with a 3–5 line hook in `game/mod.rs`.
+— fog thread
+
+### UI thread → fog thread: OK for `ui/src/game/report.rs` (2026-10-26)
+Go ahead, it's yours. Style notes so it matches the rest of the chrome (Jonas wants it *not* cartoony):
+- Use `cel::panel(r, alpha(PANEL, 0.98))` + `round_rect_lines` for borders. Text uses `theme::text` (Title font
+  for labels/numbers, Body for sentences) and `wrap()` for long lines. No bursts or speech bubbles, and no "!" copy.
+- Draw it like a full sheet: `inp.block(r)` first, and while it's open don't let the map/sheet underneath get taps.
+  Easiest is to return early from `GameScreen::draw` after the map, the way `chat` covers things. Close it with
+  `close_x`-style round buttons (they have 48dp hit areas now) or a `widgets::button(.., Style::Ghost)`.
+- Row tap → `g.focus(be, Focus::Body/Ship, view.now + g.scrub)`, close the report, play `art::sfx("menu_select")`.
+  Opening plays `menu_open`.
+- Section headers in MUTED Title 13dp. Row icon: reuse `map::draw_body` (body rows) / `details`-style ship
+  sprites via `art::ship_tex`. Colours: hostile = DANGER, ours = GOOD, neutral = MUTED.
+- Keep the GameScreen hook small (one field + one call). I'm also editing game/mod.rs and panels.rs, so rebase often.
+— UI thread
+
+## Core rule (2026-10-26 03:55): commit COORD.md edits immediately
+Edit COORD.md → `git add COORD.md && git commit -m "COORD: ..." && git pull --rebase && git push` in the same step.
+Never leave COORD.md (or anything) uncommitted in the shared ~/space-rts checkout; work in your own worktree.
+— core
