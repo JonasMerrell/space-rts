@@ -84,6 +84,8 @@ pub struct GameScreen {
     pub detail: Option<details::Detail>,
     /// Node-editor projection for (ship, nodes) — recomputed when the nodes change.
     pub node_outcome: Option<(ShipId, Vec<ManeuverNode>, NodeOutcome)>,
+    /// Camera follows the selection; a manual pan turns it off, a new selection or RE-CENTRE turns it on.
+    pub follow: bool,
     /// Resource breakdown sheet (0 matter, 1 energy, 2 fuel) opened from the top bar.
     pub res_open: Option<usize>,
     /// In-game menu popover open.
@@ -135,6 +137,7 @@ impl GameScreen {
             menu_open: false,
             detail: None,
             res_open: None,
+            follow: true,
             node_outcome: None,
             research_open: false,
             research_branch: 0,
@@ -223,6 +226,7 @@ impl GameScreen {
             // Overlays are drawn after the map but must win the input, so they register their
             // rects (Input::block) and the map only handles gestures that started elsewhere.
             self.handle_map_input(inp, be_ref, view, t);
+            self.follow_selection(be_ref, t);
 
             let cam = self.cam.unwrap();
             map::draw_orbits(be_ref, view, &cam, t);
@@ -253,6 +257,9 @@ impl GameScreen {
                 panels::hud(self, inp, view);
                 panels::sheet(self, inp, be_ref, view);
                 panels::scrubber(self, inp, be_ref, view);
+                if !self.chat_open {
+                    panels::recenter_button(self, inp);
+                }
                 // Toasts sit over the chat panel's corner; hold them while chatting.
                 if !self.chat_open {
                     panels::toasts(self, inp, be_ref, view);
@@ -318,11 +325,20 @@ impl GameScreen {
         };
 
         if on_map && !node_dragging {
+            let following = self.follow && self.selected.is_some();
             if let Some((c, k)) = inp.zoom {
+                // While following, zoom about the screen centre so the selection stays put.
+                let c = if following { vec2(screen_width() / 2.0, screen_height() * 0.33) } else { c };
                 cam.zoom_at(c, k, fit.zoom * 0.5, fit.zoom * 400.0);
             }
             if let Some(d) = inp.drag {
-                cam.pan_px(d);
+                // a deliberate pan (not pinch jitter) breaks the follow
+                if inp.zoom.is_none() && d.length() > 0.5 {
+                    self.follow = false;
+                }
+                if !(following && inp.zoom.is_some()) {
+                    cam.pan_px(d);
+                }
             }
         }
         self.cam = Some(cam);
@@ -340,7 +356,7 @@ impl GameScreen {
     }
 
     fn on_tap(&mut self, be: &dyn Backend, view: &GameView, cam: &Camera, t: f64, p: Vec2) {
-        let hit = map::hit_test(be, view, cam, t, p);
+        let hit = map::hit_test(be, view, cam, t, p, self.selected);
         match (&self.mode, hit) {
             (Mode::Target(ship), Some(Focus::Body(b))) => {
                 let ship = *ship;
@@ -438,7 +454,7 @@ impl GameScreen {
         // Long-press on one of our ships, or on its path, opens the node editor there.
         let mine: Vec<&Ship> = view.ships.iter().filter(|s| s.owner == view.me).collect();
         let mut pick: Option<(ShipId, f64)> = None;
-        if let Some(Focus::Ship(id)) = map::hit_test(be, view, cam, t, p) {
+        if let Some(Focus::Ship(id)) = map::hit_test(be, view, cam, t, p, self.selected) {
             if mine.iter().any(|s| s.id == id) {
                 pick = Some((id, t.max(view.now) + 600.0));
             }
@@ -490,6 +506,26 @@ impl GameScreen {
     }
 
     /// Centre the camera on a focus target.
+    /// Ease the camera toward the selected body/ship every frame (planets keep moving in real time).
+    fn follow_selection(&mut self, be: &dyn Backend, t: f64) {
+        if !self.follow {
+            return;
+        }
+        let target = match self.selected {
+            Some(Focus::Body(b)) => Some(be.body_pos(b, t)),
+            Some(Focus::Ship(s)) => be.ship_pos(s, t),
+            None => None,
+        };
+        let (Some(p), Some(cam)) = (target, self.cam.as_mut()) else { return };
+        // Aim for the middle of the map band left above the selection's bottom sheet (~1/3 down),
+        // not the true screen centre, which the sheet covers.
+        let dy = (screen_height() * 0.33 - screen_height() / 2.0) as f64 / cam.zoom;
+        let goal = [p[0], p[1] - dy];
+        let k = 1.0 - (-(get_frame_time() as f64) * 8.0).exp();
+        cam.center[0] += (goal[0] - cam.center[0]) * k;
+        cam.center[1] += (goal[1] - cam.center[1]) * k;
+    }
+
     pub fn focus(&mut self, be: &dyn Backend, f: Focus, t: f64) {
         let p = match f {
             Focus::Body(b) => Some(be.body_pos(b, t)),
@@ -513,6 +549,8 @@ impl GameScreen {
         }
         self.owned = owned;
         if self.selected != self.last_selected {
+            // something new picked: centre on it again
+            self.follow = true;
             if self.last_selected.is_some() {
                 self.detail = None;
             }

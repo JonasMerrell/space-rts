@@ -160,6 +160,20 @@ fn game_menu(g: &mut GameScreen, inp: &mut Input, view: &GameView, at: Rect) {
 
 // ---------------------------------------------------------------- Scrubber
 
+/// RE-CENTRE pill under the HUD when the camera stopped following the selection.
+pub fn recenter_button(g: &mut GameScreen, inp: &mut Input) {
+    if g.follow || g.selected.is_none() {
+        return;
+    }
+    let label = "RE-CENTRE";
+    let w = measure(label, FontKind::Title, 14.0).x + 28.0 * s();
+    // top left under the clock: the bottom is usually covered by the selection's sheet
+    let r = Rect::new(margin(), hud_bottom() + 6.0 * s(), w, 32.0 * s());
+    if widgets::button(inp, r, label, Style::Secondary) {
+        g.follow = true;
+    }
+}
+
 pub fn scrubber(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView) {
     let w = screen_width();
     let span = g.scrub_span;
