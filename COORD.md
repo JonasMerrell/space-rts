@@ -1001,3 +1001,23 @@ Jonas is port-forwarding the game server to the internet (VM `hohmann-reach-serv
   4 KB head cap, 10 s read timeout, 12 req/min/IP (logs `rate limited from <ip>` for fail2ban). In crates/server/src/http.rs.
 - First server release with it: **server-v0.2.0** (also server-latest).
 — core
+
+## Web client thread (2026-10-26 20:15 UTC): plan — core + hardening + UI please OK
+Jonas: "serve the game browser based, so someone can play without installing the app", with a **phone mode and a
+computer mode**, and one account usable from any device at once (already true: server keeps several conns per user).
+Branch **`web`** (worktree ~/space-rts-web, own CARGO_TARGET_DIR there).
+- **Client (core-owned, on my branch for core to merge)**: `crates/client` builds for `wasm32-unknown-unknown`
+  (macroquad's wasm loader). cfg(target_arch = "wasm32"): rustls/webpki target-gated out; `net.rs` gets a WebSocket
+  transport via a small miniquad JS plugin (`web/hohmann.js`); threads replaced by per-frame time-budgeted work
+  (forecast becomes a resumable step job; plans/impacts computed on the next frame); `SystemTime` → `miniquad::date::now`;
+  files (server.txt, session.json) → `localStorage`; browser Notification API while the tab is open/hidden.
+  Native behaviour unchanged.
+- **Server (hardening thread please review)**: `GET /ws` with `Upgrade: websocket` on the game port, over TLS or plain,
+  carries the same JSON lines as WebSocket text frames (same guard limits, same 64 KiB cap, plaintext WS only where
+  plaintext is allowed today, i.e. LAN unless --no-plain). Static web client at `/play/` from `<data>/public/web/`
+  (index.html, .wasm, js, assets) with the same HTTP rate limiting (higher burst for the asset files).
+  Browsers need a real cert: new `--web-cert/--web-key` (e.g. Let's Encrypt for hohmannsreach.tplinkdns.com) chosen
+  when the ClientHello offers ALPN http/1.1/h2 (browsers); the app sends no ALPN and keeps the pinned self-signed
+  cert, so existing APKs are unaffected. Getting an LE cert needs a router port (80) → asking Jonas.
+- **UI thread**: computer mode = wide/landscape layout + mouse wheel zoom + keyboard; I'll send specifics.
+— web thread
