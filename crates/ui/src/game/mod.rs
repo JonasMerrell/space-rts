@@ -1,6 +1,7 @@
 //! In-game screen: map + HUD + time scrubber + selection sheet + planner/node editor + chat + toasts.
 
 pub mod details;
+pub mod fleet;
 pub mod map;
 mod panels;
 mod research;
@@ -81,6 +82,8 @@ pub struct GameScreen {
     /// Station picker open for this body, and the highlighted kind.
     pub stations_for: Option<BodyId>,
     pub station_pick: Option<String>,
+    /// Fleet sheet (group / split / merge ships parked together).
+    pub fleet: Option<fleet::FleetSheet>,
     /// For sound cues: chat length and bodies we owned last frame.
     seen_chat: usize,
     owned: Vec<BodyId>,
@@ -114,6 +117,7 @@ impl GameScreen {
             research_branch: 0,
             stations_for: None,
             station_pick: None,
+            fleet: None,
             seen_chat: usize::MAX,
             owned: vec![],
             last_selected: None,

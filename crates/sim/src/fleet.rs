@@ -278,7 +278,7 @@ impl Game {
                 spare += (left - TANKER_RESERVE * s.stats().fuel_cap).max(0.0);
             } else if left < 0.0 {
                 deficit += -left;
-                if worst.as_ref().map_or(true, |w| -left > w.0) {
+                if worst.as_ref().is_none_or(|w| -left > w.0) {
                     worst = Some((-left, s.name.clone()));
                 }
             }

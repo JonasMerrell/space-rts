@@ -230,7 +230,7 @@ pub fn prediction_banner(scrub: f64) {
 
 // ---------------------------------------------------------------- Bottom sheet
 
-fn sheet_rect(h_dp: f32) -> Rect {
+pub(super) fn sheet_rect(h_dp: f32) -> Rect {
     let w = screen_width();
     let h = h_dp * s();
     Rect::new(margin(), scrub_top() - h - 18.0 * s(), w - 2.0 * margin(), h)
@@ -262,6 +262,13 @@ pub fn sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameV
             cel::round_rect(r, r.h / 2.0, PANEL);
             cel::round_rect_lines(r, r.h / 2.0, 1.5 * s(), ACCENT);
             text(&label, r.center().x, r.center().y + s(), 16.0, ACCENT, FontKind::Title, Align::Center);
+        }
+        Mode::Idle if g.fleet.is_some() => {
+            if g.fleet.as_ref().is_some_and(|f| f.opened_on != g.selected) {
+                g.fleet = None;
+            } else {
+                super::fleet::fleet_sheet(g, inp, view);
+            }
         }
         Mode::Idle if g.stations_for.is_some() => {
             let body = g.stations_for.unwrap();
@@ -613,6 +620,7 @@ fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view:
         format!("Queue: {}", items.join(" · "))
     };
     text(&q, r.x + 16.0 * s(), qy, 13.0, if info.queue.is_empty() { MUTED } else { PAPER }, FontKind::Body, Align::Left);
+    ships_here_button(g, inp, view, b, Rect::new(r.x + r.w - 150.0 * s(), qy - 10.0 * s(), 138.0 * s(), 22.0 * s()));
 }
 
 fn body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Body, can_build_station: bool) {
@@ -657,6 +665,7 @@ fn body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Body, ca
             text("Contents unknown. Build a telescope to see inside.", body_r.x, body_r.y + 12.0 * s(), 15.0, MUTED, FontKind::Body, Align::Left);
         }
     }
+    ships_here_button(g, inp, view, b, Rect::new(r.x + r.w - 150.0 * s(), r.y + r.h - 40.0 * s(), 138.0 * s(), 30.0 * s()));
     if can_build_station {
         let br = Rect::new(r.x + r.w - 128.0 * s(), r.y + 36.0 * s(), 112.0 * s(), 30.0 * s());
         if widgets::button(inp, br, "STATIONS", Style::Secondary) {
@@ -687,7 +696,9 @@ fn target_bar(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship) {
     inked(&title, r.x + 54.0 * s(), r.y + 20.0 * s(), 18.0, PAPER, Align::Left);
     text("Tap a planet or moon to plot a course", r.x + 54.0 * s(), r.y + 40.0 * s(), 13.0, ACCENT, FontKind::Body, Align::Left);
     let by = r.y + r.h - 52.0 * s();
-    let bw = (r.w - 4.0 * 10.0 * s()) / 3.0;
+    let group = super::fleet::can_group(view, sh);
+    let n = if group { 4 } else { 3 };
+    let bw = (r.w - (n + 1) as f32 * 10.0 * s()) / n as f32;
     let b = |i: usize| Rect::new(r.x + 10.0 * s() + i as f32 * (bw + 10.0 * s()), by, bw, 42.0 * s());
     if widgets::button(inp, b(0), "MANEUVER", Style::Secondary) {
         g.mode = Mode::Nodes(NodeEdit {
@@ -702,9 +713,29 @@ fn target_bar(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship) {
     if widgets::button(inp, b(1), "DETAILS", Style::Secondary) {
         g.mode = Mode::Idle;
     }
-    if widgets::button(inp, b(2), "CANCEL", Style::Ghost) {
+    if group && widgets::button(inp, b(2), "FLEET", Style::Secondary) {
+        open_fleet(g, sh.id, Some(Focus::Ship(sh.id)));
+    }
+    if widgets::button(inp, b(n - 1), "CANCEL", Style::Ghost) {
         g.mode = Mode::Idle;
         g.selected = None;
+    }
+}
+
+fn open_fleet(g: &mut GameScreen, anchor: ShipId, on: Option<Focus>) {
+    g.mode = Mode::Idle;
+    g.selected = on;
+    g.fleet = Some(super::fleet::FleetSheet::new(anchor, on));
+    art::sfx("menu_open");
+}
+
+/// "Ships here (n)" entry on a body sheet; opens the fleet sheet on the first of our ships there.
+fn ships_here_button(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Body, r: Rect) {
+    let here = super::fleet::ships_here(view, b.id);
+    let Some(first) = here.first().map(|s| s.id) else { return };
+    let n: u32 = here.iter().map(|s| s.count).sum();
+    if widgets::button(inp, r, &format!("SHIPS HERE ({n})"), Style::Secondary) {
+        open_fleet(g, first, Some(Focus::Body(b.id)));
     }
 }
 
@@ -818,7 +849,7 @@ fn plan_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
     }
 }
 
-fn close_x(inp: &mut Input, r: Rect) -> bool {
+pub(super) fn close_x(inp: &mut Input, r: Rect) -> bool {
     widgets::round_button(inp, vec2(r.x + r.w - 20.0 * s(), r.y + 20.0 * s()), 14.0 * s(), "X", PAPER, 0)
 }
 

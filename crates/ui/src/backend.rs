@@ -46,6 +46,15 @@ pub enum UiAction {
     BuildStation { body: BodyId, kind: String },
     /// Fit a drive (if needed) to our asteroid and push it onto a collision course with `target`.
     AimAsteroid { body: BodyId, target: BodyId },
+    /// Group ships/fleet tokens parked at one body into a new fleet (tokens bring all their ships).
+    FormFleet { ships: Vec<ShipId>, name: String },
+    /// Add ships/fleet tokens parked with `fleet` (a fleet token) to it.
+    JoinFleet { fleet: ShipId, ships: Vec<ShipId> },
+    /// Take member ships out of their fleet; `split` = two or more leavers form a new fleet with that name.
+    LeaveFleet { ships: Vec<ShipId>, split: Option<String> },
+    MergeFleets { into: ShipId, from: ShipId },
+    RenameFleet { fleet: ShipId, name: String },
+    DisbandFleet { fleet: ShipId },
 }
 
 /// Result of polling `Backend::plan_transfer_async`.

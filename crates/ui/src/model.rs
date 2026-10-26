@@ -168,6 +168,24 @@ pub struct Ship {
     /// Fog of war: `Some(t)` = an enemy ship last seen at game time t, drawn as a fading ghost on
     /// its last known course; `None` = live.
     pub seen_at: Option<f64>,
+    /// Non-empty when this token is one of our fleets: its ships (real ship ids, not the token's).
+    pub members: Vec<FleetMember>,
+}
+
+impl Ship {
+    pub fn is_fleet(&self) -> bool {
+        !self.members.is_empty()
+    }
+}
+
+/// One ship inside a fleet token.
+#[derive(Clone, Debug)]
+pub struct FleetMember {
+    pub id: ShipId,
+    pub name: String,
+    pub class: ShipClass,
+    pub fuel: f32,
+    pub fuel_max: f32,
 }
 
 #[derive(Clone, Debug)]
