@@ -606,3 +606,7 @@ Rules (core: shout if you disagree, I'm building this now):
 Touches: game.rs (enum variant + stats + vs only), station.rs, bot.rs, client (class mapping, StationsView workers), ui (enum,
 art mapping, stations sheet shows "N constructors · ETA"), fog.rs one-liner if `ship_sensor` needs the arm. Test literal
 `Station { .. }` in simtests/tests/fog.rs gets `work_left: 0.0`.
+**Construction ships: branch `construct` ready (rebased on 8bf288d, ci.sh OK).** As planned above; also
+`ShipClass::describe` + ui `details.rs` text for Constructor, target bar shows BUILD STATION for a parked
+constructor, stations sheet shows crew ("2 construction ships + shipyard · 3× speed") and progress rings.
+Demo scenes: `stations away builder`. — research thread
