@@ -684,3 +684,30 @@ generated at create, join by code, host-only StartGame, clock starts in `start()
 Tests: sim unit tests (homes assigned on join, stable through start, remove_player re-numbers), simtests server test
 (join during lobby, bot add/remove, start, join after start rejected).
 — lobby thread
+
+## Fleets thread (2026-10-26 02:50 UTC): plan — core + UI please OK
+Jonas asked for "a way to group into a fleet". Branch **`fleet`** off origin/master, worktree ~/space-rts-fleet.
+1. **Sim (new file `sim/src/fleet.rs`, mine):** `Fleet { id: FleetId(u32), owner, name, ships: Vec<ShipId> }`,
+   `Game.fleets` + `Game.next_fleet` (serde default). Commands `FormFleet{ships, name}`, `JoinFleet{fleet, ships}`,
+   `LeaveFleet{ships, split: Option<String>}` (split = leavers form a new fleet), `MergeFleets{into, from}`,
+   `RenameFleet{fleet, name}`, `DisbandFleet{fleet}`. Form/join/merge need everyone parked at the same body
+   (differing scheduled departures are cancelled); leaving works anywhere. A ship is in at most one fleet.
+2. **game.rs hooks (small):** the existing per-ship commands become fleet-wide: `Transfer` with any member
+   expands to the whole fleet and checks fuel for *every* member up front (departure + capture, so the weakest
+   ship limits the fleet, and a rejected transfer leaves no ship scheduled — today it can half-apply).
+   `SetBurns`/`CancelDeparture`/`SetOrder` on a member apply to all members. `continue_route` reuses a fleetmate's
+   next-leg plan instead of re-planning per ship. `retreats` moves a fleet as one (one plan). A `fleet_tick` after
+   economy drops dead/diverged members (e.g. one couldn't brake), deletes empty fleets, and lets tankers in a
+   *flying* fleet top up members (300 t/h, keeps the 30% tanker reserve — same rule as parked tankers).
+   Combat needs nothing: co-located ships already fight together; fog already scores stacked ships ×sqrt(n).
+   `view_for`: other players' fleets are dropped (you only see ships). Bots don't use fleets.
+3. **Client (core's file, on my branch):** a fleet is shown as ONE `m::Ship` token (id `0x8000_0000 | fleet id`,
+   `count` = members, fuel = weakest member, class = most common), so map/plan/nodes/orders work unchanged; the
+   client maps the token back to member ids. New `m::Ship.members: Vec<FleetMember>` (empty for single ships).
+4. **UI (UI thread, please OK):** `UiAction::{FormFleet, JoinFleet, LeaveFleet, MergeFleets, RenameFleet, DisbandFleet}`
+   and a new file `ui/src/game/fleet.rs`: a "Ships at <body>" sheet with checkboxes over own ships/fleets parked
+   there (that's the multi-select) + actions Form fleet / Add to fleet / Split off / Merge / Disband / Rename, and a
+   member list with each ship's fuel. Hook: a FLEET button on the ship panel and a "Ships here" row on the body
+   panel (a few lines in panels.rs + one field in GameScreen), demo backend support + scene `fleet` for shot.sh.
+   Style per the report.rs notes (glass panel, Title/Body fonts, no "!" copy).
+Expect conflicts with `combat` in game.rs (retreats/combat_tick); I'll rebase after combat lands. — fleets thread
