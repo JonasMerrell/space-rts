@@ -90,28 +90,45 @@ fn four_phones_play_a_game_through_the_real_client_backend() {
 
     // async planner: returns immediately, finishes in the background, matches the sync answer
     let me = v0.me;
-    let ship = v0.ships.iter().find(|s| s.owner == me && s.parked_at.is_some() && s.fuel > 0.0).expect("parked ship").clone();
-    // nearest-ish other planet (owners of far bodies may be hidden by fog of war)
-    let target = v0.bodies.iter().find(|b| b.kind == BodyKind::Planet && Some(b.id) != ship.parked_at && b.parent == Some(0)).expect("another planet").id;
-    let t0 = Instant::now();
-    let first = cs[0].plan_transfer_async(ship.id, target, v0.now);
-    assert!(t0.elapsed() < Duration::from_millis(100), "plan_transfer_async blocked for {:?}", t0.elapsed());
-    let plan = match first {
-        PlanPoll::Done(p) => p,
-        PlanPoll::Pending => until(&mut cs[0], "async plan", 120.0, |b, _| match b.plan_transfer_async(ship.id, target, v0.now) {
-            PlanPoll::Done(p) => Some(p),
-            PlanPoll::Pending => None,
-        }),
-    };
-    let plan = plan.expect("a transfer to another planet");
-    let sync = cs[0].plan_transfer(ship.id, target, v0.now).expect("sync plan");
-    assert_eq!(plan.depart_t, sync.depart_t);
-    assert_eq!(plan.arrive_t, sync.arrive_t);
-    // the system is random per server game: some first targets cost more than a full tank (the UI warns);
-    // departure still works, so the rest of the flow is valid either way
-    if plan.fuel_needed > ship.fuel {
-        eprintln!("note: plan needs {} fuel, ship has {}", plan.fuel_needed, ship.fuel);
+    // the system is random per server game, so don't rely on one target being affordable: use the
+    // ship with the biggest tank (the tanker) and the planets in order until a plan fits its fuel
+    let ship = v0
+        .ships
+        .iter()
+        .filter(|s| s.owner == me && s.parked_at.is_some())
+        .max_by(|a, b| a.fuel.total_cmp(&b.fuel).then(b.id.cmp(&a.id)))
+        .expect("parked ship")
+        .clone();
+    let home = ship.parked_at.unwrap();
+    let home_pos = cs[0].body_pos(home, v0.now);
+    let mut planets: Vec<_> = v0.bodies.iter().filter(|b| b.kind == BodyKind::Planet && b.id != home && b.parent == Some(0)).collect();
+    planets.sort_by(|a, b| {
+        let d = |x: &&ui::model::Body| { let p = cs[0].body_pos(x.id, v0.now); (p[0] - home_pos[0]).hypot(p[1] - home_pos[1]) };
+        d(a).total_cmp(&d(b)).then(a.id.cmp(&b.id))
+    });
+    assert!(!planets.is_empty(), "no other planet");
+    let mut chosen = None;
+    for b in &planets {
+        let t0 = Instant::now();
+        let first = cs[0].plan_transfer_async(ship.id, b.id, v0.now);
+        assert!(t0.elapsed() < Duration::from_millis(100), "plan_transfer_async blocked for {:?}", t0.elapsed());
+        let plan = match first {
+            PlanPoll::Done(p) => p,
+            PlanPoll::Pending => until(&mut cs[0], "async plan", 120.0, |be, _| match be.plan_transfer_async(ship.id, b.id, v0.now) {
+                PlanPoll::Done(p) => Some(p),
+                PlanPoll::Pending => None,
+            }),
+        };
+        let Some(plan) = plan else { continue };
+        let sync = cs[0].plan_transfer(ship.id, b.id, v0.now).expect("sync plan when async found one");
+        assert_eq!(plan.depart_t, sync.depart_t);
+        assert_eq!(plan.arrive_t, sync.arrive_t);
+        if plan.fuel_needed <= ship.fuel {
+            chosen = Some(plan);
+            break;
+        }
     }
+    let plan = chosen.unwrap_or_else(|| panic!("no planet reachable on a full {} tank ({} fuel)", ship.name, ship.fuel));
 
     // schedule it; the server accepts it and another phone sees the departure order
     cs[0].act(UiAction::ScheduleTransfer(plan.clone()));
