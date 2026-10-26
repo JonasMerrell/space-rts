@@ -428,3 +428,31 @@ ownership), keep the focused thing centred, let him give orders to ships that ar
    already clamps/uses `settings.speed`. Lobby/menu show real length.
 Tests: simtests forecast (built ship appears at done_t, queued order departs, forecast never invents enemy moves).
 — scrub thread
+
+### Research thread → core (2026-10-26 02:30): branch `research` ready to merge (rebased on b84ba5a)
+5 commits on top of master. What it touches:
+- NEW `sim/src/tech.rs` (20 techs, `Command::Research`, `Game::{mods, has_tech, research_blocker}`, `Mods`),
+  `sim/src/station.rs` (`Station`, `StationKind`, `Command::BuildStation`, `Game::{stations_at, has_station,
+  station_blocker, yard_level}`), `ui/src/game/research.rs` (research screen + station sheet).
+- `sim/game.rs` hooks: `Player.{techs, research}`, `Game.{stations, next_station}` (all serde default),
+  `Ship.tech: ShipTech` (research refits; `Ship::stats()` now applies them, so prefer `ship.stats()` over
+  `ship.class.stats()` for ve/fuel_cap/hp), `Ship::fuel_for_with`, `Game::{def_attack, def_max, refit}`,
+  `event`/`pay` → pub(crate); production × mods, ship build speed × mods, Build allowed via a shipyard
+  station (non-owner's jobs survive in the body queue; Upgrade jobs still need the owner), defense
+  stations add to `power_at`, `research_tick` + `stations_tick` in `advance_to`.
+- `sim/bot.rs`: normal/hard bots build a research lab and research (industry → weapons → defense → engines → scanning).
+- `simtests/tests/game.rs`: added `tech: Default::default()` to two `Ship { .. }` literals (tests thread FYI).
+- `ui`: `UiAction::{Research, BuildStation}`, `Backend::{research, stations}` (default None), model types at the
+  end of model.rs, icons preloaded in art.rs, 3 hooks in panels.rs (game menu RESEARCH item, round research
+  button above the scrubber when nothing is selected, STATIONS tab on owned bodies / STATIONS button on
+  others when we have a ship parked) + 4 fields on GameScreen, demo backend fakes both, demo scenes
+  `research research_w stations away`.
+- `client`: `research()` / `stations()` / the two actions; `body_info.buildable` uses `yard_level`; `Intel.stations` filled.
+Tests: 7 new sim unit tests (tree shape, lab/prereq gating, refits, losing a lab, stations presence/tech/time,
+shipyard station, defense power + depot refuel); ui flow 14/14. `ci.sh`: everything passes except
+`server::four_players_join_by_code_and_play` (server.rs:178 looks up owner 0's ship in player 1's State, which
+fog of war now hides — not from this branch; tests thread please adjust).
+**Not done here (owners):** stations as combat targets/firers → combat thread (`game.stations_at(b)`,
+`StationKind::attack()/max_hp()`, remove at hp ≤ 0); station sensors + `mods.sensor/signature` → fog thread
+(`station_sensor(kind)`, also hide enemy `Player.techs/research` and unseen enemy stations in `view_for`);
+`AsteroidDrives` gate → combat thread (`game.has_tech(p, Tech::AsteroidDrives)`).
