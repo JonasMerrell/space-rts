@@ -293,6 +293,8 @@ pub struct GameView {
     pub host: PlayerId,
     pub now: f64,
     pub ends_at: f64,
+    /// Game seconds per real second (0 = unknown, treat as 1).
+    pub speed: f64,
     pub bodies: Vec<Body>,
     pub ships: Vec<Ship>,
     pub players: Vec<Player>,

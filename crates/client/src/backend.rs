@@ -520,6 +520,7 @@ fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Tr
         me,
         now,
         ends_at: game.end_t,
+        speed: game.settings.speed,
         bodies,
         ships,
         players: game.players.iter().map(player_model).collect(),
@@ -696,6 +697,11 @@ impl Backend for ClientBackend {
                 if let Some(code) = code {
                     let order = if retreat { g::StandingOrder::Retreat } else { g::StandingOrder::Hold };
                     self.send(ClientMsg::Cmd { code, cmd: Command::SetOrder { ship: g::ShipId(ship), order } });
+                }
+            }
+            UiAction::SetSpeed { speed } => {
+                if let Some(code) = code {
+                    self.send(ClientMsg::Cmd { code, cmd: Command::SetSpeed { speed } });
                 }
             }
             UiAction::ExtendGame { days } => {

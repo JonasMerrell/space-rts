@@ -204,6 +204,7 @@ impl DemoBackend {
             host: 1,
             now,
             ends_at: 7.0 * 86400.0,
+            speed: 1.0,
             bodies,
             ships: vec![],
             players,
@@ -570,6 +571,11 @@ impl Backend for DemoBackend {
             UiAction::ExtendGame { days } => {
                 if let Some(v) = self.view.as_mut() {
                     v.ends_at += days as f64 * 86400.0;
+                }
+            }
+            UiAction::SetSpeed { speed } => {
+                if let Some(v) = self.view.as_mut() {
+                    v.speed = speed;
                 }
             }
         }

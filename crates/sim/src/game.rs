@@ -516,6 +516,8 @@ pub enum Command {
     Extend { seconds: f64 },
     /// Give the ship from the shipyard job at `body` finishing at `done_t` a transfer (`to: None` clears it).
     QueueOrder { body: BodyId, done_t: f64, to: Option<BodyId>, depart_t: Option<f64> },
+    /// Host only: game seconds per real second from now on.
+    SetSpeed { speed: f64 },
 }
 
 pub const TICK: f64 = 60.0;
@@ -717,6 +719,7 @@ impl Game {
                 return Err("invalid departure time".into())
             }
             Command::QueueOrder { to: Some(to), .. } if bad(to) => return Err("no such body".into()),
+            Command::SetSpeed { speed } if !speed.is_finite() || *speed <= 0.0 => return Err("invalid speed".into()),
             Command::Extend { seconds } if !seconds.is_finite() => return Err("invalid duration".into()),
             _ => {}
         }
@@ -733,6 +736,19 @@ impl Game {
                     .find(|j| j.owner == player && matches!(j.kind, JobKind::Ship(_)) && (j.done_t - done_t).abs() < 1.0)
                     .ok_or("that ship is no longer in the build queue")?;
                 job.then = to.filter(|&to| to != body).map(|to| QueuedOrder { to, depart_t });
+                Ok(())
+            }
+            Command::SetSpeed { speed } => {
+                if player != self.host {
+                    return Err("only the host can change the game speed".into());
+                }
+                let speed = speed.clamp(1.0, 1000.0);
+                // keep game time continuous: real_now = started_real + t / speed for old and new speed
+                if self.started_real > 0.0 {
+                    self.started_real += self.t / self.settings.speed - self.t / speed;
+                }
+                self.settings.speed = speed;
+                self.event(None, EventKind::Info, "Game speed", &format!("{speed}× from now on"), None, None);
                 Ok(())
             }
             Command::Extend { seconds } => {

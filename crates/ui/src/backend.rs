@@ -39,6 +39,8 @@ pub enum UiAction {
     SetOrder { ship: ShipId, retreat: bool },
     /// Host only.
     ExtendGame { days: u32 },
+    /// Host only: game seconds per real second from now on.
+    SetSpeed { speed: f64 },
     /// Retry the server connection now instead of waiting for the backoff.
     Reconnect,
     /// Start `tech` (a `TechInfo::id`) at a lab body.
