@@ -122,7 +122,7 @@ fn pick_target(g: &Game, me: PlayerId, from: BodyId, d: Difficulty) -> Option<Bo
         .bodies
         .iter()
         .filter(|b| b.kind != BodyKind::Star && b.id != from)
-        .filter(|b| g.bodies[b.id.0 as usize].owner != Some(me))
+        .filter(|b| g.bodies[b.id.0 as usize].owner != Some(me) && !g.bodies[b.id.0 as usize].shattered && !g.bodies[b.id.0 as usize].gone)
         .filter(|b| !g.players[me as usize].bot_avoid.iter().any(|a| a.0 == from && a.1 == b.id))
         // don't send a second squad where one is already heading
         .filter(|b| {
