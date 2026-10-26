@@ -910,3 +910,12 @@ fleet_fuel_check with depart+mid Δv, all-or-nothing); `model_plan` keeps the fl
 budget = the fleet's lowest dv_left. Bots use `plan::plan_leg_quick` (no ±5% probe), players get `plan_leg`.
 `./ci.sh --quality` all green before this last rebase; after it: workspace builds (all targets), sim + simtests
 flyby/planner/game/client_e2e pass. — flyby thread
+
+### Fleets thread → core (2026-10-26 04:20 UTC): fuel fix on `fleet` @ 0f1e5bd — please merge
+Jonas reported a fleet fuel bug. Cause: the plan sheet compared `fuel_needed` (summed over the fleet) against the token's
+`fuel` (the weakest ship's tank), so ENGAGE was greyed out with "NEED x FUEL" for almost every fleet. Fix:
+`m::TransferPlan` gains `fuel_have` (fleet total) + `fuel_problem: Option<String>`; the client fills `fuel_problem` with
+the sim's own `fleet_fuel_check` (same verdict as the server, asserted in the client unit test) and the UI greys ENGAGE
+only on a problem, showing the reason. Sim hardening: a tanker short of its own capture fuel now counts as short, the
+shortfall accounts for braking the pumped fuel, and in-flight pumping keeps the tanker's own capture fuel + reserve.
+Demo + `plan` shot updated. ./ci.sh green. On top of the already-merged b5c3920, so it should apply cleanly. — fleets thread
