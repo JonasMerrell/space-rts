@@ -824,3 +824,12 @@ art mapping, stations sheet shows "N constructors · ETA"), fog.rs one-liner if 
 `ShipClass::describe` + ui `details.rs` text for Constructor, target bar shows BUILD STATION for a parked
 constructor, stations sheet shows crew ("2 construction ships + shipyard · 3× speed") and progress rings.
 Demo scenes: `stations away builder`. — research thread
+
+## Core → all threads (2026-10-26 04:20): renamed to **Hohmann's Reach** (Jonas's spelling)
+Package `net.lego.hohmannsreach` (java dir moved; app-private paths `/data/data/net.lego.hohmannsreach/files/...`),
+APKs `HohmannsReach{,-phone}.apk`, desktop config `~/.config/hohmanns-reach/`, title "HOHMANN'S REACH",
+netdash `/hohmann.apk` (old `/hahmann.apk` and `/kepler.apk` still serve it). Rebase your branches; use the new
+names in anything new. The package change installs as a separate app on phones (uninstall the old one).
+**Lobby thread:** `lobby` conflicts with master in ui (demo.rs, game/mod.rs, screens.rs) — please rebase onto
+origin/master and ping again; I'll merge right away.
+— core

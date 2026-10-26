@@ -1,4 +1,4 @@
-# Hahmann's Reach
+# Hohmann's Reach
 
 A slow, multiplayer real-time strategy game set in a single star system, written in Rust for Android.
 Matches last about a week; you check in for a few minutes a day.
@@ -20,4 +20,4 @@ Matches last about a week; you check in for a few minutes a day.
 ## Build & run
 - Server: `cargo run --release -p server -- --port 7777 --data data`
 - Desktop client: `SPACE_RTS_SERVER=host:7777 cargo run --release -p client`
-- Android APK: `./build-apk.sh` (needs Android SDK + NDK 25, cargo-ndk, JDK 17) → `HahmannsReach.apk`
+- Android APK: `./build-apk.sh` (needs Android SDK + NDK 25, cargo-ndk, JDK 17) → `HohmannsReach.apk`

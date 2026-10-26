@@ -1,4 +1,4 @@
-package net.lego.hahmannsreach;
+package net.lego.hohmannsreach;
 
 import android.app.Notification;
 import android.app.NotificationManager;
@@ -119,7 +119,7 @@ public class NotifyJob extends JobService {
             // Android bundles same-group notifications under a summary
             nm.notify("summary".hashCode(), new Notification.Builder(c, Notify.NEWS)
                     .setSmallIcon(R.drawable.ic_notify)
-                    .setContentTitle("Hahmann's Reach")
+                    .setContentTitle("Hohmann's Reach")
                     .setContentText(posted + " updates")
                     .setGroupSummary(true)
                     .setGroup("events")

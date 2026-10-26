@@ -6,9 +6,9 @@ use std::path::PathBuf;
 fn file() -> Option<PathBuf> {
     // Android: the app's private files dir (only the app can read it); desktop: the config dir
     if cfg!(target_os = "android") {
-        Some(PathBuf::from("/data/data/net.lego.hahmannsreach/files/notify.json"))
+        Some(PathBuf::from("/data/data/net.lego.hohmannsreach/files/notify.json"))
     } else {
-        std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config/hahmanns-reach/session.json"))
+        std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config/hohmanns-reach/session.json"))
     }
 }
 

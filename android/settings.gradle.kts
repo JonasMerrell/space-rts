@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "HahmannsReach"
+rootProject.name = "HohmannsReach"
 include(":app")

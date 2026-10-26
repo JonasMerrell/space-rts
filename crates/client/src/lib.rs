@@ -11,7 +11,7 @@ pub const DEFAULT_SERVER: &str = "192.168.0.247:7777";
 
 fn window_conf() -> Conf {
     Conf {
-        window_title: "Hahmann's Reach".to_owned(),
+        window_title: "Hohmann's Reach".to_owned(),
         window_width: 412,
         window_height: 880,
         high_dpi: true,
@@ -37,10 +37,10 @@ async fn main() {
 fn server_file() -> std::path::PathBuf {
     // Android: the app's private files dir; desktop: the config dir
     if cfg!(target_os = "android") {
-        std::path::PathBuf::from("/data/data/net.lego.hahmannsreach/files/server.txt")
+        std::path::PathBuf::from("/data/data/net.lego.hohmannsreach/files/server.txt")
     } else {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-        std::path::PathBuf::from(home).join(".config/hahmanns-reach/server.txt")
+        std::path::PathBuf::from(home).join(".config/hohmanns-reach/server.txt")
     }
 }
 

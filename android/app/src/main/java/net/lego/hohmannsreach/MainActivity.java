@@ -1,4 +1,4 @@
-package net.lego.hahmannsreach;
+package net.lego.hohmannsreach;
 
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;

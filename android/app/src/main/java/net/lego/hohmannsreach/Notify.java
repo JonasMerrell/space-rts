@@ -1,4 +1,4 @@
-package net.lego.hahmannsreach;
+package net.lego.hohmannsreach;
 
 import android.Manifest;
 import android.app.Activity;

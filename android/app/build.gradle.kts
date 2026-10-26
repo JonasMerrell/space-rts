@@ -3,10 +3,10 @@ plugins {
 }
 
 android {
-    namespace = "net.lego.hahmannsreach"
+    namespace = "net.lego.hohmannsreach"
     compileSdk = 35
     defaultConfig {
-        applicationId = "net.lego.hahmannsreach"
+        applicationId = "net.lego.hohmannsreach"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
