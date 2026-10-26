@@ -146,7 +146,7 @@ impl Tech {
     /// The tech before this one in its branch.
     pub fn prereq(self) -> Option<Tech> {
         let i = self.index();
-        (i % 4 != 0).then(|| Tech::ALL[i - 1])
+        (!i.is_multiple_of(4)).then(|| Tech::ALL[i - 1])
     }
     /// Research lab level a body needs to research this.
     pub fn min_lab(self) -> u8 {
