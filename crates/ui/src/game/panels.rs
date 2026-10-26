@@ -1,0 +1,725 @@
+//! HUD, scrubber, bottom sheets, planner/node-editor overlays, chat and toasts.
+
+use super::map::{self, Camera};
+use super::{GameScreen, Handle, Mode, NodeEdit, SCRUB_SPAN};
+use crate::backend::{Backend, UiAction};
+use crate::cel;
+use crate::input::Input;
+use crate::model::*;
+use crate::screens::{safe_bottom, safe_top};
+use crate::theme::*;
+use crate::widgets::{self, Style};
+use macroquad::prelude::*;
+
+const SCRUB_H: f32 = 74.0;
+const HUD_H: f32 = 86.0;
+
+fn margin() -> f32 {
+    12.0 * s()
+}
+
+fn hud_bottom() -> f32 {
+    safe_top() + HUD_H * s()
+}
+
+fn scrub_top() -> f32 {
+    screen_height() - safe_bottom() - SCRUB_H * s()
+}
+
+// ---------------------------------------------------------------- HUD
+
+fn icon_matter(c: Vec2, r: f32) {
+    // Little inked cube.
+    let p = |x: f32, y: f32| c + vec2(x, y) * r;
+    let o = 2.0 * s();
+    cel::round_rect(Rect::new(c.x - r - o, c.y - r - o, 2.0 * (r + o), 2.0 * (r + o)), 3.0 * s(), INK);
+    draw_rectangle(c.x - r, c.y - r, 2.0 * r, 2.0 * r, NEUTRAL.0);
+    draw_triangle(p(1.0, -1.0), p(1.0, 1.0), p(-1.0, 1.0), NEUTRAL.1);
+}
+
+fn icon_energy(c: Vec2, r: f32) {
+    let pts = [vec2(0.2, -1.2), vec2(-0.7, 0.15), vec2(0.0, 0.15), vec2(-0.25, 1.2), vec2(0.75, -0.25), vec2(0.05, -0.25)];
+    let q: Vec<Vec2> = pts.iter().map(|p| c + *p * r).collect();
+    let g: Vec<Vec2> = pts.iter().map(|p| c + *p * (r + 3.0 * s())).collect();
+    for (poly, col) in [(&g, INK), (&q, ACCENT)] {
+        draw_triangle(poly[0], poly[1], poly[2], col);
+        draw_triangle(poly[0], poly[2], poly[5], col);
+        draw_triangle(poly[2], poly[3], poly[4], col);
+        draw_triangle(poly[2], poly[4], poly[5], col);
+    }
+}
+
+fn icon_fuel(c: Vec2, r: f32) {
+    let o = 2.5 * s();
+    draw_circle(c.x, c.y + r * 0.3, r * 0.8 + o, INK);
+    draw_triangle(c + vec2(0.0, -r * 1.3 - o * 1.5), c + vec2(-r * 0.8 - o, r * 0.3), c + vec2(r * 0.8 + o, r * 0.3), INK);
+    draw_circle(c.x, c.y + r * 0.3, r * 0.8, SUN_SHADE);
+    draw_triangle(c + vec2(0.0, -r * 1.3), c + vec2(-r * 0.8, r * 0.3), c + vec2(r * 0.8, r * 0.3), SUN_SHADE);
+    draw_circle(c.x - r * 0.3, c.y + r * 0.1, r * 0.2, Color::new(1.0, 1.0, 1.0, 0.6));
+}
+
+pub fn hud(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
+    let w = screen_width();
+    let top = safe_top() + margin();
+    let res = view.resources;
+    let btn_space = 2.0 * 52.0 * s();
+    let avail = w - 2.0 * margin() - btn_space;
+    let cw = (avail - 2.0 * 8.0 * s()) / 3.0;
+    let ch = 44.0 * s();
+    let items: [(&str, f64, f64, fn(Vec2, f32)); 3] =
+        [("MATTER", res.matter, res.matter_rate, icon_matter), ("ENERGY", res.energy, res.energy_rate, icon_energy), ("FUEL", res.fuel, res.fuel_rate, icon_fuel)];
+    for (i, (label, v, rate, icon)) in items.iter().enumerate() {
+        let r = Rect::new(margin() + i as f32 * (cw + 8.0 * s()), top, cw, ch);
+        inp.block(r);
+        cel::panel(r, PANEL);
+        icon(vec2(r.x + 18.0 * s(), r.center().y), 8.0 * s());
+        inked(&fmt_amount(*v), r.x + 34.0 * s(), r.y + 17.0 * s(), 19.0, PAPER, Align::Left);
+        let rate_s = format!("{}{}/h", if *rate >= 0.0 { "+" } else { "" }, fmt_amount(*rate));
+        let col = if *rate >= 0.0 { GOOD } else { DANGER };
+        text(&rate_s, r.x + 34.0 * s(), r.y + 34.0 * s(), 12.0, col, FontKind::Title, Align::Left);
+        let _ = label;
+    }
+    let bx = w - margin() - 22.0 * s();
+    let unread = view.chat.len().saturating_sub(g.chat_seen);
+    if widgets::round_button(inp, vec2(bx - 50.0 * s(), top + ch / 2.0), 21.0 * s(), "CHAT", PAPER, if g.chat_open { 0 } else { unread }) {
+        g.chat_open = !g.chat_open;
+        g.chat_seen = view.chat.len();
+    }
+    if widgets::round_button(inp, vec2(bx, top + ch / 2.0), 21.0 * s(), "≡", ACCENT, 0) {
+        g.emit(UiAction::BackToMenu);
+    }
+    // Clock line.
+    let y = top + ch + 16.0 * s();
+    inked(&fmt_clock(view.now), margin(), y, 17.0, PAPER, Align::Left);
+    let left = view.ends_at - view.now;
+    text(&format!("WAR ENDS IN {}", fmt_dur(left)), w - margin(), y, 14.0, MUTED, FontKind::Title, Align::Right);
+}
+
+// ---------------------------------------------------------------- Scrubber
+
+pub fn scrubber(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
+    let w = screen_width();
+    let r = Rect::new(margin(), scrub_top(), w - 2.0 * margin(), SCRUB_H * s() - margin());
+    inp.block(r);
+    cel::panel(r, PANEL);
+    let now_w = 62.0 * s();
+    let track = Rect::new(r.x + 14.0 * s(), r.y + r.h * 0.42, r.w - now_w - 34.0 * s(), 8.0 * s());
+    let x_of = |dt: f64| track.x + track.w * (dt / SCRUB_SPAN).clamp(0.0, 1.0) as f32;
+
+    // Drag anywhere on the bar to scrub.
+    let grab = Rect::new(track.x - 12.0 * s(), r.y, track.w + 24.0 * s(), r.h);
+    if let Some(p) = inp.held {
+        if inp.gesture_on_ui() && grab.contains(p) {
+            g.scrub = (((p.x - track.x) / track.w).clamp(0.0, 1.0) as f64) * SCRUB_SPAN;
+        }
+    }
+
+    widgets::bar(track, (g.scrub / SCRUB_SPAN) as f32, ACCENT);
+    // Ticks every 6h, labels every 12h.
+    let mut h = 0;
+    while h as f64 * 3600.0 <= SCRUB_SPAN {
+        let x = x_of(h as f64 * 3600.0);
+        let tall = h % 12 == 0;
+        draw_line(x, track.y + track.h + 3.0 * s(), x, track.y + track.h + if tall { 10.0 } else { 6.0 } * s(), 2.0 * s(), MUTED);
+        if tall {
+            let l = if h == 0 { "NOW".to_string() } else if h % 24 == 0 { format!("+{}d", h / 24) } else { format!("+{}h", h) };
+            text(&l, x, track.y + track.h + 20.0 * s(), 12.0, MUTED, FontKind::Title, Align::Center);
+        }
+        h += 6;
+    }
+    // Transfer windows from the active plan.
+    if let Mode::Plan(p) = &g.mode {
+        for &wt in &p.windows {
+            let dt = wt - view.now;
+            if (0.0..=SCRUB_SPAN).contains(&dt) {
+                let c = vec2(x_of(dt), track.y - 9.0 * s());
+                cel::diamond(c, 6.0 * s(), if (wt - p.depart_t).abs() < 60.0 { ACCENT } else { GOOD });
+            }
+        }
+        let a = p.arrive_t - view.now;
+        if (0.0..=SCRUB_SPAN).contains(&a) {
+            let c = vec2(x_of(a), track.y - 9.0 * s());
+            cel::burst(c, 8.0 * s(), 6, DANGER, 0.0);
+        }
+    }
+    // Knob.
+    let kc = vec2(x_of(g.scrub), track.y + track.h / 2.0);
+    draw_circle(kc.x, kc.y, 13.0 * s(), INK);
+    draw_circle(kc.x, kc.y, 10.0 * s(), PAPER);
+    if g.scrub > 1.0 {
+        let label = format!("+{}", fmt_dur(g.scrub));
+        let wl = measure(&label, FontKind::Title, 14.0).x + 14.0 * s();
+        let br = Rect::new((kc.x - wl / 2.0).clamp(r.x, r.x + r.w - wl), r.y - 34.0 * s(), wl, 24.0 * s());
+        cel::bubble(br, Some(vec2(kc.x, kc.y - 12.0 * s())), PAPER);
+        text(&label, br.center().x, br.center().y, 14.0, INK, FontKind::Title, Align::Center);
+    }
+    let nr = Rect::new(r.x + r.w - now_w - 8.0 * s(), r.y + 9.0 * s(), now_w, r.h - 18.0 * s());
+    if widgets::button(inp, nr, "NOW", if g.scrub > 1.0 { Style::Primary } else { Style::Ghost }) {
+        g.scrub = 0.0;
+    }
+}
+
+pub fn prediction_banner(scrub: f64) {
+    let w = screen_width();
+    let y = hud_bottom() + 6.0 * s();
+    cel::halftone(Rect::new(0.0, hud_bottom(), w, scrub_top() - hud_bottom()), Color::new(1.0, 0.82, 0.25, 0.06));
+    let label = format!("PREDICTED · +{}", fmt_dur(scrub));
+    let lw = measure(&label, FontKind::Title, 16.0).x + 26.0 * s();
+    let r = Rect::new((w - lw) / 2.0, y, lw, 28.0 * s());
+    cel::panel(r, ACCENT);
+    text(&label, r.center().x, r.center().y, 16.0, INK, FontKind::Title, Align::Center);
+}
+
+// ---------------------------------------------------------------- Bottom sheet
+
+fn sheet_rect(h_dp: f32) -> Rect {
+    let w = screen_width();
+    let h = h_dp * s();
+    Rect::new(margin(), scrub_top() - h - 18.0 * s(), w - 2.0 * margin(), h)
+}
+
+pub fn sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView) {
+    match g.mode.clone() {
+        Mode::Plan(plan) => plan_sheet(g, inp, be, view, &plan),
+        Mode::Nodes(ne) => node_sheet(g, inp, be, view, ne),
+        Mode::Target(ship) => {
+            if let Some(sh) = view.ship(ship) {
+                ship_sheet(g, inp, view, sh, true);
+            }
+        }
+        Mode::Idle => match g.selected {
+            Some(Focus::Ship(id)) => {
+                if let Some(sh) = view.ship(id) {
+                    ship_sheet(g, inp, view, sh, false);
+                }
+            }
+            Some(Focus::Body(id)) => {
+                if let Some(b) = view.body(id) {
+                    body_sheet(g, inp, view, b);
+                }
+            }
+            None => {}
+        },
+    }
+}
+
+fn body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Body) {
+    let r = sheet_rect(150.0);
+    inp.block(r);
+    cel::panel(r, PANEL);
+    let (l, d) = team(view.color_of(b.owner));
+    if b.kind == BodyKind::Star {
+        cel::star(vec2(r.x + 36.0 * s(), r.y + 36.0 * s()), 16.0 * s(), get_time() as f32);
+    } else {
+        cel::body(vec2(r.x + 36.0 * s(), r.y + 36.0 * s()), 18.0 * s(), l, d);
+    }
+    inked(&b.name.to_uppercase(), r.x + 66.0 * s(), r.y + 26.0 * s(), 24.0, PAPER, Align::Left);
+    let kind = match b.kind {
+        BodyKind::Star => "STAR",
+        BodyKind::Planet => "PLANET",
+        BodyKind::Moon => "MOON",
+        BodyKind::Asteroid => "ASTEROID",
+    };
+    let owner = match b.owner.and_then(|o| view.player(o)) {
+        Some(p) if p.id == view.me => "YOURS".to_string(),
+        Some(p) => format!("held by {}", p.name.to_uppercase()),
+        None => "neutral".to_string(),
+    };
+    text(&format!("{kind} · {owner}"), r.x + 66.0 * s(), r.y + 50.0 * s(), 14.0, MUTED, FontKind::Title, Align::Left);
+    let body_r = Rect::new(r.x + 16.0 * s(), r.y + 70.0 * s(), r.w - 32.0 * s(), r.h - 80.0 * s());
+    match &b.intel {
+        Some(i) => {
+            let age = view.now - i.seen_at;
+            let mut lines = vec![format!("Power in orbit {:.0} · scanned {} ago", i.power, fmt_dur(age))];
+            if !i.upgrades.is_empty() {
+                lines.push(format!("Upgrades: {}", i.upgrades.join(", ")));
+            }
+            if !i.stations.is_empty() {
+                lines.push(format!("Stations: {}", i.stations.join(", ")));
+            }
+            for (k, line) in lines.iter().take(3).enumerate() {
+                text(line, body_r.x, body_r.y + 10.0 * s() + k as f32 * 22.0 * s(), 15.0, PAPER, FontKind::Body, Align::Left);
+            }
+        }
+        None => {
+            cel::bubble(Rect::new(body_r.x, body_r.y, body_r.w, 44.0 * s()), None, PAPER);
+            text("??? Contents unknown. Build a telescope!", body_r.center().x, body_r.y + 22.0 * s(), 15.0, INK, FontKind::Body, Align::Center);
+        }
+    }
+    if close_x(inp, r) {
+        g.selected = None;
+    }
+}
+
+fn ship_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship, targeting: bool) {
+    let mine = sh.owner == view.me;
+    let r = sheet_rect(if mine { 160.0 } else { 110.0 });
+    inp.block(r);
+    cel::panel(r, PANEL);
+    let (l, _) = team(view.color_of(Some(sh.owner)));
+    cel::ship(vec2(r.x + 34.0 * s(), r.y + 34.0 * s()), vec2(1.0, -0.4), 16.0 * s(), if mine { PAPER } else { l });
+    let title = if sh.count > 1 { format!("{} ×{}", sh.name.to_uppercase(), sh.count) } else { sh.name.to_uppercase() };
+    inked(&title, r.x + 64.0 * s(), r.y + 24.0 * s(), 22.0, PAPER, Align::Left);
+    let status = if map::is_flying(sh, view.now) {
+        let dest = sh.destination.and_then(|d| view.body(d)).map(|b| b.name.clone()).unwrap_or_else(|| "deep space".into());
+        let eta = sh.trajectory.as_ref().and_then(|t| t.end()).map(|e| fmt_dur(e - view.now)).unwrap_or_default();
+        format!("{} · to {} · ETA {}", sh.class.label(), dest, eta)
+    } else if let Some(b) = sh.parked_at.and_then(|b| view.body(b)) {
+        let dep = sh.trajectory.as_ref().and_then(|t| t.start()).filter(|&t0| t0 > view.now);
+        match dep {
+            Some(t0) => format!("{} · at {} · departs in {}", sh.class.label(), b.name, fmt_dur(t0 - view.now)),
+            None => format!("{} · orbiting {}", sh.class.label(), b.name),
+        }
+    } else {
+        sh.class.label().to_string()
+    };
+    text(&status, r.x + 64.0 * s(), r.y + 48.0 * s(), 14.0, MUTED, FontKind::Body, Align::Left);
+    if mine {
+        let fr = Rect::new(r.x + 64.0 * s(), r.y + 64.0 * s(), r.w - 150.0 * s(), 10.0 * s());
+        widgets::bar(fr, sh.fuel / sh.fuel_max.max(1.0), SUN_SHADE);
+        text(&format!("FUEL {:.0}/{:.0}", sh.fuel, sh.fuel_max), fr.x + fr.w + 10.0 * s(), fr.center().y, 13.0, PAPER, FontKind::Title, Align::Left);
+        let by = r.y + r.h - 58.0 * s();
+        let bw = (r.w - 4.0 * 12.0 * s()) / 3.0;
+        let b = |i: usize| Rect::new(r.x + 12.0 * s() + i as f32 * (bw + 12.0 * s()), by, bw, 46.0 * s());
+        if targeting {
+            cel::bubble(Rect::new(r.x + r.w - 150.0 * s(), r.y - 30.0 * s(), 140.0 * s(), 36.0 * s()), Some(vec2(r.x + r.w - 40.0 * s(), r.y - 60.0 * s())), PAPER);
+            text("TAP A TARGET!", r.x + r.w - 80.0 * s(), r.y - 12.0 * s(), 16.0, INK, FontKind::Title, Align::Center);
+        }
+        if widgets::button(inp, b(0), "MANEUVER", Style::Secondary) {
+            g.mode = Mode::Nodes(NodeEdit {
+                ship: sh.id,
+                nodes: if sh.nodes.is_empty() { vec![ManeuverNode { t: view.now + 1800.0, prograde: 0.0, radial: 0.0 }] } else { sh.nodes.clone() },
+                sel: 0,
+                preview: None,
+                dirty: true,
+                drag: None,
+            });
+        }
+        let flying = sh.trajectory.is_some();
+        if flying && widgets::button(inp, b(1), "ABORT", Style::Danger) {
+            g.emit(UiAction::CancelFlight { ship: sh.id });
+        }
+        if widgets::button(inp, b(2), "DONE", Style::Ghost) {
+            g.mode = Mode::Idle;
+            g.selected = None;
+        }
+    } else if close_x(inp, r) {
+        g.selected = None;
+        g.mode = Mode::Idle;
+    }
+}
+
+fn plan_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView, p: &TransferPlan) {
+    let r = sheet_rect(178.0);
+    inp.block(r);
+    cel::panel(r, PANEL);
+    let target = view.body(p.target).map(|b| b.name.to_uppercase()).unwrap_or_default();
+    inked(&format!("COURSE TO {target}"), r.x + 16.0 * s(), r.y + 24.0 * s(), 24.0, ACCENT, Align::Left);
+    let cols = [
+        ("DEPART", if p.depart_t - view.now < 60.0 { "NOW".to_string() } else { format!("in {}", fmt_dur(p.depart_t - view.now)) }),
+        ("FLIGHT", fmt_dur(p.arrive_t - p.depart_t)),
+        ("Δv", format!("{:.2} km/s", p.dv_depart + p.dv_capture)),
+    ];
+    let cw = (r.w - 32.0 * s()) / 3.0;
+    for (i, (k, v)) in cols.iter().enumerate() {
+        let x = r.x + 16.0 * s() + i as f32 * cw;
+        text(k, x, r.y + 52.0 * s(), 13.0, MUTED, FontKind::Title, Align::Left);
+        inked(v, x, r.y + 74.0 * s(), 19.0, PAPER, Align::Left);
+    }
+    let fuel = view.ship(p.ship).map(|s| s.fuel).unwrap_or(0.0);
+    let ok = fuel >= p.fuel_needed;
+    let fr = Rect::new(r.x + 16.0 * s(), r.y + 96.0 * s(), r.w - 180.0 * s(), 10.0 * s());
+    widgets::bar(fr, p.fuel_needed / fuel.max(1.0), if ok { SUN_SHADE } else { DANGER });
+    let fl = if ok { format!("FUEL {:.0} of {:.0}", p.fuel_needed, fuel) } else { format!("NEED {:.0} FUEL, HAVE {:.0}", p.fuel_needed, fuel) };
+    text(&fl, fr.x + fr.w + 10.0 * s(), fr.center().y, 13.0, if ok { PAPER } else { DANGER }, FontKind::Title, Align::Left);
+
+    let by = r.y + r.h - 58.0 * s();
+    let bw = (r.w - 4.0 * 12.0 * s()) / 3.0;
+    let b = |i: usize| Rect::new(r.x + 12.0 * s() + i as f32 * (bw + 12.0 * s()), by, bw, 46.0 * s());
+    if widgets::button(inp, b(0), "ENGAGE!", if ok { Style::Primary } else { Style::Ghost }) && ok {
+        g.emit(UiAction::ScheduleTransfer(p.clone()));
+        g.push_notice(Notice { kind: NoticeKind::Good, title: "COURSE LAID IN!".into(), body: format!("Departing for {target}"), focus: None });
+        g.mode = Mode::Idle;
+    }
+    if widgets::button(inp, b(1), "NEXT WINDOW", Style::Secondary) {
+        let after = p.windows.iter().copied().find(|&w| w > p.depart_t + 60.0).unwrap_or(p.depart_t + 3600.0);
+        let (ship, tgt) = (p.ship, p.target);
+        g.plan(be, view, ship, tgt, after);
+        if let Mode::Plan(np) = &g.mode {
+            g.scrub = (np.depart_t - view.now).clamp(0.0, SCRUB_SPAN);
+        }
+    }
+    if widgets::button(inp, b(2), "CANCEL", Style::Ghost) {
+        g.mode = Mode::Idle;
+    }
+}
+
+fn close_x(inp: &mut Input, r: Rect) -> bool {
+    widgets::round_button(inp, vec2(r.x + r.w - 20.0 * s(), r.y + 20.0 * s()), 14.0 * s(), "X", PAPER, 0)
+}
+
+// ---------------------------------------------------------------- Planner overlays
+
+fn poly(cam: &Camera, tr: &Trajectory, from: f64) -> Vec<Vec2> {
+    tr.points.iter().filter(|p| p.0 >= from).map(|p| cam.to_screen(p.1)).collect()
+}
+
+pub fn plan_world(p: &TransferPlan, be: &dyn Backend, view: &GameView, cam: &Camera, t: f64) {
+    let pts = poly(cam, &p.path, f64::MIN);
+    cel::inked_path(&pts, 4.0 * s(), ACCENT);
+    // Ghost of the target where it will be on arrival.
+    if let Some(b) = view.body(p.target) {
+        let c = cam.to_screen(be.body_pos(p.target, p.arrive_t));
+        let r = map::body_radius_px(b, cam);
+        let ring: Vec<Vec2> = (0..=48).map(|i| c + Vec2::from_angle(i as f32 / 48.0 * std::f32::consts::TAU) * (r + 4.0 * s())).collect();
+        cel::dashed_path(&ring, 3.0 * s(), 6.0 * s(), ACCENT);
+        cel::burst(c, r * 0.6 + 6.0 * s(), 8, alpha(ACCENT, 0.6), 0.0);
+    }
+    if let Some(&(_, d)) = p.path.points.first() {
+        cel::diamond(cam.to_screen(d), 8.0 * s(), ACCENT);
+    }
+    // Where the ship would be at the scrubbed time.
+    if let Some(sp) = p.path.sample(t) {
+        let q = p.path.sample(t + 120.0).unwrap_or(sp);
+        let a = cam.to_screen(sp);
+        cel::ship(a, cam.to_screen(q) - a, 10.0 * s(), alpha(PAPER, 0.7));
+    }
+}
+
+pub fn plan_bubble(p: &TransferPlan, _be: &dyn Backend, view: &GameView, cam: &Camera, _t: f64) {
+    let Some(&(_, d)) = p.path.points.first() else { return };
+    let anchor = cam.to_screen(d);
+    let label = if p.depart_t - view.now < 60.0 { "BURN NOW!".to_string() } else { format!("BURN IN {}!", fmt_dur(p.depart_t - view.now)) };
+    let w = measure(&label, FontKind::Title, 18.0).x + 28.0 * s();
+    let h = 38.0 * s();
+    let mut r = Rect::new(anchor.x - w - 24.0 * s(), anchor.y - h - 34.0 * s(), w, h);
+    r.x = r.x.clamp(margin(), screen_width() - w - margin());
+    r.y = r.y.clamp(hud_bottom() + 40.0 * s(), screen_height());
+    cel::bubble(r, Some(anchor + vec2(-4.0, -8.0) * s()), PAPER);
+    text(&label, r.center().x, r.center().y, 18.0, INK, FontKind::Title, Align::Center);
+}
+
+// ---------------------------------------------------------------- Node editor
+
+struct NodeFrame {
+    pos: Vec2,
+    pro: Vec2,
+    rad: Vec2,
+    /// km/s per dp of handle drag.
+    k: f64,
+}
+
+fn node_frame(ne: &NodeEdit, be: &dyn Backend, cam: &Camera) -> Option<NodeFrame> {
+    let n = ne.nodes.get(ne.sel)?;
+    let at = |t: f64| ne.preview.as_ref().and_then(|tr| tr.sample(t)).or_else(|| be.ship_pos(ne.ship, t));
+    let p = at(n.t)?;
+    let q = at(n.t - 120.0).unwrap_or(p);
+    let pos = cam.to_screen(p);
+    let mut pro = (pos - cam.to_screen(q)).normalize_or_zero();
+    if pro == Vec2::ZERO {
+        pro = vec2(1.0, 0.0);
+    }
+    let mut rad = pro.perp();
+    if rad.dot(pos - cam.to_screen([0.0, 0.0])) < 0.0 {
+        rad = -rad;
+    }
+    let speed = ((p[0] - q[0]).hypot(p[1] - q[1]) / 120.0) * 1e6;
+    Some(NodeFrame { pos, pro, rad, k: (speed * 0.002).max(0.001) })
+}
+
+fn handle_len() -> f32 {
+    62.0 * s()
+}
+
+fn handle_dir(f: &NodeFrame, h: Handle) -> Vec2 {
+    match h {
+        Handle::Prograde => f.pro,
+        Handle::Retrograde => -f.pro,
+        Handle::RadialOut => f.rad,
+        Handle::RadialIn => -f.rad,
+        Handle::Time => Vec2::ZERO,
+    }
+}
+
+const HANDLES: [(Handle, Color, &str); 4] = [
+    (Handle::Prograde, hex(0x80ed99), "PRO"),
+    (Handle::Retrograde, hex(0x80ed99), "RETRO"),
+    (Handle::RadialOut, hex(0x4cc9f0), "OUT"),
+    (Handle::RadialIn, hex(0x4cc9f0), "IN"),
+];
+
+pub fn nodes_world(ne: &NodeEdit, be: &dyn Backend, view: &GameView, cam: &Camera, _t: f64) {
+    if let Some(tr) = &ne.preview {
+        let pts = poly(cam, tr, view.now);
+        cel::inked_path(&pts, 4.0 * s(), hex(0x80ed99));
+    }
+    for (i, n) in ne.nodes.iter().enumerate() {
+        let p = ne.preview.as_ref().and_then(|tr| tr.sample(n.t)).or_else(|| be.ship_pos(ne.ship, n.t));
+        if let Some(p) = p {
+            cel::diamond(cam.to_screen(p), if i == ne.sel { 11.0 } else { 8.0 } * s(), if i == ne.sel { ACCENT } else { PAPER });
+        }
+    }
+}
+
+pub fn node_handles(ne: &NodeEdit, be: &dyn Backend, _view: &GameView, cam: &Camera, _t: f64) {
+    let Some(f) = node_frame(ne, be, cam) else { return };
+    let n = ne.nodes[ne.sel];
+    for (h, col, label) in HANDLES {
+        let d = handle_dir(&f, h);
+        let amount = match h {
+            Handle::Prograde => n.prograde.max(0.0),
+            Handle::Retrograde => (-n.prograde).max(0.0),
+            Handle::RadialOut => n.radial.max(0.0),
+            Handle::RadialIn => (-n.radial).max(0.0),
+            Handle::Time => 0.0,
+        };
+        let stretch = (amount / f.k / 60.0).min(1.0) as f32 * 30.0 * s();
+        let tip = f.pos + d * (handle_len() + stretch);
+        let active = ne.drag == Some(h);
+        cel::arrow(f.pos + d * 16.0 * s(), tip, if active { 6.0 } else { 4.5 } * s(), col);
+        draw_circle(tip.x, tip.y, 12.0 * s(), INK);
+        draw_circle(tip.x, tip.y, 9.0 * s(), if active { ACCENT } else { col });
+        text(label, tip.x + d.x * 26.0 * s(), tip.y + d.y * 20.0 * s(), 12.0, PAPER, FontKind::Title, Align::Center);
+    }
+    cel::diamond(f.pos, 11.0 * s(), ACCENT);
+}
+
+/// Handle/diamond drags. Returns true while a node drag owns the gesture.
+pub fn node_drag(ne: &mut NodeEdit, inp: &Input, be: &dyn Backend, view: &GameView, cam: &Camera, _t: f64) -> bool {
+    let Some(f) = node_frame(ne, be, cam) else { return false };
+    if let Some(p) = inp.pressed {
+        ne.drag = None;
+        if p.distance(f.pos) < 22.0 * s() {
+            ne.drag = Some(Handle::Time);
+        }
+        for (h, _, _) in HANDLES {
+            let tip = f.pos + handle_dir(&f, h) * handle_len();
+            if p.distance(tip) < 30.0 * s() {
+                ne.drag = Some(h);
+            }
+        }
+        // Tapping another node's diamond selects it.
+        for (i, n) in ne.nodes.iter().enumerate() {
+            if let Some(q) = ne.preview.as_ref().and_then(|tr| tr.sample(n.t)) {
+                if i != ne.sel && cam.to_screen(q).distance(p) < 18.0 * s() {
+                    ne.sel = i;
+                    ne.drag = Some(Handle::Time);
+                }
+            }
+        }
+    }
+    if inp.released.is_some() || inp.held.is_none() {
+        let was = ne.drag.take().is_some();
+        return was;
+    }
+    let Some(h) = ne.drag else { return false };
+    if h == Handle::Time {
+        if let Some(p) = inp.held {
+            let lo = if ne.sel > 0 { ne.nodes[ne.sel - 1].t + 60.0 } else { view.now + 60.0 };
+            let hi = ne.nodes.get(ne.sel + 1).map(|n| n.t - 60.0).unwrap_or(f64::MAX);
+            let track: Vec<(f64, [f64; 2])> = match ne.preview.as_ref() {
+                Some(tr) => tr.points.iter().copied().filter(|q| q.0 >= lo && q.0 <= hi).collect(),
+                None => (0..200).map(|i| lo + i as f64 * 600.0).filter_map(|t| be.ship_pos(ne.ship, t).map(|p| (t, p))).collect(),
+            };
+            if let Some(nt) = map::nearest_on(&track, cam, p, 80.0 * s()) {
+                ne.nodes[ne.sel].t = nt.clamp(lo, hi);
+                ne.dirty = true;
+            }
+        }
+        return true;
+    }
+    if let Some(d) = inp.drag.or(Some(Vec2::ZERO)) {
+        let along = d.dot(handle_dir(&f, h)) / s();
+        let dv = along as f64 * f.k;
+        let n = &mut ne.nodes[ne.sel];
+        match h {
+            Handle::Prograde => n.prograde += dv,
+            Handle::Retrograde => n.prograde -= dv,
+            Handle::RadialOut => n.radial += dv,
+            Handle::RadialIn => n.radial -= dv,
+            Handle::Time => {}
+        }
+        if dv != 0.0 {
+            ne.dirty = true;
+        }
+    }
+    true
+}
+
+fn node_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView, mut ne: NodeEdit) {
+    if ne.dirty {
+        ne.preview = be.preview_nodes(ne.ship, &ne.nodes);
+        ne.dirty = false;
+    }
+    let r = sheet_rect(196.0);
+    inp.block(r);
+    cel::panel(r, PANEL);
+    let Some(n) = ne.nodes.get(ne.sel).copied() else {
+        g.mode = Mode::Idle;
+        return;
+    };
+    inked(&format!("NODE {}/{}", ne.sel + 1, ne.nodes.len()), r.x + 16.0 * s(), r.y + 24.0 * s(), 22.0, ACCENT, Align::Left);
+    text(&format!("burn in {}", fmt_dur(n.t - view.now)), r.x + 130.0 * s(), r.y + 25.0 * s(), 15.0, MUTED, FontKind::Body, Align::Left);
+    let total: f64 = ne.nodes.iter().map(|n| n.dv()).sum();
+    text(&format!("TOTAL Δv {:.2} km/s", total), r.x + r.w - 16.0 * s(), r.y + 25.0 * s(), 14.0, PAPER, FontKind::Title, Align::Right);
+
+    let k = node_frame(&ne, be, g.cam.as_ref().unwrap()).map(|f| f.k * 10.0).unwrap_or(0.1);
+    let rows = [("PROGRADE", n.prograde, hex(0x80ed99)), ("RADIAL", n.radial, hex(0x4cc9f0))];
+    for (i, (label, v, col)) in rows.iter().enumerate() {
+        let y = r.y + 46.0 * s() + i as f32 * 46.0 * s();
+        text(label, r.x + 16.0 * s(), y + 19.0 * s(), 15.0, *col, FontKind::Title, Align::Left);
+        inked(&format!("{:+.2}", v), r.x + 160.0 * s(), y + 19.0 * s(), 20.0, PAPER, Align::Center);
+        let bw = 44.0 * s();
+        let minus = Rect::new(r.x + r.w - 16.0 * s() - 2.0 * bw - 10.0 * s(), y, bw, 38.0 * s());
+        let plus = Rect::new(r.x + r.w - 16.0 * s() - bw, y, bw, 38.0 * s());
+        let mut delta = 0.0;
+        if widgets::button(inp, minus, "-", Style::Secondary) {
+            delta = -k;
+        }
+        if widgets::button(inp, plus, "+", Style::Secondary) {
+            delta = k;
+        }
+        if delta != 0.0 {
+            let node = &mut ne.nodes[ne.sel];
+            if i == 0 {
+                node.prograde += delta;
+            } else {
+                node.radial += delta;
+            }
+            ne.dirty = true;
+        }
+    }
+    let by = r.y + r.h - 56.0 * s();
+    let bw = (r.w - 5.0 * 10.0 * s()) / 4.0;
+    let b = |i: usize| Rect::new(r.x + 10.0 * s() + i as f32 * (bw + 10.0 * s()), by, bw, 44.0 * s());
+    let mut close = false;
+    if widgets::button(inp, b(0), "+ NODE", Style::Secondary) {
+        let last = ne.nodes.last().map(|n| n.t).unwrap_or(view.now);
+        ne.nodes.push(ManeuverNode { t: last + 3.0 * 3600.0, prograde: 0.0, radial: 0.0 });
+        ne.sel = ne.nodes.len() - 1;
+        ne.dirty = true;
+    }
+    if widgets::button(inp, b(1), "DELETE", Style::Danger) {
+        ne.nodes.remove(ne.sel);
+        ne.sel = ne.sel.saturating_sub(1);
+        ne.dirty = true;
+        if ne.nodes.is_empty() {
+            g.emit(UiAction::SetNodes { ship: ne.ship, nodes: vec![] });
+            close = true;
+        }
+    }
+    if widgets::button(inp, b(2), "COMMIT!", Style::Primary) {
+        g.emit(UiAction::SetNodes { ship: ne.ship, nodes: ne.nodes.clone() });
+        g.push_notice(Notice { kind: NoticeKind::Good, title: "BURNS SCHEDULED!".into(), body: format!("{} node(s), Δv {:.2} km/s", ne.nodes.len(), total), focus: None });
+        close = true;
+    }
+    if widgets::button(inp, b(3), "CANCEL", Style::Ghost) {
+        close = true;
+    }
+    g.mode = if close { Mode::Idle } else { Mode::Nodes(ne) };
+}
+
+// ---------------------------------------------------------------- Toasts, hints, chat
+
+pub fn toasts(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView) {
+    let now = get_time();
+    g.toasts.retain(|t| now - t.born < 5.0);
+    let w = screen_width();
+    let mut y = hud_bottom() + 44.0 * s();
+    let mut tapped = None;
+    for (i, t) in g.toasts.iter().enumerate().take(3) {
+        let age = (now - t.born) as f32;
+        let slide = ((age / 0.25).min(1.0) * std::f32::consts::FRAC_PI_2).sin();
+        let fade = ((5.0 - age) / 0.4).clamp(0.0, 1.0);
+        let tw = (w - 2.0 * margin()).min(380.0 * s());
+        let x = w - margin() - tw * slide + (1.0 - fade) * tw;
+        let r = Rect::new(x, y, tw, 62.0 * s());
+        inp.block(r);
+        cel::panel(r, PAPER);
+        let (word, col) = match t.notice.kind {
+            NoticeKind::Battle => ("POW!", DANGER),
+            NoticeKind::Bad => ("UH-OH", DANGER),
+            NoticeKind::Good => ("YES!", GOOD),
+            NoticeKind::Info => ("PSST", TEAMS[0].0),
+        };
+        let bc = vec2(r.x + 34.0 * s(), r.center().y);
+        cel::burst(bc, 30.0 * s(), 10, col, age);
+        inked(word, bc.x, bc.y, 15.0, PAPER, Align::Center);
+        text(&t.notice.title, r.x + 74.0 * s(), r.y + 20.0 * s(), 18.0, INK, FontKind::Title, Align::Left);
+        text(&t.notice.body, r.x + 74.0 * s(), r.y + 43.0 * s(), 14.0, INK, FontKind::Body, Align::Left);
+        if inp.tapped(r) {
+            inp.consume_tap();
+            tapped = Some(i);
+        }
+        y += 72.0 * s();
+    }
+    if let Some(i) = tapped {
+        let t = g.toasts.remove(i);
+        if let Some(f) = t.notice.focus {
+            g.focus(be, f, view.now + g.scrub);
+        }
+    }
+}
+
+pub fn hint(g: &mut GameScreen) {
+    let Some((h, born)) = g.hint.clone() else { return };
+    let age = get_time() - born;
+    if age > 2.2 {
+        g.hint = None;
+        return;
+    }
+    let sc = 1.0 + 0.25 * (1.0 - (age / 0.18).min(1.0)) as f32;
+    let c = vec2(screen_width() / 2.0, hud_bottom() + 60.0 * s());
+    let w = measure(&h, FontKind::Title, 22.0).x + 36.0 * s();
+    let r = Rect::new(c.x - w * sc / 2.0, c.y - 22.0 * s() * sc, w * sc, 44.0 * s() * sc);
+    cel::bubble(r, None, ACCENT);
+    text(&h, c.x, c.y, 22.0 * sc, INK, FontKind::Title, Align::Center);
+}
+
+pub fn chat(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
+    let w = screen_width();
+    let top = hud_bottom() + 4.0 * s();
+    let r = Rect::new(margin(), top, w - 2.0 * margin(), scrub_top() - top - 12.0 * s());
+    inp.block(r);
+    cel::panel(r, PANEL);
+    inked("CHAT", r.x + 16.0 * s(), r.y + 22.0 * s(), 24.0, ACCENT, Align::Left);
+    if close_x(inp, r) {
+        g.chat_open = false;
+        macroquad::miniquad::window::show_keyboard(false);
+    }
+    let field_h = 50.0 * s();
+    let inner = Rect::new(r.x + 12.0 * s(), r.y + 44.0 * s(), r.w - 24.0 * s(), r.h - 56.0 * s() - field_h - 12.0 * s());
+    // Lay out bubbles bottom-up.
+    let mut y = inner.y + inner.h;
+    let maxw = inner.w * 0.78;
+    for m in view.chat.iter().rev() {
+        let mine = m.from == view.me;
+        let p = view.player(m.from);
+        let lines = wrap(&m.text, FontKind::Body, 16.0, maxw - 24.0 * s());
+        let lw = lines.iter().map(|l| measure(l, FontKind::Body, 16.0).x).fold(0.0, f32::max);
+        let bw = (lw + 24.0 * s()).max(90.0 * s());
+        let bh = lines.len() as f32 * 20.0 * s() + 34.0 * s();
+        y -= bh + 12.0 * s();
+        if y < inner.y {
+            break;
+        }
+        let x = if mine { inner.x + inner.w - bw - 6.0 * s() } else { inner.x + 6.0 * s() };
+        let br = Rect::new(x, y, bw, bh);
+        let tail = if mine { vec2(br.x + br.w + 8.0 * s(), br.y + br.h + 8.0 * s()) } else { vec2(br.x - 8.0 * s(), br.y + br.h + 8.0 * s()) };
+        let (l, _) = team(p.map(|p| p.color));
+        cel::bubble(br, Some(tail), if mine { PAPER } else { l });
+        let who = p.map(|p| p.name.to_uppercase()).unwrap_or_else(|| "???".into());
+        text(&format!("{who} · {}", fmt_clock(m.t)), br.x + 12.0 * s(), br.y + 14.0 * s(), 11.0, Color::new(0.0, 0.0, 0.0, 0.6), FontKind::Title, Align::Left);
+        for (i, line) in lines.iter().enumerate() {
+            text(line, br.x + 12.0 * s(), br.y + 34.0 * s() + i as f32 * 20.0 * s(), 16.0, INK, FontKind::Body, Align::Left);
+        }
+    }
+    let fr = Rect::new(r.x + 12.0 * s(), r.y + r.h - field_h - 12.0 * s(), r.w - 120.0 * s(), field_h);
+    let mut send = widgets::text_field(inp, fr, &mut g.chat_field, "say something...");
+    send |= widgets::button(inp, Rect::new(fr.x + fr.w + 12.0 * s(), fr.y, r.w - fr.w - 36.0 * s(), field_h), "SEND", Style::Primary);
+    if send && !g.chat_field.text.trim().is_empty() {
+        let msg = std::mem::take(&mut g.chat_field.text);
+        g.emit(UiAction::Chat(msg.trim().to_string()));
+    }
+    g.chat_seen = view.chat.len();
+}

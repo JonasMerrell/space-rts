@@ -1,0 +1,1472 @@
+{
+ "version": 1,
+ "style": "L cel-shaded comic",
+ "conventions": {
+  "paths": "relative to assets/; load with macroquad load_texture(\"assets/<path>\")",
+  "format": "PNG RGBA, straight alpha, sRGB",
+  "facing": "ships, shots and flames face +x (angle 0); rotate by atan2(vy, vx)",
+  "team_variants": "ships/stations are pre-baked per team colour: <class>_<team>.png, team in blue|red|green|yellow|neutral",
+  "tint": "sprites marked tint=true are white+black ink: multiply by a colour (draw_texture_ex color) to recolour",
+  "flipbooks": "horizontal strips; frame i at x = i*frame_w",
+  "bodies": "*_flat + shadow_overlay for dynamic lighting from the star, or *_lit pre-shaded (light from upper-left)",
+  "px_points": "engines_px / guns_px are pixel offsets from the sprite centre, +x = nose, at native px size"
+ },
+ "teams": {
+  "blue": {
+   "light": "#4cc9f0",
+   "dark": "#3a86ff"
+  },
+  "red": {
+   "light": "#e63946",
+   "dark": "#9d0208"
+  },
+  "green": {
+   "light": "#80ed99",
+   "dark": "#38a169"
+  },
+  "yellow": {
+   "light": "#ffd23f",
+   "dark": "#e09f00"
+  },
+  "neutral": {
+   "light": "#adb5bd",
+   "dark": "#6c757d"
+  }
+ },
+ "skins": {
+  "vanguard": {
+   "name": "Vanguard Navy",
+   "blurb": "Clean angular naval hulls, steel and glass.",
+   "metal": [
+    "#e9ecef",
+    "#8d99ae"
+   ],
+   "glass": "#caf0f8",
+   "accent": "#ffd23f",
+   "emblem": "sprites/emblems/vanguard.png"
+  },
+  "hive": {
+   "name": "Hive Brood",
+   "blurb": "Organic chitin curves, glowing acid eyes.",
+   "metal": [
+    "#8e6c8a",
+    "#4a3050"
+   ],
+   "glass": "#c7f464",
+   "accent": "#c7f464",
+   "emblem": "sprites/emblems/hive.png"
+  },
+  "prism": {
+   "name": "Prism Covenant",
+   "blurb": "Faceted crystal hulls with a magenta core.",
+   "metal": [
+    "#f3eaff",
+    "#b3a2d6"
+   ],
+   "glass": "#ff4fd8",
+   "accent": "#ff4fd8",
+   "emblem": "sprites/emblems/prism.png"
+  },
+  "junker": {
+   "name": "Junker Clans",
+   "blurb": "Bolted scrap plates, rust and hazard stripes.",
+   "metal": [
+    "#d99a6c",
+    "#8c4f2b"
+   ],
+   "glass": "#ffe066",
+   "accent": "#ff9f1c",
+   "emblem": "sprites/emblems/junker.png"
+  }
+ },
+ "ships": {
+  "interceptor": {
+   "size": 0.55,
+   "role": "fast light fighter, kinetic cannons",
+   "beats": "bomber",
+   "weak_to": "gunship",
+   "px": 128,
+   "facing": "+x",
+   "skins": {
+    "vanguard": {
+     "blue": "sprites/ships/vanguard/interceptor_blue.png",
+     "red": "sprites/ships/vanguard/interceptor_red.png",
+     "green": "sprites/ships/vanguard/interceptor_green.png",
+     "yellow": "sprites/ships/vanguard/interceptor_yellow.png",
+     "neutral": "sprites/ships/vanguard/interceptor_neutral.png"
+    },
+    "hive": {
+     "blue": "sprites/ships/hive/interceptor_blue.png",
+     "red": "sprites/ships/hive/interceptor_red.png",
+     "green": "sprites/ships/hive/interceptor_green.png",
+     "yellow": "sprites/ships/hive/interceptor_yellow.png",
+     "neutral": "sprites/ships/hive/interceptor_neutral.png"
+    },
+    "prism": {
+     "blue": "sprites/ships/prism/interceptor_blue.png",
+     "red": "sprites/ships/prism/interceptor_red.png",
+     "green": "sprites/ships/prism/interceptor_green.png",
+     "yellow": "sprites/ships/prism/interceptor_yellow.png",
+     "neutral": "sprites/ships/prism/interceptor_neutral.png"
+    },
+    "junker": {
+     "blue": "sprites/ships/junker/interceptor_blue.png",
+     "red": "sprites/ships/junker/interceptor_red.png",
+     "green": "sprites/ships/junker/interceptor_green.png",
+     "yellow": "sprites/ships/junker/interceptor_yellow.png",
+     "neutral": "sprites/ships/junker/interceptor_neutral.png"
+    }
+   },
+   "icon": "sprites/icons/ship_interceptor.png",
+   "engines_px": [
+    [
+     -52.8,
+     0.0
+    ]
+   ],
+   "guns_px": [
+    [
+     0.0,
+     36.5
+    ],
+    [
+     0.0,
+     -36.5
+    ]
+   ]
+  },
+  "gunship": {
+   "size": 0.8,
+   "role": "turreted brawler, energy beams",
+   "beats": "interceptor",
+   "weak_to": "bomber",
+   "px": 128,
+   "facing": "+x",
+   "skins": {
+    "vanguard": {
+     "blue": "sprites/ships/vanguard/gunship_blue.png",
+     "red": "sprites/ships/vanguard/gunship_red.png",
+     "green": "sprites/ships/vanguard/gunship_green.png",
+     "yellow": "sprites/ships/vanguard/gunship_yellow.png",
+     "neutral": "sprites/ships/vanguard/gunship_neutral.png"
+    },
+    "hive": {
+     "blue": "sprites/ships/hive/gunship_blue.png",
+     "red": "sprites/ships/hive/gunship_red.png",
+     "green": "sprites/ships/hive/gunship_green.png",
+     "yellow": "sprites/ships/hive/gunship_yellow.png",
+     "neutral": "sprites/ships/hive/gunship_neutral.png"
+    },
+    "prism": {
+     "blue": "sprites/ships/prism/gunship_blue.png",
+     "red": "sprites/ships/prism/gunship_red.png",
+     "green": "sprites/ships/prism/gunship_green.png",
+     "yellow": "sprites/ships/prism/gunship_yellow.png",
+     "neutral": "sprites/ships/prism/gunship_neutral.png"
+    },
+    "junker": {
+     "blue": "sprites/ships/junker/gunship_blue.png",
+     "red": "sprites/ships/junker/gunship_red.png",
+     "green": "sprites/ships/junker/gunship_green.png",
+     "yellow": "sprites/ships/junker/gunship_yellow.png",
+     "neutral": "sprites/ships/junker/gunship_neutral.png"
+    }
+   },
+   "icon": "sprites/icons/ship_gunship.png",
+   "engines_px": [
+    [
+     -54.5,
+     14.1
+    ],
+    [
+     -54.5,
+     -14.1
+    ]
+   ],
+   "guns_px": [
+    [
+     12.4,
+     32.4
+    ],
+    [
+     12.4,
+     -32.4
+    ],
+    [
+     29.9,
+     0.0
+    ]
+   ]
+  },
+  "bomber": {
+   "size": 0.9,
+   "role": "heavy torpedo carrier, anti-capital",
+   "beats": "gunship",
+   "weak_to": "interceptor",
+   "px": 128,
+   "facing": "+x",
+   "skins": {
+    "vanguard": {
+     "blue": "sprites/ships/vanguard/bomber_blue.png",
+     "red": "sprites/ships/vanguard/bomber_red.png",
+     "green": "sprites/ships/vanguard/bomber_green.png",
+     "yellow": "sprites/ships/vanguard/bomber_yellow.png",
+     "neutral": "sprites/ships/vanguard/bomber_neutral.png"
+    },
+    "hive": {
+     "blue": "sprites/ships/hive/bomber_blue.png",
+     "red": "sprites/ships/hive/bomber_red.png",
+     "green": "sprites/ships/hive/bomber_green.png",
+     "yellow": "sprites/ships/hive/bomber_yellow.png",
+     "neutral": "sprites/ships/hive/bomber_neutral.png"
+    },
+    "prism": {
+     "blue": "sprites/ships/prism/bomber_blue.png",
+     "red": "sprites/ships/prism/bomber_red.png",
+     "green": "sprites/ships/prism/bomber_green.png",
+     "yellow": "sprites/ships/prism/bomber_yellow.png",
+     "neutral": "sprites/ships/prism/bomber_neutral.png"
+    },
+    "junker": {
+     "blue": "sprites/ships/junker/bomber_blue.png",
+     "red": "sprites/ships/junker/bomber_red.png",
+     "green": "sprites/ships/junker/bomber_green.png",
+     "yellow": "sprites/ships/junker/bomber_yellow.png",
+     "neutral": "sprites/ships/junker/bomber_neutral.png"
+    }
+   },
+   "icon": "sprites/icons/ship_bomber.png",
+   "engines_px": [
+    [
+     -55.1,
+     0.0
+    ],
+    [
+     -48.8,
+     30.6
+    ],
+    [
+     -48.8,
+     -30.6
+    ]
+   ],
+   "guns_px": [
+    [
+     -1.4,
+     21.2
+    ],
+    [
+     -3.7,
+     36.5
+    ],
+    [
+     -1.4,
+     -21.2
+    ],
+    [
+     -3.7,
+     -36.5
+    ]
+   ]
+  },
+  "scout": {
+   "size": 0.45,
+   "role": "sensor picket, nearly invisible",
+   "beats": null,
+   "weak_to": null,
+   "px": 128,
+   "facing": "+x",
+   "skins": {
+    "vanguard": {
+     "blue": "sprites/ships/vanguard/scout_blue.png",
+     "red": "sprites/ships/vanguard/scout_red.png",
+     "green": "sprites/ships/vanguard/scout_green.png",
+     "yellow": "sprites/ships/vanguard/scout_yellow.png",
+     "neutral": "sprites/ships/vanguard/scout_neutral.png"
+    },
+    "hive": {
+     "blue": "sprites/ships/hive/scout_blue.png",
+     "red": "sprites/ships/hive/scout_red.png",
+     "green": "sprites/ships/hive/scout_green.png",
+     "yellow": "sprites/ships/hive/scout_yellow.png",
+     "neutral": "sprites/ships/hive/scout_neutral.png"
+    },
+    "prism": {
+     "blue": "sprites/ships/prism/scout_blue.png",
+     "red": "sprites/ships/prism/scout_red.png",
+     "green": "sprites/ships/prism/scout_green.png",
+     "yellow": "sprites/ships/prism/scout_yellow.png",
+     "neutral": "sprites/ships/prism/scout_neutral.png"
+    },
+    "junker": {
+     "blue": "sprites/ships/junker/scout_blue.png",
+     "red": "sprites/ships/junker/scout_red.png",
+     "green": "sprites/ships/junker/scout_green.png",
+     "yellow": "sprites/ships/junker/scout_yellow.png",
+     "neutral": "sprites/ships/junker/scout_neutral.png"
+    }
+   },
+   "icon": "sprites/icons/ship_scout.png",
+   "engines_px": [
+    [
+     -42.3,
+     0.0
+    ]
+   ],
+   "guns_px": [
+    [
+     45.9,
+     0.0
+    ]
+   ]
+  },
+  "tanker": {
+   "size": 1.0,
+   "role": "carries fuel between depots",
+   "beats": null,
+   "weak_to": null,
+   "px": 128,
+   "facing": "+x",
+   "skins": {
+    "vanguard": {
+     "blue": "sprites/ships/vanguard/tanker_blue.png",
+     "red": "sprites/ships/vanguard/tanker_red.png",
+     "green": "sprites/ships/vanguard/tanker_green.png",
+     "yellow": "sprites/ships/vanguard/tanker_yellow.png",
+     "neutral": "sprites/ships/vanguard/tanker_neutral.png"
+    },
+    "hive": {
+     "blue": "sprites/ships/hive/tanker_blue.png",
+     "red": "sprites/ships/hive/tanker_red.png",
+     "green": "sprites/ships/hive/tanker_green.png",
+     "yellow": "sprites/ships/hive/tanker_yellow.png",
+     "neutral": "sprites/ships/hive/tanker_neutral.png"
+    },
+    "prism": {
+     "blue": "sprites/ships/prism/tanker_blue.png",
+     "red": "sprites/ships/prism/tanker_red.png",
+     "green": "sprites/ships/prism/tanker_green.png",
+     "yellow": "sprites/ships/prism/tanker_yellow.png",
+     "neutral": "sprites/ships/prism/tanker_neutral.png"
+    },
+    "junker": {
+     "blue": "sprites/ships/junker/tanker_blue.png",
+     "red": "sprites/ships/junker/tanker_red.png",
+     "green": "sprites/ships/junker/tanker_green.png",
+     "yellow": "sprites/ships/junker/tanker_yellow.png",
+     "neutral": "sprites/ships/junker/tanker_neutral.png"
+    }
+   },
+   "icon": "sprites/icons/ship_tanker.png",
+   "engines_px": [
+    [
+     -60.5,
+     8.2
+    ],
+    [
+     -60.5,
+     -8.2
+    ]
+   ],
+   "guns_px": []
+  },
+  "freighter": {
+   "size": 1.0,
+   "role": "carries matter (cargo)",
+   "beats": null,
+   "weak_to": null,
+   "px": 128,
+   "facing": "+x",
+   "skins": {
+    "vanguard": {
+     "blue": "sprites/ships/vanguard/freighter_blue.png",
+     "red": "sprites/ships/vanguard/freighter_red.png",
+     "green": "sprites/ships/vanguard/freighter_green.png",
+     "yellow": "sprites/ships/vanguard/freighter_yellow.png",
+     "neutral": "sprites/ships/vanguard/freighter_neutral.png"
+    },
+    "hive": {
+     "blue": "sprites/ships/hive/freighter_blue.png",
+     "red": "sprites/ships/hive/freighter_red.png",
+     "green": "sprites/ships/hive/freighter_green.png",
+     "yellow": "sprites/ships/hive/freighter_yellow.png",
+     "neutral": "sprites/ships/hive/freighter_neutral.png"
+    },
+    "prism": {
+     "blue": "sprites/ships/prism/freighter_blue.png",
+     "red": "sprites/ships/prism/freighter_red.png",
+     "green": "sprites/ships/prism/freighter_green.png",
+     "yellow": "sprites/ships/prism/freighter_yellow.png",
+     "neutral": "sprites/ships/prism/freighter_neutral.png"
+    },
+    "junker": {
+     "blue": "sprites/ships/junker/freighter_blue.png",
+     "red": "sprites/ships/junker/freighter_red.png",
+     "green": "sprites/ships/junker/freighter_green.png",
+     "yellow": "sprites/ships/junker/freighter_yellow.png",
+     "neutral": "sprites/ships/junker/freighter_neutral.png"
+    }
+   },
+   "icon": "sprites/icons/ship_freighter.png",
+   "engines_px": [
+    [
+     -61.1,
+     10.6
+    ],
+    [
+     -61.1,
+     -10.6
+    ]
+   ],
+   "guns_px": []
+  },
+  "tug": {
+   "size": 0.7,
+   "role": "asteroid drive / pusher",
+   "beats": null,
+   "weak_to": null,
+   "px": 128,
+   "facing": "+x",
+   "skins": {
+    "vanguard": {
+     "blue": "sprites/ships/vanguard/tug_blue.png",
+     "red": "sprites/ships/vanguard/tug_red.png",
+     "green": "sprites/ships/vanguard/tug_green.png",
+     "yellow": "sprites/ships/vanguard/tug_yellow.png",
+     "neutral": "sprites/ships/vanguard/tug_neutral.png"
+    },
+    "hive": {
+     "blue": "sprites/ships/hive/tug_blue.png",
+     "red": "sprites/ships/hive/tug_red.png",
+     "green": "sprites/ships/hive/tug_green.png",
+     "yellow": "sprites/ships/hive/tug_yellow.png",
+     "neutral": "sprites/ships/hive/tug_neutral.png"
+    },
+    "prism": {
+     "blue": "sprites/ships/prism/tug_blue.png",
+     "red": "sprites/ships/prism/tug_red.png",
+     "green": "sprites/ships/prism/tug_green.png",
+     "yellow": "sprites/ships/prism/tug_yellow.png",
+     "neutral": "sprites/ships/prism/tug_neutral.png"
+    },
+    "junker": {
+     "blue": "sprites/ships/junker/tug_blue.png",
+     "red": "sprites/ships/junker/tug_red.png",
+     "green": "sprites/ships/junker/tug_green.png",
+     "yellow": "sprites/ships/junker/tug_yellow.png",
+     "neutral": "sprites/ships/junker/tug_neutral.png"
+    }
+   },
+   "icon": "sprites/icons/ship_tug.png",
+   "engines_px": [
+    [
+     -51.2,
+     0.0
+    ]
+   ],
+   "guns_px": []
+  }
+ },
+ "stations": {
+  "shipyard": {
+   "role": "builds ships in orbit",
+   "px": 192,
+   "skins": {
+    "vanguard": {
+     "blue": "sprites/stations/vanguard/shipyard_blue.png",
+     "red": "sprites/stations/vanguard/shipyard_red.png",
+     "green": "sprites/stations/vanguard/shipyard_green.png",
+     "yellow": "sprites/stations/vanguard/shipyard_yellow.png",
+     "neutral": "sprites/stations/vanguard/shipyard_neutral.png"
+    },
+    "hive": {
+     "blue": "sprites/stations/hive/shipyard_blue.png",
+     "red": "sprites/stations/hive/shipyard_red.png",
+     "green": "sprites/stations/hive/shipyard_green.png",
+     "yellow": "sprites/stations/hive/shipyard_yellow.png",
+     "neutral": "sprites/stations/hive/shipyard_neutral.png"
+    },
+    "prism": {
+     "blue": "sprites/stations/prism/shipyard_blue.png",
+     "red": "sprites/stations/prism/shipyard_red.png",
+     "green": "sprites/stations/prism/shipyard_green.png",
+     "yellow": "sprites/stations/prism/shipyard_yellow.png",
+     "neutral": "sprites/stations/prism/shipyard_neutral.png"
+    },
+    "junker": {
+     "blue": "sprites/stations/junker/shipyard_blue.png",
+     "red": "sprites/stations/junker/shipyard_red.png",
+     "green": "sprites/stations/junker/shipyard_green.png",
+     "yellow": "sprites/stations/junker/shipyard_yellow.png",
+     "neutral": "sprites/stations/junker/shipyard_neutral.png"
+    }
+   },
+   "icon": "sprites/icons/station_shipyard.png"
+  },
+  "fuel_depot": {
+   "role": "stores and refuels; can sit on an asteroid",
+   "px": 192,
+   "skins": {
+    "vanguard": {
+     "blue": "sprites/stations/vanguard/fuel_depot_blue.png",
+     "red": "sprites/stations/vanguard/fuel_depot_red.png",
+     "green": "sprites/stations/vanguard/fuel_depot_green.png",
+     "yellow": "sprites/stations/vanguard/fuel_depot_yellow.png",
+     "neutral": "sprites/stations/vanguard/fuel_depot_neutral.png"
+    },
+    "hive": {
+     "blue": "sprites/stations/hive/fuel_depot_blue.png",
+     "red": "sprites/stations/hive/fuel_depot_red.png",
+     "green": "sprites/stations/hive/fuel_depot_green.png",
+     "yellow": "sprites/stations/hive/fuel_depot_yellow.png",
+     "neutral": "sprites/stations/hive/fuel_depot_neutral.png"
+    },
+    "prism": {
+     "blue": "sprites/stations/prism/fuel_depot_blue.png",
+     "red": "sprites/stations/prism/fuel_depot_red.png",
+     "green": "sprites/stations/prism/fuel_depot_green.png",
+     "yellow": "sprites/stations/prism/fuel_depot_yellow.png",
+     "neutral": "sprites/stations/prism/fuel_depot_neutral.png"
+    },
+    "junker": {
+     "blue": "sprites/stations/junker/fuel_depot_blue.png",
+     "red": "sprites/stations/junker/fuel_depot_red.png",
+     "green": "sprites/stations/junker/fuel_depot_green.png",
+     "yellow": "sprites/stations/junker/fuel_depot_yellow.png",
+     "neutral": "sprites/stations/junker/fuel_depot_neutral.png"
+    }
+   },
+   "icon": "sprites/icons/station_fuel_depot.png"
+  },
+  "telescope": {
+   "role": "long-range optical intel on far bodies",
+   "px": 192,
+   "skins": {
+    "vanguard": {
+     "blue": "sprites/stations/vanguard/telescope_blue.png",
+     "red": "sprites/stations/vanguard/telescope_red.png",
+     "green": "sprites/stations/vanguard/telescope_green.png",
+     "yellow": "sprites/stations/vanguard/telescope_yellow.png",
+     "neutral": "sprites/stations/vanguard/telescope_neutral.png"
+    },
+    "hive": {
+     "blue": "sprites/stations/hive/telescope_blue.png",
+     "red": "sprites/stations/hive/telescope_red.png",
+     "green": "sprites/stations/hive/telescope_green.png",
+     "yellow": "sprites/stations/hive/telescope_yellow.png",
+     "neutral": "sprites/stations/hive/telescope_neutral.png"
+    },
+    "prism": {
+     "blue": "sprites/stations/prism/telescope_blue.png",
+     "red": "sprites/stations/prism/telescope_red.png",
+     "green": "sprites/stations/prism/telescope_green.png",
+     "yellow": "sprites/stations/prism/telescope_yellow.png",
+     "neutral": "sprites/stations/prism/telescope_neutral.png"
+    },
+    "junker": {
+     "blue": "sprites/stations/junker/telescope_blue.png",
+     "red": "sprites/stations/junker/telescope_red.png",
+     "green": "sprites/stations/junker/telescope_green.png",
+     "yellow": "sprites/stations/junker/telescope_yellow.png",
+     "neutral": "sprites/stations/junker/telescope_neutral.png"
+    }
+   },
+   "icon": "sprites/icons/station_telescope.png"
+  },
+  "scanner": {
+   "role": "scanning station: reveals small ships nearby",
+   "px": 192,
+   "skins": {
+    "vanguard": {
+     "blue": "sprites/stations/vanguard/scanner_blue.png",
+     "red": "sprites/stations/vanguard/scanner_red.png",
+     "green": "sprites/stations/vanguard/scanner_green.png",
+     "yellow": "sprites/stations/vanguard/scanner_yellow.png",
+     "neutral": "sprites/stations/vanguard/scanner_neutral.png"
+    },
+    "hive": {
+     "blue": "sprites/stations/hive/scanner_blue.png",
+     "red": "sprites/stations/hive/scanner_red.png",
+     "green": "sprites/stations/hive/scanner_green.png",
+     "yellow": "sprites/stations/hive/scanner_yellow.png",
+     "neutral": "sprites/stations/hive/scanner_neutral.png"
+    },
+    "prism": {
+     "blue": "sprites/stations/prism/scanner_blue.png",
+     "red": "sprites/stations/prism/scanner_red.png",
+     "green": "sprites/stations/prism/scanner_green.png",
+     "yellow": "sprites/stations/prism/scanner_yellow.png",
+     "neutral": "sprites/stations/prism/scanner_neutral.png"
+    },
+    "junker": {
+     "blue": "sprites/stations/junker/scanner_blue.png",
+     "red": "sprites/stations/junker/scanner_red.png",
+     "green": "sprites/stations/junker/scanner_green.png",
+     "yellow": "sprites/stations/junker/scanner_yellow.png",
+     "neutral": "sprites/stations/junker/scanner_neutral.png"
+    }
+   },
+   "icon": "sprites/icons/station_scanner.png"
+  },
+  "defense": {
+   "role": "defense platform with three turrets",
+   "px": 192,
+   "skins": {
+    "vanguard": {
+     "blue": "sprites/stations/vanguard/defense_blue.png",
+     "red": "sprites/stations/vanguard/defense_red.png",
+     "green": "sprites/stations/vanguard/defense_green.png",
+     "yellow": "sprites/stations/vanguard/defense_yellow.png",
+     "neutral": "sprites/stations/vanguard/defense_neutral.png"
+    },
+    "hive": {
+     "blue": "sprites/stations/hive/defense_blue.png",
+     "red": "sprites/stations/hive/defense_red.png",
+     "green": "sprites/stations/hive/defense_green.png",
+     "yellow": "sprites/stations/hive/defense_yellow.png",
+     "neutral": "sprites/stations/hive/defense_neutral.png"
+    },
+    "prism": {
+     "blue": "sprites/stations/prism/defense_blue.png",
+     "red": "sprites/stations/prism/defense_red.png",
+     "green": "sprites/stations/prism/defense_green.png",
+     "yellow": "sprites/stations/prism/defense_yellow.png",
+     "neutral": "sprites/stations/prism/defense_neutral.png"
+    },
+    "junker": {
+     "blue": "sprites/stations/junker/defense_blue.png",
+     "red": "sprites/stations/junker/defense_red.png",
+     "green": "sprites/stations/junker/defense_green.png",
+     "yellow": "sprites/stations/junker/defense_yellow.png",
+     "neutral": "sprites/stations/junker/defense_neutral.png"
+    }
+   },
+   "icon": "sprites/icons/station_defense.png"
+  },
+  "relay": {
+   "role": "sensor relay: extends intel range",
+   "px": 192,
+   "skins": {
+    "vanguard": {
+     "blue": "sprites/stations/vanguard/relay_blue.png",
+     "red": "sprites/stations/vanguard/relay_red.png",
+     "green": "sprites/stations/vanguard/relay_green.png",
+     "yellow": "sprites/stations/vanguard/relay_yellow.png",
+     "neutral": "sprites/stations/vanguard/relay_neutral.png"
+    },
+    "hive": {
+     "blue": "sprites/stations/hive/relay_blue.png",
+     "red": "sprites/stations/hive/relay_red.png",
+     "green": "sprites/stations/hive/relay_green.png",
+     "yellow": "sprites/stations/hive/relay_yellow.png",
+     "neutral": "sprites/stations/hive/relay_neutral.png"
+    },
+    "prism": {
+     "blue": "sprites/stations/prism/relay_blue.png",
+     "red": "sprites/stations/prism/relay_red.png",
+     "green": "sprites/stations/prism/relay_green.png",
+     "yellow": "sprites/stations/prism/relay_yellow.png",
+     "neutral": "sprites/stations/prism/relay_neutral.png"
+    },
+    "junker": {
+     "blue": "sprites/stations/junker/relay_blue.png",
+     "red": "sprites/stations/junker/relay_red.png",
+     "green": "sprites/stations/junker/relay_green.png",
+     "yellow": "sprites/stations/junker/relay_yellow.png",
+     "neutral": "sprites/stations/junker/relay_neutral.png"
+    }
+   },
+   "icon": "sprites/icons/station_relay.png"
+  },
+  "asteroid_drive": {
+   "role": "drive clamped to an asteroid; thrust +x",
+   "px": 64,
+   "skins": {
+    "any": {
+     "blue": "sprites/stations/asteroid_drive_blue.png",
+     "red": "sprites/stations/asteroid_drive_red.png",
+     "green": "sprites/stations/asteroid_drive_green.png",
+     "yellow": "sprites/stations/asteroid_drive_yellow.png",
+     "neutral": "sprites/stations/asteroid_drive_neutral.png"
+    }
+   }
+  }
+ },
+ "bodies": {
+  "shadow_overlay": {
+   "file": "sprites/bodies/shadow_overlay.png",
+   "px": 256,
+   "radius_px": 112,
+   "note": "draw over *_flat bodies scaled so radius_px = body radius, rotated so +x points away from the star"
+  },
+  "planet_terran": {
+   "px": 256,
+   "radius_px": 112,
+   "kind": "planet",
+   "flat": "sprites/bodies/planet_terran_flat.png",
+   "lit": "sprites/bodies/planet_terran_lit.png"
+  },
+  "planet_ocean": {
+   "px": 256,
+   "radius_px": 112,
+   "kind": "planet",
+   "flat": "sprites/bodies/planet_ocean_flat.png",
+   "lit": "sprites/bodies/planet_ocean_lit.png"
+  },
+  "planet_desert": {
+   "px": 256,
+   "radius_px": 112,
+   "kind": "planet",
+   "flat": "sprites/bodies/planet_desert_flat.png",
+   "lit": "sprites/bodies/planet_desert_lit.png"
+  },
+  "planet_ice": {
+   "px": 256,
+   "radius_px": 112,
+   "kind": "planet",
+   "flat": "sprites/bodies/planet_ice_flat.png",
+   "lit": "sprites/bodies/planet_ice_lit.png"
+  },
+  "planet_lava": {
+   "px": 256,
+   "radius_px": 112,
+   "kind": "planet",
+   "flat": "sprites/bodies/planet_lava_flat.png",
+   "lit": "sprites/bodies/planet_lava_lit.png"
+  },
+  "planet_barren": {
+   "px": 256,
+   "radius_px": 112,
+   "kind": "planet",
+   "flat": "sprites/bodies/planet_barren_flat.png",
+   "lit": "sprites/bodies/planet_barren_lit.png"
+  },
+  "planet_toxic": {
+   "px": 256,
+   "radius_px": 112,
+   "kind": "planet",
+   "flat": "sprites/bodies/planet_toxic_flat.png",
+   "lit": "sprites/bodies/planet_toxic_lit.png"
+  },
+  "planet_jungle": {
+   "px": 256,
+   "radius_px": 112,
+   "kind": "planet",
+   "flat": "sprites/bodies/planet_jungle_flat.png",
+   "lit": "sprites/bodies/planet_jungle_lit.png"
+  },
+  "planet_gas_orange": {
+   "px": 256,
+   "radius_px": 112,
+   "kind": "planet",
+   "flat": "sprites/bodies/planet_gas_orange_flat.png",
+   "lit": "sprites/bodies/planet_gas_orange_lit.png"
+  },
+  "planet_gas_blue": {
+   "px": 384,
+   "radius_px": 112,
+   "kind": "planet",
+   "flat": "sprites/bodies/planet_gas_blue_flat.png",
+   "lit": "sprites/bodies/planet_gas_blue_lit.png"
+  },
+  "planet_gas_ringed": {
+   "px": 384,
+   "radius_px": 112,
+   "kind": "planet",
+   "flat": "sprites/bodies/planet_gas_ringed_flat.png",
+   "lit": "sprites/bodies/planet_gas_ringed_lit.png"
+  },
+  "moon_grey": {
+   "px": 128,
+   "radius_px": 54,
+   "kind": "moon",
+   "flat": "sprites/bodies/moon_grey_flat.png",
+   "lit": "sprites/bodies/moon_grey_lit.png"
+  },
+  "moon_icy": {
+   "px": 128,
+   "radius_px": 54,
+   "kind": "moon",
+   "flat": "sprites/bodies/moon_icy_flat.png",
+   "lit": "sprites/bodies/moon_icy_lit.png"
+  },
+  "moon_red": {
+   "px": 128,
+   "radius_px": 54,
+   "kind": "moon",
+   "flat": "sprites/bodies/moon_red_flat.png",
+   "lit": "sprites/bodies/moon_red_lit.png"
+  },
+  "moon_sulfur": {
+   "px": 128,
+   "radius_px": 54,
+   "kind": "moon",
+   "flat": "sprites/bodies/moon_sulfur_flat.png",
+   "lit": "sprites/bodies/moon_sulfur_lit.png"
+  },
+  "moon_carbon": {
+   "px": 128,
+   "radius_px": 54,
+   "kind": "moon",
+   "flat": "sprites/bodies/moon_carbon_flat.png",
+   "lit": "sprites/bodies/moon_carbon_lit.png"
+  },
+  "asteroid_rock": {
+   "px": 96,
+   "radius_px": 32,
+   "kind": "asteroid",
+   "lit": "sprites/bodies/asteroid_rock.png"
+  },
+  "asteroid_rock2": {
+   "px": 96,
+   "radius_px": 32,
+   "kind": "asteroid",
+   "lit": "sprites/bodies/asteroid_rock2.png"
+  },
+  "asteroid_rock3": {
+   "px": 96,
+   "radius_px": 32,
+   "kind": "asteroid",
+   "lit": "sprites/bodies/asteroid_rock3.png"
+  },
+  "asteroid_rock4": {
+   "px": 96,
+   "radius_px": 32,
+   "kind": "asteroid",
+   "lit": "sprites/bodies/asteroid_rock4.png"
+  },
+  "asteroid_metal": {
+   "px": 96,
+   "radius_px": 32,
+   "kind": "asteroid",
+   "lit": "sprites/bodies/asteroid_metal.png"
+  },
+  "asteroid_metal2": {
+   "px": 96,
+   "radius_px": 32,
+   "kind": "asteroid",
+   "lit": "sprites/bodies/asteroid_metal2.png"
+  },
+  "asteroid_ice": {
+   "px": 96,
+   "radius_px": 32,
+   "kind": "asteroid",
+   "lit": "sprites/bodies/asteroid_ice.png"
+  },
+  "asteroid_ice2": {
+   "px": 96,
+   "radius_px": 32,
+   "kind": "asteroid",
+   "lit": "sprites/bodies/asteroid_ice2.png"
+  },
+  "star_yellow": {
+   "px": 512,
+   "radius_px": 140,
+   "kind": "star",
+   "lit": "sprites/bodies/star_yellow.png",
+   "note": "corona extends to 1.72x radius; slowly rotate for life"
+  },
+  "star_orange": {
+   "px": 512,
+   "radius_px": 140,
+   "kind": "star",
+   "lit": "sprites/bodies/star_orange.png",
+   "note": "corona extends to 1.72x radius; slowly rotate for life"
+  },
+  "star_red": {
+   "px": 512,
+   "radius_px": 140,
+   "kind": "star",
+   "lit": "sprites/bodies/star_red.png",
+   "note": "corona extends to 1.72x radius; slowly rotate for life"
+  },
+  "star_blue": {
+   "px": 512,
+   "radius_px": 140,
+   "kind": "star",
+   "lit": "sprites/bodies/star_blue.png",
+   "note": "corona extends to 1.72x radius; slowly rotate for life"
+  },
+  "star_white": {
+   "px": 512,
+   "radius_px": 140,
+   "kind": "star",
+   "lit": "sprites/bodies/star_white.png",
+   "note": "corona extends to 1.72x radius; slowly rotate for life"
+  },
+  "star_glow": {
+   "file": "sprites/bodies/star_glow.png",
+   "px": 256,
+   "tint": true,
+   "note": "additive soft glow, tint with the star's colour"
+  }
+ },
+ "fx": {
+  "explosion_small": {
+   "file": "sprites/fx/explosion_small.png",
+   "frames": 8,
+   "frame_w": 96,
+   "frame_h": 96,
+   "fps": 16
+  },
+  "explosion_large": {
+   "file": "sprites/fx/explosion_large.png",
+   "frames": 10,
+   "frame_w": 192,
+   "frame_h": 192,
+   "fps": 14
+  },
+  "asteroid_impact": {
+   "file": "sprites/fx/asteroid_impact.png",
+   "frames": 12,
+   "frame_w": 256,
+   "frame_h": 256,
+   "fps": 12
+  },
+  "impact_kinetic": {
+   "file": "sprites/fx/impact_kinetic.png",
+   "frames": 6,
+   "frame_w": 64,
+   "frame_h": 64,
+   "fps": 20
+  },
+  "impact_energy": {
+   "file": "sprites/fx/impact_energy.png",
+   "frames": 6,
+   "frame_w": 64,
+   "frame_h": 64,
+   "fps": 20,
+   "tint": true
+  },
+  "shield_hit": {
+   "file": "sprites/fx/shield_hit.png",
+   "frames": 6,
+   "frame_w": 96,
+   "frame_h": 96,
+   "fps": 18,
+   "tint": true,
+   "note": "arc faces +x: rotate toward the incoming shot"
+  },
+  "muzzle_flash": {
+   "file": "sprites/fx/muzzle_flash.png",
+   "frames": 4,
+   "frame_w": 48,
+   "frame_h": 48,
+   "fps": 24,
+   "anchor": [
+    0.17,
+    0.5
+   ],
+   "note": "flash points +x from the gun"
+  },
+  "engine_flame": {
+   "file": "sprites/fx/engine_flame.png",
+   "frames": 4,
+   "frame_w": 64,
+   "frame_h": 32,
+   "fps": 14,
+   "anchor": [
+    1.0,
+    0.5
+   ],
+   "note": "nozzle at right edge; flame points -x. Draw with the ship's rotation at each engines_px point"
+  },
+  "smoke_puff": {
+   "file": "sprites/fx/smoke_puff.png",
+   "frames": 5,
+   "frame_w": 64,
+   "frame_h": 64,
+   "fps": 10
+  },
+  "scan_ping": {
+   "file": "sprites/fx/scan_ping.png",
+   "frames": 8,
+   "frame_w": 128,
+   "frame_h": 128,
+   "fps": 10,
+   "tint": true
+  },
+  "kinetic_shell": {
+   "file": "sprites/fx/kinetic_shell.png",
+   "facing": "+x"
+  },
+  "kinetic_tracer": {
+   "file": "sprites/fx/kinetic_tracer.png",
+   "facing": "+x",
+   "note": "head at right; stretch along x with speed"
+  },
+  "energy_bolt": {
+   "file": "sprites/fx/energy_bolt.png",
+   "facing": "+x",
+   "tint": true
+  },
+  "energy_beam_body": {
+   "file": "sprites/fx/energy_beam_body.png",
+   "tint": true,
+   "tile_x": true,
+   "note": "stretch/tile along x from gun to target; tint with team colour, then draw beam_core on top"
+  },
+  "energy_beam_core": {
+   "file": "sprites/fx/energy_beam_core.png",
+   "tile_x": true
+  },
+  "debris_0": {
+   "file": "sprites/fx/debris_0.png"
+  },
+  "debris_1": {
+   "file": "sprites/fx/debris_1.png"
+  },
+  "debris_2": {
+   "file": "sprites/fx/debris_2.png"
+  },
+  "debris_3": {
+   "file": "sprites/fx/debris_3.png"
+  },
+  "word_boom": {
+   "file": "sprites/fx/word_boom.png",
+   "note": "comic onomatopoeia sticker; pop-in scale + fade"
+  },
+  "word_kaboom": {
+   "file": "sprites/fx/word_kaboom.png",
+   "note": "comic onomatopoeia sticker; pop-in scale + fade"
+  },
+  "word_pow": {
+   "file": "sprites/fx/word_pow.png",
+   "note": "comic onomatopoeia sticker; pop-in scale + fade"
+  },
+  "word_zap": {
+   "file": "sprites/fx/word_zap.png",
+   "note": "comic onomatopoeia sticker; pop-in scale + fade"
+  },
+  "word_bzzt": {
+   "file": "sprites/fx/word_bzzt.png",
+   "note": "comic onomatopoeia sticker; pop-in scale + fade"
+  },
+  "word_krak": {
+   "file": "sprites/fx/word_krak.png",
+   "note": "comic onomatopoeia sticker; pop-in scale + fade"
+  },
+  "word_wham": {
+   "file": "sprites/fx/word_wham.png",
+   "note": "comic onomatopoeia sticker; pop-in scale + fade"
+  },
+  "word_ping": {
+   "file": "sprites/fx/word_ping.png",
+   "note": "comic onomatopoeia sticker; pop-in scale + fade"
+  }
+ },
+ "icons": {
+  "matter": {
+   "file": "sprites/icons/matter.png",
+   "px": 96,
+   "desc": "Matter resource"
+  },
+  "energy": {
+   "file": "sprites/icons/energy.png",
+   "px": 96,
+   "desc": "Energy resource"
+  },
+  "fuel": {
+   "file": "sprites/icons/fuel.png",
+   "px": 96,
+   "desc": "Fuel resource"
+  },
+  "research": {
+   "file": "sprites/icons/research.png",
+   "px": 96,
+   "desc": "Research"
+  },
+  "upgrades": {
+   "file": "sprites/icons/upgrades.png",
+   "px": 96,
+   "desc": "Upgrades"
+  },
+  "power": {
+   "file": "sprites/icons/power.png",
+   "px": 96,
+   "desc": "Military power in orbit"
+  },
+  "time": {
+   "file": "sprites/icons/time.png",
+   "px": 96,
+   "desc": "Time / ETA"
+  },
+  "telescope": {
+   "file": "sprites/icons/telescope.png",
+   "px": 96,
+   "desc": "Telescope / intel"
+  },
+  "chat": {
+   "file": "sprites/icons/chat.png",
+   "px": 96,
+   "desc": "Chat"
+  },
+  "alert": {
+   "file": "sprites/icons/alert.png",
+   "px": 96,
+   "desc": "Alert"
+  },
+  "warning": {
+   "file": "sprites/icons/warning.png",
+   "px": 96,
+   "desc": "Warning"
+  },
+  "settings": {
+   "file": "sprites/icons/settings.png",
+   "px": 96,
+   "desc": "Settings"
+  },
+  "build": {
+   "file": "sprites/icons/build.png",
+   "px": 96,
+   "desc": "Build"
+  },
+  "fleet": {
+   "file": "sprites/icons/fleet.png",
+   "px": 96,
+   "desc": "Fleet / ships"
+  },
+  "planet": {
+   "file": "sprites/icons/planet.png",
+   "px": 96,
+   "desc": "Planet"
+  },
+  "trophy": {
+   "file": "sprites/icons/trophy.png",
+   "px": 96,
+   "desc": "Victory / territory"
+  },
+  "lock": {
+   "file": "sprites/icons/lock.png",
+   "px": 96,
+   "desc": "Locked tech"
+  },
+  "check": {
+   "file": "sprites/icons/check.png",
+   "px": 96,
+   "desc": "Confirm / done"
+  },
+  "close": {
+   "file": "sprites/icons/close.png",
+   "px": 96,
+   "desc": "Cancel / close"
+  },
+  "plus": {
+   "file": "sprites/icons/plus.png",
+   "px": 96,
+   "desc": "Add"
+  },
+  "minus": {
+   "file": "sprites/icons/minus.png",
+   "px": 96,
+   "desc": "Remove"
+  },
+  "play": {
+   "file": "sprites/icons/play.png",
+   "px": 96,
+   "desc": "Play / resume time"
+  },
+  "pause": {
+   "file": "sprites/icons/pause.png",
+   "px": 96,
+   "desc": "Pause"
+  },
+  "fast_forward": {
+   "file": "sprites/icons/fast_forward.png",
+   "px": 96,
+   "desc": "Scrub forward / time warp"
+  },
+  "eye": {
+   "file": "sprites/icons/eye.png",
+   "px": 96,
+   "desc": "Visible / scanned"
+  },
+  "eye_off": {
+   "file": "sprites/icons/eye_off.png",
+   "px": 96,
+   "desc": "Unknown / hidden"
+  },
+  "players": {
+   "file": "sprites/icons/players.png",
+   "px": 96,
+   "desc": "Players"
+  },
+  "station": {
+   "file": "sprites/icons/station.png",
+   "px": 96,
+   "desc": "Space station"
+  },
+  "asteroid": {
+   "file": "sprites/icons/asteroid.png",
+   "px": 96,
+   "desc": "Asteroid"
+  },
+  "target": {
+   "file": "sprites/icons/target.png",
+   "px": 96,
+   "desc": "Attack / target"
+  },
+  "maneuver_node": {
+   "file": "sprites/icons/maneuver_node.png",
+   "px": 96,
+   "desc": "Maneuver node"
+  },
+  "notification": {
+   "file": "sprites/icons/notification.png",
+   "px": 96,
+   "desc": "Notification"
+  },
+  "tech": {
+   "file": "sprites/icons/tech.png",
+   "px": 96,
+   "desc": "Tech tree"
+  },
+  "solar": {
+   "file": "sprites/icons/solar.png",
+   "px": 96,
+   "desc": "Solar panels (energy upgrade)"
+  },
+  "reactor": {
+   "file": "sprites/icons/reactor.png",
+   "px": 96,
+   "desc": "Reactor (energy upgrade)"
+  },
+  "refinery": {
+   "file": "sprites/icons/refinery.png",
+   "px": 96,
+   "desc": "Fuel refinery"
+  },
+  "extraction": {
+   "file": "sprites/icons/extraction.png",
+   "px": 96,
+   "desc": "Matter extraction upgrade"
+  },
+  "shield": {
+   "file": "sprites/icons/shield.png",
+   "px": 96,
+   "desc": "Shields / defense upgrade"
+  },
+  "weapon_kinetic": {
+   "file": "sprites/icons/weapon_kinetic.png",
+   "px": 96,
+   "desc": "Kinetic weapons"
+  },
+  "weapon_energy": {
+   "file": "sprites/icons/weapon_energy.png",
+   "px": 96,
+   "desc": "Energy weapons"
+  },
+  "menu": {
+   "file": "sprites/icons/menu.png",
+   "px": 96,
+   "desc": "Menu"
+  },
+  "back": {
+   "file": "sprites/icons/back.png",
+   "px": 96,
+   "desc": "Back"
+  }
+ },
+ "ui": {
+  "bg_tile": {
+   "file": "sprites/ui/bg_tile.png",
+   "px": 256,
+   "tile": true,
+   "note": "tileable halftone + stars on #1b1340 (matches theme BG)"
+  },
+  "halftone_tile": {
+   "file": "sprites/ui/halftone_tile.png",
+   "px": 256,
+   "tile": true,
+   "note": "white dots on transparent; draw with low alpha / tint"
+  },
+  "select_ring": {
+   "file": "sprites/ui/select_ring.png",
+   "px": 128,
+   "tint": true,
+   "note": "rotate slowly"
+  },
+  "target_bracket": {
+   "file": "sprites/ui/target_bracket.png",
+   "px": 96,
+   "tint": true
+  },
+  "node_marker": {
+   "file": "sprites/ui/node_marker.png",
+   "px": 48,
+   "tint": true,
+   "note": "maneuver node on a trajectory"
+  },
+  "waypoint": {
+   "file": "sprites/ui/waypoint.png",
+   "px": 48,
+   "tint": true,
+   "anchor": [
+    0.5,
+    0.92
+   ]
+  },
+  "transfer_window": {
+   "file": "sprites/ui/transfer_window.png",
+   "px": 64,
+   "tint": true,
+   "note": "marks an optimal transfer window / intercept point"
+  },
+  "launcher_icon": {
+   "mdpi": "icon/ic_launcher_mdpi.png",
+   "hdpi": "icon/ic_launcher_hdpi.png",
+   "xhdpi": "icon/ic_launcher_xhdpi.png",
+   "xxhdpi": "icon/ic_launcher_xxhdpi.png",
+   "xxxhdpi": "icon/ic_launcher_xxxhdpi.png",
+   "store": "icon/ic_launcher_512.png"
+  }
+ },
+ "emblems": {
+  "vanguard": "sprites/emblems/vanguard.png",
+  "hive": "sprites/emblems/hive.png",
+  "prism": "sprites/emblems/prism.png",
+  "junker": "sprites/emblems/junker.png"
+ },
+ "audio": {
+  "mood": "chiptune",
+  "format": "WAV PCM 16-bit mono 22050 Hz",
+  "music": {
+   "title": {
+    "file": "audio/music/title.wav",
+    "loop": true,
+    "seconds": 53.3,
+    "use": "main menu / lobby"
+   },
+   "orbit": {
+    "file": "audio/music/orbit.wav",
+    "loop": true,
+    "seconds": 80.0,
+    "use": "in-game map, default bed (keep volume ~0.5)"
+   },
+   "battle": {
+    "file": "audio/music/battle.wav",
+    "loop": true,
+    "seconds": 40.0,
+    "use": "crossfade in when combat is happening on screen"
+   },
+   "victory": {
+    "file": "audio/music/victory.wav",
+    "loop": false,
+    "seconds": 3.6,
+    "use": "game won"
+   },
+   "defeat": {
+    "file": "audio/music/defeat.wav",
+    "loop": false,
+    "seconds": 4.8,
+    "use": "game lost"
+   }
+  },
+  "sfx": {
+   "engine_burn_loop": {
+    "file": "audio/sfx/engine_burn_loop.wav",
+    "loop": true
+   },
+   "engine_burn_start": {
+    "file": "audio/sfx/engine_burn_start.wav",
+    "loop": false
+   },
+   "energy_weapon": {
+    "file": "audio/sfx/energy_weapon.wav",
+    "loop": false
+   },
+   "energy_beam": {
+    "file": "audio/sfx/energy_beam.wav",
+    "loop": false
+   },
+   "kinetic_cannon": {
+    "file": "audio/sfx/kinetic_cannon.wav",
+    "loop": false
+   },
+   "kinetic_cannon_heavy": {
+    "file": "audio/sfx/kinetic_cannon_heavy.wav",
+    "loop": false
+   },
+   "explosion_small": {
+    "file": "audio/sfx/explosion_small.wav",
+    "loop": false
+   },
+   "explosion_large": {
+    "file": "audio/sfx/explosion_large.wav",
+    "loop": false
+   },
+   "asteroid_impact": {
+    "file": "audio/sfx/asteroid_impact.wav",
+    "loop": false
+   },
+   "hit_kinetic": {
+    "file": "audio/sfx/hit_kinetic.wav",
+    "loop": false
+   },
+   "shield_hit": {
+    "file": "audio/sfx/shield_hit.wav",
+    "loop": false
+   },
+   "alert_ping": {
+    "file": "audio/sfx/alert_ping.wav",
+    "loop": false,
+    "use": "generic attention"
+   },
+   "alert_enemy": {
+    "file": "audio/sfx/alert_enemy.wav",
+    "loop": false,
+    "use": "hostile fleet detected / under attack"
+   },
+   "ui_click": {
+    "file": "audio/sfx/ui_click.wav",
+    "loop": false
+   },
+   "ui_tap": {
+    "file": "audio/sfx/ui_tap.wav",
+    "loop": false
+   },
+   "ui_confirm": {
+    "file": "audio/sfx/ui_confirm.wav",
+    "loop": false
+   },
+   "ui_back": {
+    "file": "audio/sfx/ui_back.wav",
+    "loop": false
+   },
+   "ui_error": {
+    "file": "audio/sfx/ui_error.wav",
+    "loop": false
+   },
+   "notification": {
+    "file": "audio/sfx/notification.wav",
+    "loop": false
+   },
+   "chat_message": {
+    "file": "audio/sfx/chat_message.wav",
+    "loop": false
+   },
+   "build_complete": {
+    "file": "audio/sfx/build_complete.wav",
+    "loop": false
+   },
+   "research_complete": {
+    "file": "audio/sfx/research_complete.wav",
+    "loop": false
+   },
+   "transfer_scheduled": {
+    "file": "audio/sfx/transfer_scheduled.wav",
+    "loop": false
+   },
+   "scan_ping": {
+    "file": "audio/sfx/scan_ping.wav",
+    "loop": false,
+    "use": "sonar-style scanner sweep"
+   },
+   "capture": {
+    "file": "audio/sfx/capture.wav",
+    "loop": false,
+    "use": "planet ownership changed to you"
+   }
+  }
+ }
+}

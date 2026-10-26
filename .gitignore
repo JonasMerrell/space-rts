@@ -1,0 +1,6 @@
+target/
+*.apk
+android/app/build/
+android/.gradle/
+android/app/src/main/jniLibs/
+/data/

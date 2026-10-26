@@ -1,0 +1,53 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+body{margin:0;background:#111;font-family:sans-serif;color:#eee;width:1600px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px}
+.cell{position:relative}.cell canvas{width:100%;display:block;border-radius:8px}
+.lab{position:absolute;left:14px;top:10px;font:bold 26px sans-serif;text-shadow:0 2px 4px #000}
+</style></head><body><div class="grid">
+<div class="cell"><canvas id="a" width="788" height="500"></canvas><div class="lab">A · Neon vector</div></div>
+<div class="cell"><canvas id="b" width="788" height="500"></canvas><div class="lab">B · Pixel art</div></div>
+<div class="cell"><canvas id="c" width="788" height="500"></canvas><div class="lab">C · Painterly / realistic</div></div>
+<div class="cell"><canvas id="d" width="788" height="500"></canvas><div class="lab">D · Holo star-chart</div></div>
+</div><script>
+// Same scene in every panel: 3 owned planets, neutrals, one fleet in transit
+const P=[{x:150,y:330,r:42,o:0,n:58},{x:420,y:170,r:30,o:-1,n:12},{x:640,y:330,r:48,o:1,n:73},{x:330,y:420,r:20,o:-1,n:5},{x:560,y:110,r:24,o:0,n:21},{x:700,y:160,r:18,o:1,n:9}];
+const F={x0:150,y0:330,x1:420,y1:170,t:.55,n:30,o:0};
+let seed=7;const rnd=()=>(seed=(seed*16807)%2147483647)/2147483647;
+function stars(g,n,col,sz){seed=7;for(let i=0;i<n;i++){g.fillStyle=col(rnd());g.fillRect(rnd()*788,rnd()*500,sz,sz)}}
+const fx=F.x0+(F.x1-F.x0)*F.t,fy=F.y0+(F.y1-F.y0)*F.t,ang=Math.atan2(F.y1-F.y0,F.x1-F.x0);
+function ship(g,x,y,a,s){g.save();g.translate(x,y);g.rotate(a);g.beginPath();g.moveTo(s,0);g.lineTo(-s*.7,s*.6);g.lineTo(-s*.3,0);g.lineTo(-s*.7,-s*.6);g.closePath();g.restore()}
+// A neon
+{const g=a.getContext('2d');g.fillStyle='#05060f';g.fillRect(0,0,788,500);stars(g,160,v=>`rgba(150,170,255,${v*.6})`,1.5);
+const C=['#29f0ff','#ff3df2','#8a8fa8'];
+g.setLineDash([6,8]);g.strokeStyle='#29f0ff88';g.lineWidth=2;g.beginPath();g.moveTo(F.x0,F.y0);g.lineTo(F.x1,F.y1);g.stroke();g.setLineDash([]);
+for(const p of P){const c=C[p.o<0?2:p.o];g.shadowColor=c;g.shadowBlur=22;g.strokeStyle=c;g.lineWidth=3;g.beginPath();g.arc(p.x,p.y,p.r,0,7);g.stroke();
+g.lineWidth=1;g.beginPath();g.arc(p.x,p.y,p.r*.6,0,7);g.stroke();g.shadowBlur=0;g.fillStyle=c;g.font='bold 18px monospace';g.textAlign='center';g.fillText(p.n,p.x,p.y+6)}
+g.shadowColor='#29f0ff';g.shadowBlur=18;g.strokeStyle='#29f0ff';g.lineWidth=2;for(let i=0;i<5;i++){ship(g,fx-Math.cos(ang)*i*9+(i%2?6:-6)*Math.sin(ang),fy-Math.sin(ang)*i*9-(i%2?6:-6)*Math.cos(ang),ang,9);g.stroke()}
+g.shadowBlur=0;g.fillStyle='#29f0ff';g.font='bold 16px monospace';g.fillText('30',fx+18,fy-14)}
+// B pixel
+{const t=document.createElement('canvas');t.width=197;t.height=125;const g=t.getContext('2d');g.imageSmoothingEnabled=false;
+g.fillStyle='#140c2a';g.fillRect(0,0,197,125);seed=3;for(let i=0;i<70;i++){g.fillStyle=rnd()>.8?'#ffe8a0':'#6b5fa8';g.fillRect(rnd()*197|0,rnd()*125|0,1,1)}
+const pal=[['#3fa34d','#2a6e3a','#8fe39a'],['#d9573b','#8e2f22','#ffb08a'],['#7b7f94','#4d5063','#b8bccc']];
+for(const p of P){const q=pal[p.o<0?2:p.o],cx=p.x/4|0,cy=p.y/4|0,r=p.r/4|0;for(let y=-r;y<=r;y++)for(let x=-r;x<=r;x++){const d=x*x+y*y;if(d<=r*r){g.fillStyle=(x+y< -r*.5)?q[2]:(x+y>r*.6?q[1]:q[0]);g.fillRect(cx+x,cy+y,1,1)}}}
+for(let i=0;i<=20;i++){if(i%2)continue;const u=i/20;g.fillStyle='#ffffff55';g.fillRect((F.x0+(F.x1-F.x0)*u)/4|0,(F.y0+(F.y1-F.y0)*u)/4|0,1,1)}
+g.fillStyle='#fff';const sx=fx/4|0,sy=fy/4|0;[[0,0],[1,0],[2,0],[1,1],[1,-1],[-1,1],[-1,-1]].forEach(([x,y])=>g.fillRect(sx+x,sy+y,1,1));
+const k=b.getContext('2d');k.imageSmoothingEnabled=false;k.drawImage(t,0,0,788,500);
+k.font='bold 20px monospace';k.textAlign='center';for(const p of P){k.fillStyle='#000';k.fillText(p.n,p.x+2,p.y+p.r+24);k.fillStyle='#fff';k.fillText(p.n,p.x,p.y+p.r+22)}k.fillText('30',fx+20,fy-12)}
+// C painterly
+{const g=c.getContext('2d');const bg=g.createRadialGradient(400,250,50,400,250,500);bg.addColorStop(0,'#1b2140');bg.addColorStop(1,'#04050b');g.fillStyle=bg;g.fillRect(0,0,788,500);
+seed=11;for(let i=0;i<14;i++){const x=rnd()*788,y=rnd()*500,r=80+rnd()*160,h=rnd()>.5?'120,60,160':'40,90,160';const n=g.createRadialGradient(x,y,0,x,y,r);n.addColorStop(0,`rgba(${h},.18)`);n.addColorStop(1,'rgba(0,0,0,0)');g.fillStyle=n;g.fillRect(0,0,788,500)}
+stars(g,260,v=>`rgba(255,255,255,${v})`,1.2);
+const H=[[90,200,255],[255,170,60],[170,170,170]];const B=['#3b6fb0','#b0602a','#6b6560','#a08a6a','#4f8f6a','#9a4a3a'];
+P.forEach((p,i)=>{const h=H[p.o<0?2:p.o];const s=g.createRadialGradient(p.x-p.r*.4,p.y-p.r*.4,p.r*.1,p.x,p.y,p.r);s.addColorStop(0,'#fff8');s.addColorStop(.25,B[i]);s.addColorStop(1,'#000');
+const glow=g.createRadialGradient(p.x,p.y,p.r,p.x,p.y,p.r*1.6);glow.addColorStop(0,`rgba(${h},.45)`);glow.addColorStop(1,'rgba(0,0,0,0)');g.fillStyle=glow;g.beginPath();g.arc(p.x,p.y,p.r*1.6,0,7);g.fill();
+g.fillStyle=s;g.beginPath();g.arc(p.x,p.y,p.r,0,7);g.fill();g.fillStyle=`rgb(${h})`;g.font='600 17px Georgia';g.textAlign='center';g.fillText(p.n,p.x,p.y+p.r+22)});
+const tr=g.createLinearGradient(F.x0,F.y0,fx,fy);tr.addColorStop(0,'rgba(90,200,255,0)');tr.addColorStop(1,'rgba(90,200,255,.8)');g.strokeStyle=tr;g.lineWidth=3;g.beginPath();g.moveTo(F.x0+30,F.y0-18);g.lineTo(fx,fy);g.stroke();
+g.fillStyle='#dfe8f0';for(let i=0;i<4;i++){ship(g,fx-Math.cos(ang)*i*12+(i%2?8:-8)*Math.sin(ang),fy-Math.sin(ang)*i*12,ang,8);g.fill()}g.fillStyle='rgb(90,200,255)';g.fillText('30',fx+22,fy-12)}
+// D holo chart
+{const g=d.getContext('2d');g.fillStyle='#021512';g.fillRect(0,0,788,500);g.strokeStyle='#0f5a4a55';g.lineWidth=1;for(let x=0;x<788;x+=40){g.beginPath();g.moveTo(x,0);g.lineTo(x,500);g.stroke()}for(let y=0;y<500;y+=40){g.beginPath();g.moveTo(0,y);g.lineTo(788,y);g.stroke()}
+const C=['#46ffc0','#ffb347','#5c8a80'];g.font='13px monospace';
+for(const p of P){const c=C[p.o<0?2:p.o];g.strokeStyle=c;g.lineWidth=1.5;g.beginPath();g.arc(p.x,p.y,p.r*.55,0,7);g.stroke();g.setLineDash([2,4]);g.beginPath();g.arc(p.x,p.y,p.r,0,7);g.stroke();g.setLineDash([]);
+g.beginPath();g.moveTo(p.x+p.r*.7,p.y-p.r*.7);g.lineTo(p.x+p.r+18,p.y-p.r-10);g.lineTo(p.x+p.r+70,p.y-p.r-10);g.stroke();g.fillStyle=c;g.textAlign='left';g.fillText(`SHIPS ${p.n}`,p.x+p.r+20,p.y-p.r-14)}
+g.strokeStyle='#46ffc0';g.setLineDash([10,5]);g.beginPath();g.moveTo(F.x0,F.y0);g.lineTo(F.x1,F.y1);g.stroke();g.setLineDash([]);
+g.fillStyle='#46ffc0';ship(g,fx,fy,ang,10);g.fill();g.fillText('FLT-07  30  ETA 14h',fx+14,fy+22);g.fillStyle='#46ffc066';g.fillText('SECTOR 4-C  //  DAY 3 07:42',14,488)}
+</script></body></html>

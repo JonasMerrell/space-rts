@@ -1,0 +1,15 @@
+[package]
+name = "uitests"
+edition.workspace = true
+version.workspace = true
+publish = false
+description = "UI flow tests over ui::demo::DemoBackend in a real (Xvfb) window. Owned by the tests thread."
+
+[dependencies]
+ui = { path = "../ui" }
+macroquad = { workspace = true }
+
+# macroquad must own the main thread, so this is a plain binary-style test, not libtest.
+[[test]]
+name = "ui_flow"
+harness = false

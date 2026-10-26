@@ -1,0 +1,10 @@
+//! Shared simulation for the space RTS: orbital mechanics, game rules and the transfer planner.
+//! Runs identically on the server (authoritative) and the client (prediction / planning UI).
+pub mod kepler;
+pub mod plan;
+pub mod traj;
+pub mod system;
+pub mod v2;
+
+pub use system::{Body, BodyId, BodyKind, System, SystemSize};
+pub use v2::{v2, V2};

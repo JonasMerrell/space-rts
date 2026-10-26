@@ -1,0 +1,7 @@
+[package]
+name = "ui"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+macroquad = { workspace = true }

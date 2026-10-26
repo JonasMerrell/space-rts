@@ -1,0 +1,3 @@
+FROM localhost/cad-gui
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libasound2t64 alsa-utils gdb && rm -rf /var/lib/apt/lists/*
+RUN printf "pcm.!default { type null }\nctl.!default { type hw card 0 }\n" > /etc/asound.conf

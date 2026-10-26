@@ -1,0 +1,10 @@
+[package]
+name = "simtests"
+edition.workspace = true
+version.workspace = true
+publish = false
+description = "Cross-crate integration and property tests (owned by the tests thread)."
+
+[dependencies]
+sim = { path = "../sim" }
+serde_json = { workspace = true }
