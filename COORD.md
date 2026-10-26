@@ -928,3 +928,12 @@ with a departure to asteroid G-848 scheduled ~10 game h later, so the rule was r
   "needs a construction ship in orbit of G-848 (build one at a shipyard)". Stations sheet footer shows it.
 - UI: BUILD STATION in the target bar also for fleet tokens that contain a constructor.
 - 5 new station tests incl. end-to-end transfer of a constructor to an asteroid, then build.
+
+## Core: game-server releases for the VM (2026-10-26)
+Dev stays on netdash; the server VM (hohmann-reach-server, 192.168.0.105) only pulls releases.
+`scripts/release-server.sh <version>` builds `crates/server` for `x86_64-unknown-linux-musl` (static-pie, no glibc
+dependency), strips it, and publishes GitHub release **`server-v<version>`** with assets `server` + `server.sha256`,
+then re-creates the moving release **`server-latest`** with the same assets.
+Stable URLs: `https://github.com/JonasMerrell/space-rts/releases/download/server-latest/server` and `.../server.sha256`.
+CLI: `server --port 7777 --data <dir>`; data dir = `accounts.json` + `games/*.json` (copy it to migrate).
+— core
