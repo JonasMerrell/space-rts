@@ -348,7 +348,31 @@ pub fn plan_leg(sys: &System, from: BodyId, to: BodyId, now: f64, depart_t: Opti
             }
         }
     }
-    best.map(|b| b.1).ok_or_else(|| "no transfer solution".into())
+    let best = best.map(|b| b.1).ok_or_else(|| "no transfer solution".to_string())?;
+    if depart_t.is_some() || !best.converged {
+        return Ok(best);
+    }
+    Ok(slide_departure(sys, from, to, now, best))
+}
+
+/// The Lambert estimate ignores the planets' own wells, so the real optimum can sit a little off
+/// the estimated window: probe the real cost 5% of the span either side and keep the cheapest.
+fn slide_departure(sys: &System, from: BodyId, to: BodyId, now: f64, best: TransferPlan) -> TransferPlan {
+    let step = search_span(sys, from, to) * 0.05;
+    let td0 = best.depart_t();
+    let mut cur = best;
+    for d in [-1.0, 1.0] {
+        let td = td0 + d * step;
+        if td < now + 30.0 {
+            continue;
+        }
+        if let Ok(p) = plan_leg(sys, from, to, now, Some(td)) {
+            if p.converged && p.total_dv() < cur.total_dv() {
+                cur = p;
+            }
+        }
+    }
+    cur
 }
 
 /// Like `plan_leg`, but also considers swinging past another body on the way (gravity assist) and
