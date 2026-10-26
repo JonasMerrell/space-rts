@@ -360,8 +360,8 @@ pub struct Player {
     /// fog of war: last sightings of enemy ships
     #[serde(default)]
     pub contacts: Vec<crate::fog::Contact>,
-    /// fog of war: what this player detects right now (recomputed every tick)
-    #[serde(default)]
+    /// fog of war: what this player detects right now (recomputed every tick, so not saved or sent)
+    #[serde(skip)]
     pub vision: crate::fog::Vision,
 }
 

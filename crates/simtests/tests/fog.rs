@@ -271,3 +271,34 @@ fn fog_cost() {
     }
     println!("advance 1 day: {adv:?}; view_for x400: {:?}; ships {}", t1.elapsed(), g.ships.len());
 }
+
+#[test]
+fn ghost_contacts_are_capped_and_expire() {
+    let mut g = game4(7);
+    let home = g.players[0].home.unwrap();
+    for _ in 0..(fog::MAX_CONTACTS + 20) {
+        put_ship(&mut g, 1, ShipClass::Dreadnought, home);
+    }
+    tick(&mut g);
+    assert!(g.players[0].contacts.len() <= fog::MAX_CONTACTS);
+    // move them all far away out of sight, then let the ghosts age out
+    let far = g.players.iter().map(|p| p.home.unwrap()).max_by(|a, b| {
+        let d = |x: &BodyId| g.system.pos(*x, g.t).dist(g.system.pos(home, g.t));
+        d(a).total_cmp(&d(b))
+    }).unwrap();
+    for s in g.ships.iter_mut().filter(|s| s.owner == 1 && s.class == ShipClass::Dreadnought) {
+        s.state = ShipState::Parked { body: far, departure: None };
+    }
+    let t = g.t + fog::CONTACT_TTL + 2.0 * TICK;
+    g.advance_to(t);
+    assert!(g.players[0].contacts.iter().all(|c| g.t - c.seen_t < fog::CONTACT_TTL), "stale ghosts kept");
+}
+
+#[test]
+fn vision_is_not_saved_or_sent() {
+    let mut g = game4(8);
+    tick(&mut g);
+    assert!(!g.players[0].vision.ships.is_empty());
+    let js = serde_json::to_string(&g).unwrap();
+    assert!(!js.contains("\"vision\""));
+}

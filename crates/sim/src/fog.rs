@@ -61,6 +61,8 @@ pub const FLARE_TIME: f64 = 1800.0;
 pub const RELAY_BOOST: f64 = 1.5;
 /// Ghost contacts older than this are forgotten.
 pub const CONTACT_TTL: f64 = 2.0 * 86_400.0;
+/// At most this many ghost contacts per player (the most recent are kept).
+pub const MAX_CONTACTS: usize = 64;
 
 /// Sensor range (km) of an owned body.
 pub fn body_sensor(b: &BodyState) -> f64 {
@@ -222,6 +224,10 @@ impl Game {
                 if s.owner != me && v.ships.binary_search(&s.id).is_ok() {
                     contacts.push(Contact { seen_t: t, ship: self.redact(s, false) });
                 }
+            }
+            if contacts.len() > MAX_CONTACTS {
+                contacts.sort_by(|a, b| b.seen_t.total_cmp(&a.seen_t));
+                contacts.truncate(MAX_CONTACTS);
             }
             self.players[p].contacts = contacts;
             self.players[p].vision = v;
