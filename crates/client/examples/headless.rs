@@ -18,7 +18,7 @@ fn main() {
     let mut be = ClientBackend::new(server);
     be.act(UiAction::Login { server: String::new(), user: "headless".into(), pass: "pw".into(), register: true });
     for e in pump(&mut be, 1.0) { println!("{e:?}"); }
-    be.act(UiAction::CreateGame { name: "headless test".into(), length_days: 7, bots: vec!["normal".into()] });
+    be.act(UiAction::CreateGame { name: "headless test".into(), length_days: 7, speed: 1.0, bots: vec!["normal".into()] });
     for e in pump(&mut be, 1.0) { println!("{}", format!("{e:?}").chars().take(200).collect::<String>()); }
     be.act(UiAction::StartGame);
     for e in pump(&mut be, 1.5) { println!("{}", format!("{e:?}").chars().take(200).collect::<String>()); }

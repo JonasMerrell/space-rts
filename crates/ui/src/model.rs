@@ -168,6 +168,8 @@ pub struct Ship {
     /// Fog of war: `Some(t)` = an enemy ship last seen at game time t, drawn as a fading ghost on
     /// its last known course; `None` = live.
     pub seen_at: Option<f64>,
+    /// Only on the time scrubber: a ship that is still in a build queue now, ready at this time.
+    pub planned: Option<f64>,
 }
 
 #[derive(Clone, Debug)]
@@ -269,6 +271,8 @@ pub struct LobbyInfo {
     pub max_players: usize,
     pub host: PlayerId,
     pub length_days: u32,
+    /// Game seconds per real second.
+    pub speed: f64,
     pub bots: Vec<String>,
 }
 

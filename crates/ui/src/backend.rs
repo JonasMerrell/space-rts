@@ -20,7 +20,8 @@ pub enum BackendEvent {
 pub enum UiAction {
     Login { server: String, user: String, pass: String, register: bool },
     Logout,
-    CreateGame { name: String, length_days: u32, bots: Vec<String> },
+    /// `speed`: game seconds per real second (1 = real time; 4 = a 7-day game takes 42 real hours).
+    CreateGame { name: String, length_days: u32, speed: f64, bots: Vec<String> },
     JoinGame { code: String },
     OpenGame { code: String },
     AddBot { difficulty: String },
@@ -115,6 +116,16 @@ pub trait Backend {
     /// Some(text) while logged in but not connected ("Reconnecting..."); None when online.
     fn connection_status(&self) -> Option<String> {
         None
+    }
+    /// Time scrubber: the game as predicted at a future time `t`, simulated forward from what the
+    /// player knows (builds finish, scheduled burns fire, battles play out). `view().now` stays the
+    /// real now. `None` = no forecast for `t`: draw `view()` and move things along their paths.
+    fn predicted(&self, _t: f64) -> Option<std::rc::Rc<GameView>> {
+        None
+    }
+    /// Game time up to which `predicted` is available (the forecast fills in in the background).
+    fn forecast_until(&self) -> f64 {
+        f64::INFINITY
     }
     /// Server address shown on the login screen.
     fn default_server(&self) -> String {

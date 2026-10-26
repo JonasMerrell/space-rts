@@ -350,6 +350,16 @@ pub struct Job {
     pub kind: JobKind,
     pub owner: PlayerId,
     pub done_t: f64,
+    /// order the ship gets as soon as it is built (planned on the time scrubber)
+    #[serde(default)]
+    pub then: Option<QueuedOrder>,
+}
+
+/// Transfer for a ship that is still in a build queue.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct QueuedOrder {
+    pub to: BodyId,
+    pub depart_t: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -504,6 +514,8 @@ pub enum Command {
     BuildStation { body: BodyId, kind: StationKind },
     Chat { text: String },
     Extend { seconds: f64 },
+    /// Give the ship from the shipyard job at `body` finishing at `done_t` a transfer (`to: None` clears it).
+    QueueOrder { body: BodyId, done_t: f64, to: Option<BodyId>, depart_t: Option<f64> },
 }
 
 pub const TICK: f64 = 60.0;
@@ -606,7 +618,7 @@ impl Game {
         ((real - self.started_real) * self.settings.speed).max(0.0)
     }
 
-    pub(crate) fn spawn(&mut self, owner: PlayerId, class: ShipClass, at: BodyId) -> ShipId {
+    pub fn spawn(&mut self, owner: PlayerId, class: ShipClass, at: BodyId) -> ShipId {
         let id = ShipId(self.next_ship);
         self.next_ship += 1;
         let s = class.stats();
@@ -695,13 +707,16 @@ impl Game {
         let bad = |b: &BodyId| b.0 >= n;
         match &cmd {
             Command::Transfer { to, .. } if bad(to) => return Err("no such body".into()),
-            Command::Build { body, .. } | Command::Upgrade { body, .. } | Command::Research { body, .. } | Command::BuildStation { body, .. } if bad(body) => {
+            Command::Build { body, .. } | Command::Upgrade { body, .. } | Command::Research { body, .. } | Command::BuildStation { body, .. } | Command::QueueOrder { body, .. } if bad(body) => {
                 return Err("no such body".into())
             }
             Command::SetBurns { burns, .. } if burns.iter().any(|b| !b.t.is_finite() || !b.prograde.is_finite() || !b.radial.is_finite() || b.dv() > 1000.0) => {
                 return Err("invalid burn".into())
             }
-            Command::Transfer { depart_t: Some(t), .. } if !t.is_finite() => return Err("invalid departure time".into()),
+            Command::Transfer { depart_t: Some(t), .. } | Command::QueueOrder { depart_t: Some(t), .. } if !t.is_finite() => {
+                return Err("invalid departure time".into())
+            }
+            Command::QueueOrder { to: Some(to), .. } if bad(to) => return Err("no such body".into()),
             Command::Extend { seconds } if !seconds.is_finite() => return Err("invalid duration".into()),
             _ => {}
         }
@@ -709,6 +724,15 @@ impl Game {
             Command::Chat { text } => {
                 let text: String = text.chars().take(500).collect();
                 self.chat.push(ChatMsg { from: player, t: self.t, text });
+                Ok(())
+            }
+            Command::QueueOrder { body, done_t, to, depart_t } => {
+                let job = self.bodies[body.0 as usize]
+                    .queue
+                    .iter_mut()
+                    .find(|j| j.owner == player && matches!(j.kind, JobKind::Ship(_)) && (j.done_t - done_t).abs() < 1.0)
+                    .ok_or("that ship is no longer in the build queue")?;
+                job.then = to.filter(|&to| to != body).map(|to| QueuedOrder { to, depart_t });
                 Ok(())
             }
             Command::Extend { seconds } => {
@@ -777,7 +801,7 @@ impl Game {
                 let busy_until = b.queue.iter().filter(|j| j.owner == player).map(|j| j.done_t).fold(self.t, f64::max);
                 self.pay(player, st.matter, st.energy)?;
                 let speed = (1.0 + 0.5 * (yard as f64 - 1.0)) * self.mods(player).build_speed;
-                self.bodies[body.0 as usize].queue.push(Job { kind: JobKind::Ship(class), owner: player, done_t: busy_until + st.build_time / speed });
+                self.bodies[body.0 as usize].queue.push(Job { kind: JobKind::Ship(class), owner: player, done_t: busy_until + st.build_time / speed, then: None });
                 Ok(())
             }
             Command::Upgrade { body, upgrade } => {
@@ -793,7 +817,7 @@ impl Game {
                 let (m, e, secs) = upgrade.cost(next);
                 let busy_until = b.queue.iter().map(|j| j.done_t).fold(self.t, f64::max);
                 self.pay(player, m, e)?;
-                self.bodies[body.0 as usize].queue.push(Job { kind: JobKind::Upgrade(upgrade), owner: player, done_t: busy_until + secs });
+                self.bodies[body.0 as usize].queue.push(Job { kind: JobKind::Upgrade(upgrade), owner: player, done_t: busy_until + secs, then: None });
                 Ok(())
             }
         }
@@ -862,6 +886,15 @@ impl Game {
 
     /// Advance the authoritative state to game time `t`.
     pub fn advance_to(&mut self, t: f64) {
+        self.advance(t, true)
+    }
+
+    /// Prediction for the time scrubber: the same sim, but bots don't think (a player can't know their plans).
+    pub fn forecast_to(&mut self, t: f64) {
+        self.advance(t, false)
+    }
+
+    fn advance(&mut self, t: f64, bots: bool) {
         if self.status != Status::Running {
             return;
         }
@@ -879,7 +912,9 @@ impl Game {
                 self.combat(TICK);
                 self.ownership();
                 self.update_intel();
-                crate::bot::think_all(self);
+                if bots {
+                    crate::bot::think_all(self);
+                }
                 if self.t >= self.end_t {
                     self.finish();
                     return;
@@ -1116,6 +1151,12 @@ impl Game {
                     JobKind::Ship(c) => {
                         let id = self.spawn(j.owner, c, body);
                         self.event(Some(j.owner), EventKind::Good, "Ship built", &format!("{} ready at {bname}", c.stats().name), Some(body), Some(id));
+                        if let Some(o) = j.then {
+                            let depart = o.depart_t.filter(|&t| t > self.t);
+                            if let Err(e) = self.order_transfer(j.owner, id, o.to, depart) {
+                                self.event(Some(j.owner), EventKind::Bad, "Order failed", &format!("{}: {e}", c.stats().name), Some(body), Some(id));
+                            }
+                        }
                     }
                     JobKind::Upgrade(_) if self.bodies[i].owner != Some(j.owner) => {}
                     JobKind::Upgrade(u) => {
