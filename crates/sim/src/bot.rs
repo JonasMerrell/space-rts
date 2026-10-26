@@ -2,6 +2,7 @@
 //! replay of the same commands gives the same game.
 use crate::game::{Command, Game, PlayerId, ShipClass, ShipState, Upgrade, TICK};
 use crate::system::{BodyId, BodyKind};
+use crate::tech::{Branch, Tech};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Difficulty {
@@ -56,11 +57,21 @@ fn think(g: &mut Game, me: PlayerId, d: Difficulty) {
     }
     // economy first: mining and power at home, then shipyards
     let home = g.players[me as usize].home.filter(|h| owned.contains(h)).unwrap_or(owned[0]);
-    for u in [Upgrade::Mining, Upgrade::Solar, Upgrade::Reactor, Upgrade::Refinery, Upgrade::Defense, Upgrade::Shipyard] {
+    for u in [Upgrade::Mining, Upgrade::Solar, Upgrade::Reactor, Upgrade::Refinery, Upgrade::Defense, Upgrade::Shipyard, Upgrade::Research] {
         let b = &g.bodies[home.0 as usize];
         if b.queue.is_empty() && b.level(u) < 2 {
             let _ = g.apply(me, Command::Upgrade { body: home, upgrade: u });
             break;
+        }
+    }
+    // research: industry and weapons first, scanning last; easy bots don't research
+    if d != Difficulty::Easy {
+        let order = [Branch::Industry, Branch::Weapons, Branch::Defense, Branch::Engines, Branch::Scanning];
+        let next = (1..=4u8)
+            .flat_map(|tier| order.iter().flat_map(move |&b| Tech::ALL.into_iter().filter(move |t| t.branch() == b && t.tier() == tier)))
+            .find(|&t| g.research_blocker(me, home, t).is_none());
+        if let Some(t) = next {
+            let _ = g.apply(me, Command::Research { body: home, tech: t });
         }
     }
     let mix = [ShipClass::Gunship, ShipClass::Bomber, ShipClass::Interceptor, ShipClass::Gunship, ShipClass::Tanker];

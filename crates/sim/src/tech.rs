@@ -380,6 +380,21 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[ignore = "slow: bots plan transfers for two game days (~30 s release)"]
+    fn normal_bots_research() {
+        let mut g = Game::new(
+            "BOTS".into(),
+            Settings { name: "t".into(), size: SystemSize::Small, max_players: 2, length: 7.0 * 86_400.0, speed: 1.0 },
+            3,
+            "alice",
+        );
+        g.add_player("bot", Some("normal".into())).unwrap();
+        g.start();
+        g.advance_to(2.0 * 86_400.0);
+        assert!(!g.players[1].techs.is_empty() || !g.players[1].research.is_empty(), "bot never started research");
+    }
+
+    #[test]
     fn losing_the_lab_cancels_research() {
         let mut g = game();
         let home = g.players[0].home.unwrap();
