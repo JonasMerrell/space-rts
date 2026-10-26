@@ -828,7 +828,7 @@ impl Game {
                 self.jobs();
                 self.research_tick();
                 self.stations_tick(TICK);
-                self.combat(TICK);
+                self.combat_tick(TICK);
                 self.ownership();
                 self.update_intel();
                 crate::bot::think_all(self);
@@ -1111,75 +1111,8 @@ impl Game {
         out
     }
 
-    fn combat(&mut self, dt: f64) {
-        let h = dt / 3600.0;
-        for bi in 0..self.bodies.len() {
-            let body = BodyId(bi as u32);
-            let powers = self.power_at(body);
-            if powers.iter().filter(|p| p.1 > 0.0).count() < 2 {
-                self.bodies[bi].in_combat = false;
-                continue;
-            }
-            if !self.bodies[bi].in_combat {
-                self.bodies[bi].in_combat = true;
-                let bname = self.system.body(body).name.clone();
-                let owner = self.bodies[bi].owner;
-                if let Some(o) = owner {
-                    self.event(Some(o), EventKind::Battle, "Under attack", &format!("Enemy ships are attacking {bname}"), Some(body), None);
-                }
-                for (p, _) in powers.iter().filter(|p| p.1 > 0.0 && Some(p.0) != owner) {
-                    self.event(Some(*p), EventKind::Battle, "Battle", &format!("Your ships are fighting at {bname}"), Some(body), None);
-                }
-            }
-            let here: Vec<usize> = (0..self.ships.len()).filter(|&i| self.ships[i].parked_at() == Some(body)).collect();
-            let owner = self.bodies[bi].owner;
-            let mut dmg = vec![0.0; self.ships.len()];
-            let mut def_dmg = 0.0;
-            // each armed ship picks the enemy class it is best against, focusing the weakest
-            let attackers: Vec<(PlayerId, Option<ShipClass>, f64)> = here
-                .iter()
-                .map(|&i| {
-                    let s = &self.ships[i];
-                    let st = s.class.stats();
-                    let kin = if st.weapon == Weapon::Kinetic { 1.25 } else { 1.0 };
-                    (s.owner, Some(s.class), st.attack * kin * h)
-                })
-                .chain(owner.filter(|_| self.bodies[bi].def_hp > 0.0).map(|o| (o, None, self.def_attack(body) * h)))
-                .filter(|a| a.2 > 0.0)
-                .collect();
-            for (who, class, dmg_amount) in attackers {
-                let enemies: Vec<usize> = here.iter().copied().filter(|&j| self.ships[j].owner != who).collect();
-                let mult = |c: ShipClass| class.map(|a| a.vs(c)).unwrap_or(1.0);
-                let target = enemies.iter().copied().max_by(|&a, &b| {
-                    let (ca, cb) = (self.ships[a].class, self.ships[b].class);
-                    mult(ca)
-                        .total_cmp(&mult(cb))
-                        .then((self.ships[b].hp - dmg[b]).total_cmp(&(self.ships[a].hp - dmg[a])))
-                        .then(self.ships[b].id.cmp(&self.ships[a].id))
-                });
-                let def_target = owner.is_some_and(|o| o != who) && self.bodies[bi].def_hp - def_dmg > 0.0;
-                match target {
-                    Some(j) => dmg[j] += dmg_amount * mult(self.ships[j].class),
-                    None if def_target => def_dmg += dmg_amount * class.map(|c| c.vs_defense()).unwrap_or(1.0),
-                    None => {}
-                }
-            }
-            for &i in &here {
-                self.ships[i].hp -= dmg[i];
-            }
-            self.bodies[bi].def_hp = (self.bodies[bi].def_hp - def_dmg).max(0.0);
-            let bname = self.system.body(body).name.clone();
-            let lost: Vec<Ship> = self.ships.iter().filter(|s| s.hp <= 0.0).cloned().collect();
-            self.ships.retain(|s| s.hp > 0.0);
-            for s in lost {
-                self.event(Some(s.owner), EventKind::Battle, "Ship destroyed", &format!("{} was destroyed at {bname}", s.name), Some(body), None);
-            }
-            self.retreats(body);
-        }
-    }
-
     /// Ships with the Retreat order leave a body where their side is clearly outgunned.
-    fn retreats(&mut self, body: BodyId) {
+    pub(crate) fn retreats(&mut self, body: BodyId) {
         let powers = self.power_at(body);
         let total: f64 = powers.iter().map(|p| p.1).sum();
         let candidates: Vec<ShipId> = self
