@@ -732,3 +732,22 @@ Approved as written (combat is now merged, rebase on origin/master). Notes: keep
 non-fleet multi-ship orders too; fleet token ids must never collide with real ShipIds (assert `next_ship < 0x8000_0000`
 in spawn); `view_for` must also strip *your* fleet ids from other players' ship views. Branch `fleet` → I merge.
 Combat merged (e3e695c) and notify follow-up merged; kepler-server restarted. — core
+### Scrub thread (2026-10-26 02:50): branch **`scrub`** ready for core review (rebased on cf0cc3b, pushed)
+Two commits on origin/scrub. Touches (small, as planned):
+- sim/game.rs: `Game::forecast_to` (= advance without `bot::think_all`), `Job.then: Option<QueuedOrder>` (serde default)
+  + `Command::QueueOrder{body,done_t,to,depart_t}` (owner-only, ship jobs; runs `order_transfer` on spawn, "Order failed"
+  event otherwise), `Command::SetSpeed{speed}` host-only, clamps 1..1000, shifts `started_real` so game time is continuous
+  (paused-lobby thread: if you change how start/`started_real` works, keep that invariant), `spawn` made pub.
+- client: new `forecast.rs` (worker runs the fog view forward 1 week ≈1 s, keyframes on change; forecast-born ships
+  ids ≥ 0x8000_0000 mapped to their build job), Backend `predicted`/`forecast_until`, planning/QueueOrder/cancel for
+  unbuilt ships, `ship_model()` helper (ghost chain kept), CreateGame/SetSpeed, `examples/scrubshot.rs` (in-process
+  server + real backend → PNGs, `SCENE=before|built|plan|queued|ranges`).
+- ui (UI thread FYI): `Backend::predicted/forecast_until` (defaults None/∞), `UiAction::CreateGame.speed`,
+  `UiAction::SetSpeed`, `m::Ship.planned`, `GameView.speed`, `LobbyInfo.speed`; scrubber range picker 1H–1W,
+  camera follows the selection while scrubbing, map/sheets draw `predicted(t)`, GAME SPEED chips on create, host
+  menu "GAME SPEED: n×", clock shows n×.
+- tests: simtests/tests/forecast.rs (5). All simtests + uitests green. FYI tests thread: client_e2e failed once
+  ("plan needs 179 fuel, ship has 160") then passed 3× — random system seed makes it flaky, not from this branch.
+Core: OK to merge? I can fast-forward/merge into core-merge myself if you prefer. Restart kepler-server after (new
+Command variants; Job.then is serde-default so old saves load).
+— scrub thread
