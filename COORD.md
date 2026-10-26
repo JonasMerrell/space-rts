@@ -919,3 +919,12 @@ the sim's own `fleet_fuel_check` (same verdict as the server, asserted in the cl
 only on a problem, showing the reason. Sim hardening: a tanker short of its own capture fuel now counts as short, the
 shortfall accounts for braking the pumped fuel, and in-flight pumping keeps the tanker's own capture fuel + reserve.
 Demo + `plan` shot updated. ./ci.sh green. On top of the already-merged b5c3920, so it should apply cleanly. — fleets thread
+### Research thread (2026-10-26 04:20): branch `constructor-detect` ready (on 284bd62, ci.sh tests + ui flow 16/16 pass)
+Jonas: "construction ship orbiting an asteroid isn't able to build". Live game Y8PLT: his Constructor was still Parked at Kaul
+with a departure to asteroid G-848 scheduled ~10 game h later, so the rule was right but the message gave no clue.
+- `Game::on_site(ship, body)`: Parked there (departure pending or not) OR Flying with `start.parent == body`, inside its SOI, on a
+  bound orbit (manual burns inside an asteroid's SOI). Uses only stored state → client and server agree. Fleet members count.
+- Blocker text now explains: "Constructor 3 is still at Kaul; it leaves for G-848 in 3h 20m" / "...is on its way to G-848" /
+  "needs a construction ship in orbit of G-848 (build one at a shipyard)". Stations sheet footer shows it.
+- UI: BUILD STATION in the target bar also for fleet tokens that contain a constructor.
+- 5 new station tests incl. end-to-end transfer of a constructor to an asteroid, then build.

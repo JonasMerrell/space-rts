@@ -1,7 +1,7 @@
 //! Space stations: built in orbit of a planet, moon or asteroid. Unlike planet upgrades they
 //! don't need the body itself — a ship parked there is enough — so you can put a fuel depot on
 //! an asteroid or a telescope next to an enemy world. Stations are separate targets in combat.
-use crate::game::{EventKind, Game, PlayerId, ShipClass};
+use crate::game::{EventKind, Game, PlayerId, Ship, ShipClass, ShipState};
 use crate::system::BodyId;
 use crate::tech::Tech;
 use serde::{Deserialize, Serialize};
@@ -137,7 +137,7 @@ impl Game {
             }
         }
         if self.workers(p, body) == 0 {
-            return Some("needs a construction ship in orbit".into());
+            return Some(self.no_constructor_reason(p, body));
         }
         if self.stations.iter().any(|s| s.owner == p && s.body == body && s.kind == kind) {
             return Some("you already have one there".into());
@@ -160,7 +160,45 @@ impl Game {
 
     /// Construction ships `p` has parked at `body`.
     pub fn constructors_at(&self, p: PlayerId, body: BodyId) -> usize {
-        self.ships.iter().filter(|s| s.owner == p && s.class == ShipClass::Constructor && s.parked_at() == Some(body)).count()
+        self.ships.iter().filter(|s| s.owner == p && s.class == ShipClass::Constructor && self.on_site(s, body)).count()
+    }
+
+    /// Is this ship working at `body`? Parked in orbit there (even with a departure scheduled for
+    /// later), or flying on a bound orbit of it (e.g. after manual burns inside its sphere of influence).
+    /// Uses only the ship's stored state, so client and server always agree.
+    pub fn on_site(&self, s: &Ship, body: BodyId) -> bool {
+        match &s.state {
+            ShipState::Parked { body: b, .. } => *b == body,
+            ShipState::Flying(f) => {
+                let st = &f.start;
+                let b = self.system.body(body);
+                let r = st.r.len();
+                st.parent == body && r < b.soi && st.v.len2() / 2.0 - b.mu / r.max(1e-9) < 0.0
+            }
+        }
+    }
+
+    /// Why nothing is building at `body`: where `p`'s nearest construction ship is, if one is headed here.
+    fn no_constructor_reason(&self, p: PlayerId, body: BodyId) -> String {
+        let name = &self.system.body(body).name;
+        let mine = || self.ships.iter().filter(move |s| s.owner == p && s.class == ShipClass::Constructor);
+        for s in mine() {
+            match &s.state {
+                ShipState::Parked { body: at, departure: Some(d) } if d.to == body || s.route.contains(&body) => {
+                    let wait = fmt_wait(d.state.t - self.t);
+                    return format!("{} is still at {}; it leaves for {name} in {wait}", s.name, self.system.body(*at).name);
+                }
+                ShipState::Flying(f) if f.dest == Some(body) || s.route.contains(&body) => {
+                    return format!("{} is on its way to {name}; it can build once it is in orbit", s.name);
+                }
+                _ => {}
+            }
+        }
+        if mine().next().is_none() {
+            format!("needs a construction ship in orbit of {name} (build one at a shipyard)")
+        } else {
+            format!("needs a construction ship in orbit of {name}")
+        }
     }
 
     /// Workers on `p`'s construction sites at `body`: the constructors parked there (stations always
@@ -234,6 +272,16 @@ impl Game {
     }
 }
 
+/// "3h 20m" / "45m" for messages.
+fn fmt_wait(secs: f64) -> String {
+    let m = (secs.max(0.0) / 60.0).round() as u64;
+    if m >= 60 {
+        format!("{}h {:02}m", m / 60, m % 60)
+    } else {
+        format!("{m}m")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,6 +344,90 @@ mod tests {
         park(&mut g, 0, ShipClass::Constructor, ast);
         g.advance_to(secs + secs / 2.0 + 120.0);
         assert!(g.has_station(0, ast, StationKind::Shipyard));
+        assert_eq!(g.workers(0, ast), 1);
+    }
+
+    fn asteroid(g: &Game) -> BodyId {
+        g.system.bodies.iter().find(|b| b.kind == crate::system::BodyKind::Asteroid).map(|b| b.id).unwrap()
+    }
+
+    #[test]
+    fn constructor_waiting_to_depart_still_works_where_it_is() {
+        // regression (Jonas): a constructor with a departure scheduled for later must still count at its current body
+        let mut g = game();
+        let ast = asteroid(&g);
+        let home = g.players[0].home.unwrap();
+        let i = park(&mut g, 0, ShipClass::Constructor, ast);
+        let later = crate::game::Departure { to: home, state: crate::traj::State { parent: ast, t: g.t + 9.0 * 3600.0, r: crate::v2::v2(100.0, 0.0), v: crate::v2::v2(0.0, 1.0) }, dv: 1.0 };
+        g.ships[i].state = ShipState::Parked { body: ast, departure: Some(later) };
+        assert_eq!(g.workers(0, ast), 1);
+        g.apply(0, Command::BuildStation { body: ast, kind: StationKind::FuelDepot }).unwrap();
+    }
+
+    #[test]
+    fn message_says_where_the_constructor_is() {
+        let mut g = game();
+        let ast = asteroid(&g);
+        let home = g.players[0].home.unwrap();
+        let err = |g: &mut Game| g.apply(0, Command::BuildStation { body: ast, kind: StationKind::FuelDepot }).unwrap_err();
+        assert!(err(&mut g).contains("build one at a shipyard"), "{}", err(&mut g));
+        let i = park(&mut g, 0, ShipClass::Constructor, home);
+        let dep = crate::game::Departure { to: ast, state: crate::traj::State { parent: home, t: g.t + 3.0 * 3600.0, r: crate::v2::v2(1000.0, 0.0), v: crate::v2::v2(0.0, 5.0) }, dv: 2.0 };
+        g.ships[i].state = ShipState::Parked { body: home, departure: Some(dep) };
+        let e = err(&mut g);
+        assert!(e.contains("still at") && e.contains("leaves for") && e.contains("3h 00m"), "{e}");
+    }
+
+    #[test]
+    fn constructor_on_a_bound_orbit_of_the_asteroid_counts() {
+        let mut g = game();
+        let ast = asteroid(&g);
+        let b = g.system.body(ast).clone();
+        let i = park(&mut g, 0, ShipClass::Constructor, ast);
+        let r = (b.radius * 3.0).min(b.soi * 0.5);
+        let v = crate::kepler::circular_speed(b.mu, r);
+        let orbit = crate::traj::State { parent: ast, t: g.t, r: crate::v2::v2(r, 0.0), v: crate::v2::v2(0.0, v) };
+        g.ships[i].state = ShipState::Flying(crate::game::Flight { start: orbit, burns: vec![], dest: None, cache: None });
+        assert_eq!(g.workers(0, ast), 1, "bound orbit inside the SOI");
+        // the same speed far faster than escape = a flyby, not a worker
+        let fast = crate::traj::State { v: crate::v2::v2(0.0, v * 3.0), ..orbit };
+        g.ships[i].state = ShipState::Flying(crate::game::Flight { start: fast, burns: vec![], dest: None, cache: None });
+        assert_eq!(g.workers(0, ast), 0);
+    }
+
+    #[test]
+    fn constructor_flown_to_an_asteroid_builds_there() {
+        // end to end: order a transfer, let it arrive, build
+        let mut g = game();
+        let home = g.players[0].home.unwrap();
+        let i = park(&mut g, 0, ShipClass::Constructor, home);
+        let id = g.ships[i].id;
+        let mut target = None;
+        let asts: Vec<BodyId> = g.system.bodies.iter().filter(|b| b.kind == crate::system::BodyKind::Asteroid).map(|b| b.id).collect();
+        for a in asts {
+            if g.apply(0, Command::Transfer { ships: vec![id], to: a, depart_t: None }).is_ok() {
+                target = Some(a);
+                break;
+            }
+        }
+        let ast = target.expect("some asteroid should be reachable from home");
+        let mut t = g.t;
+        while g.ship(id).is_some_and(|s| s.parked_at() != Some(ast)) && t < g.t + 6.0 * 86_400.0 {
+            t += 3600.0;
+            g.advance_to(t);
+        }
+        assert_eq!(g.ship(id).and_then(|s| s.parked_at()), Some(ast), "constructor should end up in orbit of the asteroid");
+        g.apply(0, Command::BuildStation { body: ast, kind: StationKind::FuelDepot }).unwrap();
+    }
+
+    #[test]
+    fn constructors_inside_a_fleet_count() {
+        let mut g = game();
+        let ast = asteroid(&g);
+        let a = park(&mut g, 0, ShipClass::Gunship, ast);
+        let c = park(&mut g, 0, ShipClass::Constructor, ast);
+        let ships = vec![g.ships[a].id, g.ships[c].id];
+        g.fleets.push(crate::fleet::Fleet { id: crate::fleet::FleetId(99), owner: 0, name: "F".into(), ships });
         assert_eq!(g.workers(0, ast), 1);
     }
 

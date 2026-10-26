@@ -784,7 +784,7 @@ impl Backend for DemoBackend {
             .enumerate()
             .map(|(i, k)| {
                 let blocker = if !present {
-                    Some("needs a construction ship in orbit".to_string())
+                    Some(format!("needs a construction ship in orbit of {}", v.body(id).map(|b| b.name.as_str()).unwrap_or("here")))
                 } else if (*k == "Scanner" || *k == "Relay") && !scanning {
                     Some("needs Scanning stations".to_string())
                 } else if *k == "Defense" && !platforms {
