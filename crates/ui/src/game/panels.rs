@@ -280,7 +280,7 @@ pub fn sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameV
             Some(Focus::Body(id)) => {
                 if let Some(b) = view.body(id) {
                     match be.body_info(id).filter(|_| b.owner == Some(view.me)) {
-                        Some(info) => owned_body_sheet(g, inp, view, b, &info),
+                        Some(info) => owned_body_sheet(g, inp, be, view, b, &info),
                         None => body_sheet(g, inp, view, b, be.stations(id).is_some_and(|v| v.present)),
                     }
                 }
@@ -487,9 +487,9 @@ fn cost_line(c: &Cost) -> String {
 }
 
 /// Our own planet/moon: upgrades and shipyard tabs, build queue, power in orbit.
-fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Body, info: &BodyInfo) {
+fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView, b: &Body, info: &BodyInfo) {
     let r = sheet_rect(332.0);
-    if super::details::draw(g, inp, view, info, r) {
+    if super::details::draw(g, inp, be, view, info, r) {
         return;
     }
     inp.block(r);

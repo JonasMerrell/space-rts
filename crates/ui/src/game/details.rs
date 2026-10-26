@@ -1,10 +1,10 @@
 //! "What does this do?" sheets for planet upgrades and ship classes, opened by tapping a cell in
-//! the planet panel. Effects mirror the sim's formulas (sim/src/game.rs: production, def_*,
-//! fuel_cap, ClassStats; sim/src/fog.rs: telescope range).
+//! the planet panel. Rules text comes from the sim via `Backend::describe`; the local tables below
+//! (mirroring sim formulas at the time of writing) are only a fallback for backends without it.
 
 use super::{GameScreen, Mode};
 use crate::art;
-use crate::backend::UiAction;
+use crate::backend::{Backend, UiAction};
 use crate::cel;
 use crate::input::Input;
 use crate::model::*;
@@ -83,7 +83,7 @@ fn row(k: &str, v: &str, x: f32, w: f32, y: &mut f32, col: Color) {
 }
 
 /// Draws the open detail sheet in place of the planet panel. Returns false if it should close.
-pub fn draw(g: &mut GameScreen, inp: &mut Input, view: &GameView, info: &BodyInfo, r: Rect) -> bool {
+pub fn draw(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView, info: &BodyInfo, r: Rect) -> bool {
     let Some(d) = g.detail.clone() else { return false };
     inp.block(r);
     cel::panel(r, alpha(PANEL, 0.98));
@@ -106,11 +106,29 @@ pub fn draw(g: &mut GameScreen, inp: &mut Input, view: &GameView, info: &BodyInf
             y += 30.0 * s();
             paragraph(what, x, &mut y, w, 14.0, PAPER);
             y += 8.0 * s();
-            row(&format!("LEVEL {}", u.level), if u.level == 0 { "not built" } else { &now }, x, w, &mut y, PAPER);
+            let sim = |l: u8| be.describe(&format!("upgrade:{name}:{l}"));
+            match (u.level, sim(u.level)) {
+                (0, _) => row("LEVEL 0", "not built", x, w, &mut y, PAPER),
+                (l, Some(t)) => {
+                    text(&format!("NOW · LEVEL {l}"), x, y, 13.0, MUTED, FontKind::Title, Align::Left);
+                    y += 20.0 * s();
+                    paragraph(&t, x, &mut y, w, 13.0, PAPER);
+                }
+                (l, None) => row(&format!("LEVEL {l}"), &now, x, w, &mut y, PAPER),
+            }
             match &u.next {
                 Some(c) => {
-                    let (_, next) = upgrade_text(name, u.level + 1);
-                    row(&format!("LEVEL {}", u.level + 1), &next, x, w, &mut y, GOOD);
+                    match sim(u.level + 1) {
+                        Some(t) => {
+                            text(&format!("NEXT · LEVEL {}", u.level + 1), x, y, 13.0, MUTED, FontKind::Title, Align::Left);
+                            y += 20.0 * s();
+                            paragraph(&t, x, &mut y, w, 13.0, GOOD);
+                        }
+                        None => {
+                            let (_, next) = upgrade_text(name, u.level + 1);
+                            row(&format!("LEVEL {}", u.level + 1), &next, x, w, &mut y, GOOD);
+                        }
+                    }
                     row("COST", &cost_s(c), x, w, &mut y, if afford(c) { PAPER } else { DANGER });
                     let label = if u.level == 0 { "BUILD" } else { "UPGRADE" };
                     action = Some((label.into(), afford(c), UiAction::Upgrade { body: *body, upgrade: name.clone() }));
@@ -129,15 +147,22 @@ pub fn draw(g: &mut GameScreen, inp: &mut Input, view: &GameView, info: &BodyInf
             y += 30.0 * s();
             paragraph(role, x, &mut y, w - 60.0 * s(), 14.0, PAPER);
             y += 6.0 * s();
-            row("HULL", &format!("{hp:.0} hp"), x, w, &mut y, PAPER);
-            let weapon = weapon_word(*class);
-            row("WEAPON", &if atk > 0.0 { format!("{atk:.0} attack · {}", weapon.split(' ').next().unwrap_or("")) } else { "none".into() }, x, w, &mut y, PAPER);
-            row("FUEL TANK", &format!("{tank:.0}"), x, w, &mut y, PAPER);
-            row("STRONG VS", strong, x, w, &mut y, GOOD);
-            row("WEAK VS", weak, x, w, &mut y, DANGER);
-            if atk > 0.0 {
-                if let Some((_, why)) = weapon.split_once(' ') {
-                    paragraph(why.trim_matches(|c| c == '(' || c == ')'), x, &mut y, w, 12.0, MUTED);
+            if let Some(t) = be.describe(&format!("ship:{}", class.label())) {
+                // "Gunship — 120 hull, ..." → drop the repeated name.
+                let t = t.split_once(" — ").map(|(_, r)| r.to_string()).unwrap_or(t);
+                paragraph(&t, x, &mut y, w, 13.0, PAPER);
+                y += 4.0 * s();
+            } else {
+                row("HULL", &format!("{hp:.0} hp"), x, w, &mut y, PAPER);
+                let weapon = weapon_word(*class);
+                row("WEAPON", &if atk > 0.0 { format!("{atk:.0} attack · {}", weapon.split(' ').next().unwrap_or("")) } else { "none".into() }, x, w, &mut y, PAPER);
+                row("FUEL TANK", &format!("{tank:.0}"), x, w, &mut y, PAPER);
+                row("STRONG VS", strong, x, w, &mut y, GOOD);
+                row("WEAK VS", weak, x, w, &mut y, DANGER);
+                if atk > 0.0 {
+                    if let Some((_, why)) = weapon.split_once(' ') {
+                        paragraph(why.trim_matches(|c| c == '(' || c == ')'), x, &mut y, w, 12.0, MUTED);
+                    }
                 }
             }
             if let Some((_, c)) = info.buildable.iter().find(|(k, _)| k == class) {
