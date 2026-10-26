@@ -47,6 +47,7 @@ fn put_ship(g: &mut Game, owner: PlayerId, class: ShipClass, at: BodyId) -> Ship
         order: StandingOrder::Hold,
         route: vec![],
         state: ShipState::Parked { body: at, departure: None },
+        tech: Default::default(),
     });
     id
 }
@@ -217,6 +218,7 @@ fn rocket_equation() {
         let full = Ship {
             id: ShipId(1), owner: 0, class: c, name: String::new(), hp: st.hp, fuel: st.fuel_cap,
             order: StandingOrder::Hold, route: vec![], state: ShipState::Parked { body: BodyId(1), departure: None },
+            tech: Default::default(),
         };
         let dv = full.dv_left();
         assert!((full.fuel_for(dv) - st.fuel_cap).abs() < 1e-9 * st.fuel_cap, "{c:?}");

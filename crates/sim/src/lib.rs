@@ -5,6 +5,8 @@ pub mod fog;
 pub mod game;
 pub mod kepler;
 pub mod plan;
+pub mod station;
+pub mod tech;
 pub mod traj;
 pub mod system;
 pub mod v2;

@@ -1,0 +1,254 @@
+//! Space stations: built in orbit of a planet, moon or asteroid. Unlike planet upgrades they
+//! don't need the body itself — a ship parked there is enough — so you can put a fuel depot on
+//! an asteroid or a telescope next to an enemy world. Stations are separate targets in combat.
+use crate::game::{EventKind, Game, PlayerId};
+use crate::system::BodyId;
+use crate::tech::Tech;
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct StationId(pub u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum StationKind {
+    Shipyard,
+    FuelDepot,
+    Telescope,
+    Scanner,
+    Defense,
+    Relay,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Station {
+    pub id: StationId,
+    pub owner: PlayerId,
+    pub kind: StationKind,
+    /// in orbit of this body
+    pub body: BodyId,
+    pub hp: f64,
+    /// fuel stock (fuel depots only)
+    #[serde(default)]
+    pub fuel: f64,
+    /// under construction until then
+    pub done_t: f64,
+}
+
+impl Station {
+    pub fn active(&self, t: f64) -> bool {
+        t >= self.done_t && self.hp > 0.0
+    }
+}
+
+/// Fuel a depot holds, tonnes.
+pub const DEPOT_CAP: f64 = 1500.0;
+/// Fuel a depot refines per hour (from the body's matter, paid in energy like a refinery).
+pub const DEPOT_RATE: f64 = 80.0;
+/// Shipyard level a shipyard station counts as.
+pub const STATION_YARD_LEVEL: u8 = 2;
+
+impl StationKind {
+    pub const ALL: [StationKind; 6] =
+        [StationKind::Shipyard, StationKind::FuelDepot, StationKind::Telescope, StationKind::Scanner, StationKind::Defense, StationKind::Relay];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            StationKind::Shipyard => "Shipyard",
+            StationKind::FuelDepot => "Fuel depot",
+            StationKind::Telescope => "Telescope",
+            StationKind::Scanner => "Scanning station",
+            StationKind::Defense => "Defense platform",
+            StationKind::Relay => "Sensor relay",
+        }
+    }
+    pub fn describe(self) -> &'static str {
+        match self {
+            StationKind::Shipyard => "Builds ships here, even if you don't hold the body. Counts as shipyard level 2.",
+            StationKind::FuelDepot => "Refines and stores fuel here and refuels your ships, even on asteroids.",
+            StationKind::Telescope => "Long-range passive sensor.",
+            StationKind::Scanner => "Short range, but sees every ship in range and reads enemy flight plans.",
+            StationKind::Defense => "Armed platform. Fights for the orbit and counts toward control.",
+            StationKind::Relay => "Your other sensors within its range reach 50% farther.",
+        }
+    }
+    /// (matter, energy, build seconds)
+    pub fn cost(self) -> (f64, f64, f64) {
+        match self {
+            StationKind::Shipyard => (300.0, 150.0, 4.0 * 3600.0),
+            StationKind::FuelDepot => (150.0, 80.0, 2.0 * 3600.0),
+            StationKind::Telescope => (120.0, 120.0, 2.0 * 3600.0),
+            StationKind::Scanner => (200.0, 200.0, 3.0 * 3600.0),
+            StationKind::Defense => (250.0, 150.0, 3.0 * 3600.0),
+            StationKind::Relay => (150.0, 150.0, 2.0 * 3600.0),
+        }
+    }
+    pub fn max_hp(self) -> f64 {
+        match self {
+            StationKind::Defense => 400.0,
+            StationKind::Shipyard => 300.0,
+            _ => 150.0,
+        }
+    }
+    /// Damage per hour (armed stations only).
+    pub fn attack(self) -> f64 {
+        match self {
+            StationKind::Defense => 60.0,
+            _ => 0.0,
+        }
+    }
+    pub fn needs(self) -> Option<Tech> {
+        match self {
+            StationKind::Scanner | StationKind::Relay => Some(Tech::ScanningStations),
+            StationKind::Defense => Some(Tech::DefensePlatforms),
+            _ => None,
+        }
+    }
+}
+
+impl Game {
+    pub fn stations_at(&self, body: BodyId) -> impl Iterator<Item = &Station> {
+        let t = self.t;
+        self.stations.iter().filter(move |s| s.body == body && s.active(t))
+    }
+
+    /// An active station of this kind owned by `p` at `body`.
+    pub fn has_station(&self, p: PlayerId, body: BodyId, kind: StationKind) -> bool {
+        self.stations_at(body).any(|s| s.owner == p && s.kind == kind)
+    }
+
+    /// Why `p` can't build a `kind` station at `body` right now (None = it can).
+    pub fn station_blocker(&self, p: PlayerId, body: BodyId, kind: StationKind) -> Option<String> {
+        let b = self.bodies.get(body.0 as usize)?;
+        if self.system.body(body).is_star() {
+            return Some("can't build in orbit of the star".into());
+        }
+        if let Some(t) = kind.needs() {
+            if !self.has_tech(p, t) {
+                return Some(format!("needs {}", t.label()));
+            }
+        }
+        let present = b.owner == Some(p) || self.ships.iter().any(|s| s.owner == p && s.parked_at() == Some(body));
+        if !present {
+            return Some("needs a ship in orbit there (or own the body)".into());
+        }
+        if self.stations.iter().any(|s| s.owner == p && s.body == body && s.kind == kind) {
+            return Some("you already have one there".into());
+        }
+        None
+    }
+
+    pub(crate) fn build_station(&mut self, p: PlayerId, body: BodyId, kind: StationKind) -> Result<StationId, String> {
+        if let Some(why) = self.station_blocker(p, body, kind) {
+            return Err(why);
+        }
+        let (m, e, secs) = kind.cost();
+        self.pay(p, m, e)?;
+        let id = StationId(self.next_station);
+        self.next_station += 1;
+        let speed = self.mods(p).build_speed;
+        self.stations.push(Station { id, owner: p, kind, body, hp: kind.max_hp(), fuel: 0.0, done_t: self.t + secs / speed });
+        Ok(id)
+    }
+
+    /// Per-tick station upkeep: construction events, depots refine and refuel, platforms repair.
+    pub(crate) fn stations_tick(&mut self, dt: f64) {
+        let h = dt / 3600.0;
+        let t0 = self.t - dt;
+        for i in 0..self.stations.len() {
+            let st = self.stations[i].clone();
+            if st.done_t > t0 && st.done_t <= self.t {
+                let bname = self.system.body(st.body).name.clone();
+                self.event(Some(st.owner), EventKind::Good, "Station built", &format!("{} online at {bname}", st.kind.label()), Some(st.body), None);
+            }
+            if !st.active(self.t) {
+                continue;
+            }
+            self.stations[i].hp = (st.hp + st.kind.max_hp() * 0.05 * h).min(st.kind.max_hp());
+            if st.kind == StationKind::FuelDepot {
+                let mods = self.mods(st.owner);
+                let p = &mut self.players[st.owner as usize];
+                let want = (DEPOT_RATE * mods.fuel * h).min(DEPOT_CAP - st.fuel).max(0.0);
+                let made = want.min(p.energy / 0.5);
+                p.energy -= made * 0.5;
+                self.stations[i].fuel += made;
+                for s in self.ships.iter_mut().filter(|s| s.owner == st.owner && s.parked_at() == Some(st.body)) {
+                    let room = (s.stats().fuel_cap - s.fuel).max(0.0);
+                    let take = room.min(self.stations[i].fuel).min(200.0 * h);
+                    s.fuel += take;
+                    self.stations[i].fuel -= take;
+                }
+            }
+        }
+    }
+
+    /// Shipyard level `p` gets at `body` from a shipyard station (0 if none).
+    pub fn station_yard_level(&self, p: PlayerId, body: BodyId) -> u8 {
+        if self.has_station(p, body, StationKind::Shipyard) {
+            STATION_YARD_LEVEL
+        } else {
+            0
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::{Command, ShipClass, Upgrade};
+    use crate::tech::tests::game;
+
+    #[test]
+    fn stations_need_presence_tech_and_build_time() {
+        let mut g = game();
+        let home = g.players[0].home.unwrap();
+        let away = g.players[1].home.unwrap();
+        let b = |g: &mut Game, body, kind| g.apply(0, Command::BuildStation { body, kind });
+        assert!(b(&mut g, away, StationKind::Telescope).unwrap_err().contains("ship"));
+        assert!(b(&mut g, home, StationKind::Scanner).unwrap_err().contains("Scanning"));
+        b(&mut g, home, StationKind::Telescope).unwrap();
+        assert!(b(&mut g, home, StationKind::Telescope).unwrap_err().contains("already"));
+        // a parked ship is enough to build at someone else's body
+        let scout = g.ships.iter().position(|s| s.owner == 0 && s.class == ShipClass::Scout).unwrap();
+        g.ships[scout].state = crate::game::ShipState::Parked { body: away, departure: None };
+        b(&mut g, away, StationKind::FuelDepot).unwrap();
+        assert!(!g.has_station(0, home, StationKind::Telescope));
+        g.advance_to(2.0 * 3600.0 + 60.0);
+        assert!(g.has_station(0, home, StationKind::Telescope));
+        assert!(g.events.iter().any(|e| e.title == "Station built"));
+    }
+
+    #[test]
+    fn shipyard_station_builds_at_a_body_you_dont_own() {
+        let mut g = game();
+        let away = g.players[1].home.unwrap();
+        g.stations.push(Station { id: StationId(0), owner: 0, kind: StationKind::Shipyard, body: away, hp: 300.0, fuel: 0.0, done_t: 0.0 });
+        assert_eq!(g.yard_level(0, away), STATION_YARD_LEVEL);
+        g.apply(0, Command::Build { body: away, class: ShipClass::Dreadnought }).unwrap();
+        g.advance_to(4.0 * 3600.0);
+        assert!(g.events.iter().any(|e| e.to == Some(0) && e.title == "Ship built" && e.body.starts_with("Dreadnought")));
+        // can't upgrade a body you don't own through a station
+        assert!(g.apply(0, Command::Upgrade { body: away, upgrade: Upgrade::Mining }).is_err());
+    }
+
+    #[test]
+    fn defense_platform_counts_as_power_and_depot_refuels() {
+        let mut g = game();
+        let home = g.players[0].home.unwrap();
+        g.stations.push(Station { id: StationId(0), owner: 0, kind: StationKind::Defense, body: home, hp: 400.0, fuel: 0.0, done_t: 0.0 });
+        let before = g.power_at(home).iter().find(|p| p.0 == 0).unwrap().1;
+        g.stations.push(Station { id: StationId(1), owner: 0, kind: StationKind::Defense, body: home, hp: 400.0, fuel: 0.0, done_t: 1e9 });
+        assert!(g.power_at(home).iter().find(|p| p.0 == 0).unwrap().1 == before, "unfinished stations don't count");
+        g.stations.clear();
+        let base = g.power_at(home).iter().find(|p| p.0 == 0).unwrap().1;
+        assert!((before - base - StationKind::Defense.attack()).abs() < 1e-9);
+
+        let ast = g.system.bodies.iter().find(|b| b.kind == crate::system::BodyKind::Asteroid).map(|b| b.id);
+        let Some(ast) = ast else { return };
+        let i = g.ships.iter().position(|s| s.owner == 0 && s.class == ShipClass::Gunship).unwrap();
+        g.ships[i].state = crate::game::ShipState::Parked { body: ast, departure: None };
+        g.ships[i].fuel = 10.0;
+        g.stations.push(Station { id: StationId(2), owner: 0, kind: StationKind::FuelDepot, body: ast, hp: 150.0, fuel: 0.0, done_t: 0.0 });
+        g.advance_to(3.0 * 3600.0);
+        assert!(g.ships[i].fuel > 10.0 + 100.0, "fuel {}", g.ships[i].fuel);
+    }
+}
