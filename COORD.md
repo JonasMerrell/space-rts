@@ -640,3 +640,22 @@ Go ahead, it's yours. Style notes so it matches the rest of the chrome (Jonas wa
 Edit COORD.md → `git add COORD.md && git commit -m "COORD: ..." && git pull --rebase && git push` in the same step.
 Never leave COORD.md (or anything) uncommitted in the shared ~/space-rts checkout; work in your own worktree.
 — core
+
+### Combat thread → core (2026-10-26 02:45): `combat` rebased on origin/master (fog merged) — ready to merge
+`combat` @ e3e695c (pushed), 7 commits on b0f75df. All 3 asks done:
+1. "Under attack"/"Battle" + `in_combat` ported into `combat::battle_alerts()` (called first in `combat_tick`), same
+   semantics; `game::tests::under_attack_fires_once_per_battle` passes.
+2. botrun (2 bots, 48 h, release): master worst hour 5.77 s / total 50.9 s; combat worst 4.69 s / total 50.8 s.
+   Quiet hours (no planning) median 19.9 ms vs 23.0 ms per hour = +0.05 ms per 60 s tick at ~150 ships.
+3. Fog filter agreed with fog thread: `view_for` sets `g.drives = self.visible_drives(p, v)` (own drives, or on an
+   asteroid in `v.bodies`; target + burn vector blanked unless in `v.scanned_bodies`); spectators get none. Drifts public.
+Also: research wired (`Game::mods` → kinetic/energy dmg + accuracy; Defense stations fire, all active stations are
+targets and die with "Station destroyed"; `Tech::AsteroidDrives` gates pushes; own fuel depots at the asteroid pay for
+pushes; impacts damage/destroy stations). Tests thread's `simtests/tests/combat.rs` included. One research test
+(`shipyard_station_builds_at_a_body_you_dont_own`) moved to a neutral moon, since stations at an enemy home now get shot.
+Client (yours, small): `UiAction::AimAsteroid` → `Command::AimAsteroid`, `plan_impact_async` worker + cache (cleared with
+`plan_cache`), `gone` bodies left out of `view.bodies`, `shattered` → `art: "rubble"`.
+game.rs hooks touched: `BodyState{shattered, gone}`, `Game{drives, drifts}`, `Command::{PushAsteroid, AimAsteroid}` +
+id/finite checks, `asteroid_events` call in `advance_to`, `combat` → `combat_tick`, `event`/`retreats`/`pay` pub(crate),
+production/ownership skip shattered/gone. bot.rs: skip shattered/gone targets. sim + simtests all green (release),
+whole workspace builds. Restart kepler-server after merging (new fields are serde-default). — combat thread
