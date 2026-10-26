@@ -93,3 +93,88 @@ Index: **`assets/manifest.json`** (paths relative to `assets/`), details in `ass
   (≈14 MB); skip `assets/tools` and `assets/preview`. Regenerate: `python3 assets/tools/gen_art.py && python3 assets/tools/gen_audio.py`.
 - Not committed by me (repo has no first commit yet); please include `assets/` (minus `preview/`) when you commit.
 — assets thread
+- Update (assets): audio mood is now **ambient synth** (Jonas picked it). Same file names, plus new menu sounds in
+  `assets/audio/sfx/`: menu_open, menu_close, menu_select, menu_tab, toggle_on, toggle_off, slider_tick (rate-limit),
+  start_game, lobby_join, purchase. Music is longer now (title 96 s, orbit 120 s, battle 60 s; ≈14 MB audio total).
+  UI thread: please hook the menu sounds up to the matching widgets (`use` field in manifest says when).
+
+### Notes for the UI thread (from `crates/uitests`, 2026-10-26)
+UI flow test drives `Ui` + `DemoBackend` through login → menu → lobby (4p) → join by code → game →
+plan/schedule transfer → nodes → chat → toast → back → logout, at 540×1170, 360×800, 1080×2400,
+and saves screenshots. All 14 checks pass. Spotted on the screenshots:
+- ~~Plan panel Δv 4584 km/s~~ — not a bug: the demo's Gm-scale system really needs that (sim is km-scale).
+- Lobby host row shows a tofu box before "host" (glyph missing from the font).
+- Request: a way to inject input for tests, e.g. `Input::inject_tap(pos)` / `inject_text(&str)`
+  that `begin_frame` consumes instead of reading touches, so tests can press real buttons instead
+  of calling `be.act(..)` directly. No rush.
+Run: `./ci.sh` (needs Xvfb, installed on netdash) or the "ui flow" step alone.
+
+### Tests thread → core: what I'll test when game rules land (shape suggestions, not demands)
+I'll write these against whatever API you pick; if convenient, these hooks make them easy:
+- `Game::new(system, players, seed)`, `game.apply(player, Command) -> Result<(), Reject>`,
+  `game.step_to(t)` (or `step(dt)`), and `game.hash() -> u64` (state digest for determinism checks).
+- combat as a pure fn, e.g. `combat::resolve(&[Fleet], t0, t1) -> Outcome`, so I can assert:
+  same inputs → identical outcome (order-independent in fleet list); RPS triangle holds at equal cost;
+  energy weapons hit instantly, kinetic lead the target and miss more as relative speed rises;
+  more damage for kinetic at low relative speed; nothing fires outside range.
+- `ownership(&game, body) -> Option<PlayerId>` = max orbital power, ties → previous owner / none.
+- fuel: Δv → fuel via rocket equation, refuse burns the tank can't pay for, tanker transfer conserves fuel.
+- `impact_energy(mass, v_rel) = ½ m v²` and the threshold that wipes upgrades + everything in orbit.
+- server: start in-process on port 0 (`server::spawn(addr, data_dir) -> (SocketAddr, Handle)`) so
+  tests can run accounts → create game → join code ×4 → start → command round-trip → reconnect.
+
+### Core → UI (2026-10-26 00:47): scale is settled, units are km
+The sim does NOT use Gm. Everything is **km, s, km/s** (see top of this file): planet orbits are
+1.4e5–2e6 km, orbital speeds 10–60 km/s, transfer Δv 5–20 km/s, ship Δv budgets ~20 km/s.
+Please treat model positions/radii/soi as km and print Δv as km/s, distances as "Mm" (1000 km) if you like.
+`crates/proto` and `crates/server` are being filled in now; `crates/client` (Backend impl) next.
+Needed from the UI soon (I'll map them in the client): Build{body, class}, Upgrade{body, upgrade},
+SetOrder{ship, Hold|Retreat}, ExtendGame; per-body panel data (owner, upgrade levels, fuel stock,
+build queue, power in orbit); ship classes Scout, Interceptor, Gunship, Bomber, Dreadnought, Tanker.
+
+### Tests thread: game rules + proto (2026-10-26)
+`simtests/tests/game.rs` (21 pass) and `proto.rs` (5 pass). Passing: lobby cap/dedupe, rejected
+commands leave state byte-identical, builds/costs/timing, Extend host-only, game end + winner,
+determinism (same seed+commands, **chunked advance_to == single advance_to**, save/reload mid-flight),
+rocket equation, tanker conserves fuel + keeps 30% reserve, combat order-independent, RPS at equal
+cost, unarmed/separate bodies never fight, defenses shoot, sole power claims a body, proto framing +
+State→client prediction bit-exact (thanks for float_roundtrip). Design gaps, as ignored tests:
+- `kinetic_accuracy_falls_with_relative_velocity`: combat is velocity-independent; kinetic is flat ×1.25.
+- `asteroid_impact_energy_scales_with_mass_and_velocity_squared`: no asteroid drives/impacts yet.
+- `state_hides_enemy_ships_outside_sensor_range`: `ServerMsg::State` sends the whole `Game`, so
+  fog of war / telescopes can be bypassed by any client.
+- FYI: ownership only changes when exactly one side has power; design says "most power in orbit"
+  owns it. Fine if intended (contested = keeps owner) — tell me and I'll pin it in a test.
+Server request: please give `crates/server` a lib target with something like
+`pub fn serve(listener: TcpListener, data_dir: &Path)` (or `spawn(addr, dir) -> SocketAddr`) so the
+integration test can bind port 0 in a temp dir and run 4 clients against it in-process.
+- (tests, after the restyle) UI flow: still 14/14. From the screenshots: the chat panel's glass is
+  so transparent the map and the "COURSE TO" panel read through it behind the messages; body labels
+  at the screen edge are clipped ("EALIS" for Borealis). Test now uses faction "HIVE BROOD".
+
+### Core → UI (2026-10-26 01:30): requests for the client wiring
+`crates/server` works (lib `server::serve(listener, data_dir)`), `crates/client` is being written now
+against your current `Backend`. Please add, in whatever form suits the UI (I'll adapt the client):
+1. **Login screen: a "Server" field** (host:port, default `192.168.0.247:7777`) → `UiAction::Login { server, .. }`.
+   Persist it however you like (the client will also remember the last value).
+2. **Build / Upgrade / standing orders**: `UiAction::Build { body, class }`, `UiAction::Upgrade { body, upgrade: String }`
+   (Mining|Solar|Reactor|Refinery|Shipyard|Defense|Telescope|Research), `UiAction::SetOrder { ship, retreat: bool }`,
+   `UiAction::ExtendGame { days }` (host only). Body panel data via a new `Backend::body_info(id) -> Option<BodyInfo>`:
+   owner, levels per upgrade (0..3), fuel stock, build queue [(label, done_t)], power in orbit per player,
+   production per hour (matter, energy, fuel), and the costs of the next level/each ship class
+   (`Backend::costs()` → Vec<(label, matter, energy, minutes)>). Ship classes: Scout, Interceptor, Gunship,
+   Bomber, Dreadnought, Tanker.
+3. `TransferPlan.windows` will carry upcoming window departure times; planning takes ~0.3–1 s on desktop, so
+   call `plan_transfer` once per (ship, target, after) — the client caches by that key anyway.
+
+### Tests thread: server integration (2026-10-26) — 5 pass, 1 BUG
+`simtests/tests/server.rs` runs `server::serve` on 127.0.0.1:0 with real TCP clients: register/login/
+wrong pw/persist across restart, login-required, 4 players join by code (lowercase+spaces ok, 5th
+"full", bad code), host-only start, each State has the right `me`, chat reaches others, rule errors
+as CmdResult, non-members can't Open/List, reconnect gets the game back, garbage lines → Error.
+**BUG (remote crash):** any logged-in client can kill the whole server with an out-of-range id, e.g.
+`Cmd{Build{body: BodyId(60000)}}` → `game.rs:608 index out of bounds` inside `handle`, which poisons
+the server Mutex, so every connection thread then panics on `lock().unwrap()`. Same for `Upgrade`
+and `Transfer{to}`. Fix: validate BodyId/ShipId in `Game::apply` (return Err), and ideally
+`lock().unwrap_or_else(|e| e.into_inner())` / catch_unwind around `handle`.
+Repro: `cargo test -p simtests --test server bad_ids`. **Fixed 2026-10-26, test now a regular regression test.**

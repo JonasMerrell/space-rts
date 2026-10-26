@@ -88,11 +88,11 @@ async fn run() {
     assert_eq!(code.len(), 4, "join code is short: {code}");
     t.shot("03-lobby-4p").await;
     t.ok("create lobby, add bots up to 4 players");
-    t.be.act(UiAction::SetFaction("VOID CORSAIRS".into()));
+    t.be.act(UiAction::SetFaction("HIVE BROOD".into()));
     t.frames(2).await;
     if let Screen::Lobby(l) = &t.ui.screen {
         let me = l.info.as_ref().unwrap().players.iter().find(|p| p.id == 1).unwrap();
-        assert_eq!(me.faction, "VOID CORSAIRS");
+        assert_eq!(me.faction, "HIVE BROOD");
     }
     t.ok("faction choice reaches the lobby view");
 
@@ -156,7 +156,7 @@ async fn run() {
 
     // -- manual maneuver nodes preview
     let node = ManeuverNode { t: plan.depart_t + 600.0, prograde: 0.5, radial: 0.0 };
-    let pv = t.be.preview_nodes(ship.id, &[node.clone()]);
+    let pv = t.be.preview_nodes(ship.id, std::slice::from_ref(&node));
     assert!(pv.is_some(), "node preview");
     t.be.act(UiAction::SetNodes { ship: ship.id, nodes: vec![node] });
     t.frames(1).await;

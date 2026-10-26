@@ -36,6 +36,22 @@ step "tests"
 # release: the property tests and planner scans are ~20× slower in debug
 run cargo test --workspace --release
 
+step "ui flow (Xvfb, release)"
+if command -v Xvfb >/dev/null; then
+  disp=:$((90 + RANDOM % 100))
+  Xvfb $disp -screen 0 1200x2500x24 >/dev/null 2>&1 &
+  xpid=$!
+  sleep 1
+  # no sound card on netdash: point ALSA at a null device so macroquad's audio init doesn't panic
+  shots="${UITESTS_SHOTS:-${CARGO_TARGET_DIR:-target}/uitests-shots}"
+  run env DISPLAY=$disp ALSA_CONFIG_PATH="$PWD/crates/uitests/asound-null.conf" UITESTS_SHOTS="$shots" \
+    timeout 300 cargo test --release -p uitests --test ui_flow
+  kill $xpid 2>/dev/null
+  echo "screenshots: $shots"
+else
+  echo "Xvfb not installed, skipping (sudo zypper install xorg-x11-server-Xvfb)"
+fi
+
 if [ $quality = 1 ]; then
   step "quality gates + known bugs (ignored tests)"
   run cargo test --workspace --release -- --ignored

@@ -1,0 +1,20 @@
+[package]
+name = "client"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+name = "space_rts"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "space-rts"
+path = "src/main.rs"
+
+[dependencies]
+sim = { path = "../sim" }
+proto = { path = "../proto" }
+ui = { path = "../ui" }
+macroquad = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

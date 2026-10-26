@@ -28,8 +28,9 @@ hardpoints, team & skin palettes. Paths in it are relative to `assets/`.
 - `sprites/ui/`: bg_tile (tileable, #1b1340), halftone_tile, select_ring, target_bracket, node_marker,
   waypoint, transfer_window. `sprites/emblems/<skin>.png`: faction badges.
 - `icon/ic_launcher_<density>.png`: Android launcher icon (mdpi 48 … xxxhdpi 192, plus 512).
-- `audio/music/` title, orbit, battle (seamless loops), victory, defeat; `audio/sfx/` 25 effects.
-  WAV PCM 16-bit mono 22050 Hz (macroquad `load_sound`). Mood: chiptune.
+- `audio/music/` title, orbit, battle (seamless loops), victory, defeat; `audio/sfx/` 35 effects.
+  WAV PCM 16-bit mono 22050 Hz (macroquad `load_sound`). Mood: ambient synth (Jonas's pick; `--mood chiptune` still works).
+  Menu sounds: menu_open/close/select/tab, toggle_on/off, slider_tick, start_game, lobby_join, purchase (+ ui_click/tap/confirm/back/error).
 
 ## Tinting
 Sprites marked `"tint": true` are white with black ink; draw with `DrawTextureParams`/`color` set to the

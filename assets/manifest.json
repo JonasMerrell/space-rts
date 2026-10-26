@@ -1328,37 +1328,37 @@
   "junker": "sprites/emblems/junker.png"
  },
  "audio": {
-  "mood": "chiptune",
+  "mood": "ambient",
   "format": "WAV PCM 16-bit mono 22050 Hz",
   "music": {
    "title": {
     "file": "audio/music/title.wav",
     "loop": true,
-    "seconds": 53.3,
+    "seconds": 96.0,
     "use": "main menu / lobby"
    },
    "orbit": {
     "file": "audio/music/orbit.wav",
     "loop": true,
-    "seconds": 80.0,
+    "seconds": 120.0,
     "use": "in-game map, default bed (keep volume ~0.5)"
    },
    "battle": {
     "file": "audio/music/battle.wav",
     "loop": true,
-    "seconds": 40.0,
+    "seconds": 60.0,
     "use": "crossfade in when combat is happening on screen"
    },
    "victory": {
     "file": "audio/music/victory.wav",
     "loop": false,
-    "seconds": 3.6,
+    "seconds": 10.2,
     "use": "game won"
    },
    "defeat": {
     "file": "audio/music/defeat.wav",
     "loop": false,
-    "seconds": 4.8,
+    "seconds": 10.2,
     "use": "game lost"
    }
   },
@@ -1466,6 +1466,56 @@
     "file": "audio/sfx/capture.wav",
     "loop": false,
     "use": "planet ownership changed to you"
+   },
+   "menu_open": {
+    "file": "audio/sfx/menu_open.wav",
+    "loop": false,
+    "use": "a menu / panel / sheet slides open"
+   },
+   "menu_close": {
+    "file": "audio/sfx/menu_close.wav",
+    "loop": false,
+    "use": "a menu / panel closes"
+   },
+   "menu_select": {
+    "file": "audio/sfx/menu_select.wav",
+    "loop": false,
+    "use": "focus / highlight a list item"
+   },
+   "menu_tab": {
+    "file": "audio/sfx/menu_tab.wav",
+    "loop": false,
+    "use": "switch tab"
+   },
+   "toggle_on": {
+    "file": "audio/sfx/toggle_on.wav",
+    "loop": false,
+    "use": "switch turned on"
+   },
+   "toggle_off": {
+    "file": "audio/sfx/toggle_off.wav",
+    "loop": false,
+    "use": "switch turned off"
+   },
+   "slider_tick": {
+    "file": "audio/sfx/slider_tick.wav",
+    "loop": false,
+    "use": "slider / time-scrubber detent (rate-limit ~20/s)"
+   },
+   "start_game": {
+    "file": "audio/sfx/start_game.wav",
+    "loop": false,
+    "use": "join / start a match"
+   },
+   "lobby_join": {
+    "file": "audio/sfx/lobby_join.wav",
+    "loop": false,
+    "use": "another player joined the lobby"
+   },
+   "purchase": {
+    "file": "audio/sfx/purchase.wav",
+    "loop": false,
+    "use": "spend resources (queue build / upgrade)"
    }
   }
  }

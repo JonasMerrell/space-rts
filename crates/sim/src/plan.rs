@@ -303,6 +303,9 @@ pub fn plan_leg(sys: &System, from: BodyId, to: BodyId, now: f64, depart_t: Opti
         }
         let Some(l) = leg(sys, from, to, rel, td, tof) else { continue };
         for scale in [1.0, 0.25] {
+            if scale < 1.0 && best.as_ref().is_some_and(|b| b.1.converged) {
+                break; // only retry with a finer simplex when the first attempt missed
+            }
             let plan = shoot(sys, from, to, &l, tof, scale);
             // converged plans rank by fuel; otherwise by how close they got
             let score = if plan.converged { plan.total_dv() } else { 1e6 + plan.traj.closest_approach(sys, to).0 };

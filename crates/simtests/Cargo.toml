@@ -7,4 +7,6 @@ description = "Cross-crate integration and property tests (owned by the tests th
 
 [dependencies]
 sim = { path = "../sim" }
+proto = { path = "../proto" }
+server = { path = "../server" }
 serde_json = { workspace = true }

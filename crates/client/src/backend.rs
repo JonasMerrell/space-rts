@@ -1,0 +1,520 @@
+//! `ui::Backend` over the network connection and a local copy of the authoritative `sim::Game`.
+//! Between server snapshots the local copy is advanced with the same deterministic sim, so the
+//! map keeps moving smoothly; every snapshot replaces it.
+use crate::net::{Net, NetEvent};
+use proto::{unix_now, ClientMsg, GameSummary as WireSummary, ServerMsg};
+use sim::game::{self as g, Command, Game, ShipState, Status};
+use sim::system::{BodyKind as SimKind, SystemSize};
+use sim::traj::{Burn, Trajectory as SimTraj};
+use sim::{BodyId as SimBody, V2};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use ui::model::{self as m, BodyId, ShipId};
+use ui::{Backend, BackendEvent, UiAction};
+
+pub struct ClientBackend {
+    server: String,
+    creds: Option<(String, String)>,
+    net: Option<Net>,
+    logged_in: bool,
+    events: Vec<BackendEvent>,
+    games: Vec<WireSummary>,
+    game: Option<Game>,
+    me: g::PlayerId,
+    /// server unix time of the snapshot and the game time then
+    anchor: (f64, f64),
+    view: Option<m::GameView>,
+    /// cached absolute paths of flying ships
+    paths: HashMap<u32, m::Trajectory>,
+    last_event_seq: u64,
+    was_running: bool,
+    plan_cache: RefCell<HashMap<(ShipId, BodyId, i64), Option<m::TransferPlan>>>,
+    reconnect_at: f64,
+}
+
+impl ClientBackend {
+    pub fn new(server: String) -> ClientBackend {
+        ClientBackend {
+            server,
+            creds: None,
+            net: None,
+            logged_in: false,
+            events: vec![],
+            games: vec![],
+            game: None,
+            me: 0,
+            anchor: (0.0, 0.0),
+            view: None,
+            paths: HashMap::new(),
+            last_event_seq: 0,
+            was_running: false,
+            plan_cache: RefCell::new(HashMap::new()),
+            reconnect_at: 0.0,
+        }
+    }
+
+    fn send(&self, msg: ClientMsg) {
+        if let Some(n) = &self.net {
+            n.send(msg);
+        }
+    }
+
+    fn code(&self) -> Option<String> {
+        self.game.as_ref().map(|g| g.code.clone())
+    }
+
+    fn connect(&mut self, register: bool) {
+        if let Some((u, p)) = &self.creds {
+            self.net = Some(Net::connect(self.server.clone(), ClientMsg::Hello { user: u.clone(), pass: p.clone(), register }));
+        }
+    }
+
+    /// Game time "now" according to the server clock.
+    fn now(&self) -> f64 {
+        match &self.game {
+            Some(g) if g.status == Status::Running => {
+                let t = self.anchor.1 + (unix_now() - self.anchor.0) * g.settings.speed;
+                t.min(g.end_t)
+            }
+            Some(g) => g.t,
+            None => 0.0,
+        }
+    }
+
+    fn on_msg(&mut self, msg: ServerMsg) {
+        match msg {
+            ServerMsg::Welcome { user } => {
+                self.logged_in = true;
+                self.events.push(BackendEvent::LoggedIn { user });
+                // re-open the game we were looking at after a reconnect
+                if let Some(code) = self.code() {
+                    self.send(ClientMsg::Open { code });
+                }
+            }
+            ServerMsg::Error { msg } => {
+                if !self.logged_in {
+                    self.events.push(BackendEvent::LoginFailed(msg));
+                    self.net = None;
+                    self.creds = None;
+                } else if self.game.as_ref().is_none_or(|g| g.status == Status::Lobby) {
+                    self.events.push(BackendEvent::LobbyFailed(msg));
+                } else {
+                    self.notice(m::NoticeKind::Bad, "Server", &msg, None);
+                }
+            }
+            ServerMsg::Games(list) => self.games = list,
+            ServerMsg::State { game, me, real_time } => self.on_state(*game, me, real_time),
+            ServerMsg::CmdResult { ok, msg } => {
+                if !ok {
+                    self.notice(m::NoticeKind::Bad, "Can't do that", &msg, None);
+                }
+            }
+            ServerMsg::Events(_) | ServerMsg::Pong => {}
+        }
+    }
+
+    fn notice(&mut self, kind: m::NoticeKind, title: &str, body: &str, focus: Option<m::Focus>) {
+        self.events.push(BackendEvent::Notice(m::Notice { kind, title: title.into(), body: body.into(), focus }));
+    }
+
+    fn on_state(&mut self, game: Game, me: g::PlayerId, real_time: f64) {
+        let new_game = self.game.as_ref().is_none_or(|old| old.code != game.code);
+        if new_game {
+            self.last_event_seq = game.events_for(me).last().map(|e| e.seq).unwrap_or(0);
+            self.was_running = false;
+            self.plan_cache.borrow_mut().clear();
+        }
+        // notices for events we haven't seen
+        let fresh: Vec<g::Event> = game.events_for(me).filter(|e| e.seq > self.last_event_seq).cloned().collect();
+        for e in &fresh {
+            let kind = match e.kind {
+                g::EventKind::Info => m::NoticeKind::Info,
+                g::EventKind::Good => m::NoticeKind::Good,
+                g::EventKind::Bad => m::NoticeKind::Bad,
+                g::EventKind::Battle => m::NoticeKind::Battle,
+            };
+            let focus = e.ship_ref.map(|s| m::Focus::Ship(s.0)).or(e.body_ref.map(|b| m::Focus::Body(b.0)));
+            self.notice(kind, &e.title, &e.body, focus);
+            self.last_event_seq = self.last_event_seq.max(e.seq);
+        }
+        self.me = me;
+        self.anchor = (real_time, game.t);
+        let running = game.status != Status::Lobby;
+        if !running {
+            self.events.push(BackendEvent::Lobby(lobby_info(&game)));
+        } else if !self.was_running {
+            self.events.push(BackendEvent::GameStarted);
+        }
+        self.was_running = running;
+        self.game = Some(game);
+        self.plan_cache.borrow_mut().clear();
+        self.rebuild();
+    }
+
+    /// Rebuild the view-model and cached ship paths from the local game copy.
+    fn rebuild(&mut self) {
+        let Some(game) = &mut self.game else {
+            self.view = None;
+            return;
+        };
+        let sys = game.system.clone();
+        self.paths.clear();
+        for s in game.ships.iter_mut() {
+            if let ShipState::Flying(f) = &mut s.state {
+                let tr = f.trajectory(&sys).clone();
+                self.paths.insert(s.id.0, to_model_traj(&sys, &tr));
+            }
+        }
+        for s in &game.ships {
+            if let ShipState::Parked { departure: Some(d), .. } = &s.state {
+                let tr = sim::traj::predict(&sys, d.state, &[], Some(d.to), d.state.t + g::Flight::HORIZON);
+                self.paths.insert(s.id.0, to_model_traj(&sys, &tr));
+            }
+        }
+        let game = self.game.as_ref().unwrap();
+        self.view = Some(build_view(game, self.me, self.now(), &self.paths));
+    }
+
+    fn ship_ids(&self, id: ShipId) -> Vec<g::ShipId> {
+        vec![g::ShipId(id)]
+    }
+}
+
+fn lobby_info(game: &Game) -> m::LobbyInfo {
+    m::LobbyInfo {
+        code: game.code.clone(),
+        name: game.settings.name.clone(),
+        players: game.players.iter().map(|p| player_model(p)).collect(),
+        max_players: game.settings.max_players,
+        host: game.host,
+        length_days: (game.settings.length / 86_400.0).round() as u32,
+        bots: game.players.iter().filter_map(|p| p.bot.clone()).collect(),
+    }
+}
+
+fn player_model(p: &g::Player) -> m::Player {
+    m::Player { id: p.id, name: p.name.clone(), color: p.color, faction: p.faction.clone(), online: p.bot.is_none() }
+}
+
+fn ship_class(c: g::ShipClass) -> m::ShipClass {
+    match c {
+        g::ShipClass::Interceptor | g::ShipClass::Scout => m::ShipClass::Interceptor,
+        g::ShipClass::Gunship | g::ShipClass::Dreadnought => m::ShipClass::Gunship,
+        g::ShipClass::Bomber => m::ShipClass::Bomber,
+        g::ShipClass::Tanker => m::ShipClass::Tanker,
+    }
+}
+
+fn arr(v: V2) -> [f64; 2] {
+    [v.x, v.y]
+}
+
+/// Timed absolute polyline of a sim trajectory (dense near bodies, where paths curve hardest).
+fn to_model_traj(sys: &sim::System, tr: &SimTraj) -> m::Trajectory {
+    let mut points = vec![];
+    for s in &tr.segs {
+        let span = s.t1 - s.t0;
+        if span <= 0.0 {
+            continue;
+        }
+        let n = if sys.body(s.parent).is_star() { 160 } else { 80 };
+        let mu = sys.body(s.parent).mu;
+        for i in 0..=n {
+            let t = s.t0 + span * i as f64 / n as f64;
+            let p = sys.pos(s.parent, t) + sim::kepler::propagate(mu, s.r0, s.v0, t - s.t0).0;
+            points.push((t, arr(p)));
+        }
+    }
+    m::Trajectory { points }
+}
+
+fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Trajectory>) -> m::GameView {
+    let sys = &game.system;
+    let bodies = sys
+        .bodies
+        .iter()
+        .map(|b| {
+            let st = &game.bodies[b.id.0 as usize];
+            let orbit_path = match b.orbit {
+                Some(o) => (0..=96).map(|i| arr(o.state(o.period() * i as f64 / 96.0 - o.m0 / o.n).0)).collect(),
+                None => vec![],
+            };
+            let upgrades = g::Upgrade::ALL.iter().filter(|u| st.level(**u) > 0).map(|u| format!("{} {}", u.label(), st.level(*u))).collect();
+            m::Body {
+                id: b.id.0,
+                name: b.name.clone(),
+                kind: match b.kind {
+                    SimKind::Star => m::BodyKind::Star,
+                    SimKind::Planet | SimKind::GasGiant => m::BodyKind::Planet,
+                    SimKind::Moon => m::BodyKind::Moon,
+                    SimKind::Asteroid => m::BodyKind::Asteroid,
+                },
+                parent: b.parent.map(|p| p.0),
+                radius: b.radius,
+                soi: if b.is_star() { 0.0 } else { b.soi },
+                owner: st.owner,
+                intel: Some(m::Intel {
+                    seen_at: now,
+                    power: game.power_at(b.id).iter().map(|p| p.1).sum::<f64>() as f32,
+                    upgrades,
+                    stations: vec![],
+                }),
+                art: if b.kind == SimKind::GasGiant { Some("planet_gas".into()) } else { None },
+                orbit_path,
+            }
+        })
+        .collect();
+    let ships = game
+        .ships
+        .iter()
+        .map(|s| {
+            let st = s.class.stats();
+            let (parked_at, nodes, destination) = match &s.state {
+                ShipState::Parked { body, departure } => (Some(body.0), vec![], departure.as_ref().map(|d| d.to.0)),
+                ShipState::Flying(f) => (
+                    None,
+                    f.burns.iter().map(|b| m::ManeuverNode { t: b.t, prograde: b.prograde, radial: b.radial }).collect(),
+                    f.dest.map(|d| d.0),
+                ),
+            };
+            m::Ship {
+                id: s.id.0,
+                name: s.name.clone(),
+                class: ship_class(s.class),
+                owner: s.owner,
+                count: 1,
+                fuel: s.fuel as f32,
+                fuel_max: st.fuel_cap as f32,
+                parked_at,
+                trajectory: paths.get(&s.id.0).cloned(),
+                nodes,
+                destination,
+            }
+        })
+        .collect();
+    let mut res = m::Resources::default();
+    if let Some(p) = game.players.get(me as usize) {
+        res.matter = p.matter;
+        res.energy = p.energy;
+    }
+    for (i, b) in game.bodies.iter().enumerate() {
+        if b.owner == Some(me) {
+            let (pm, pe, pf) = game.production(SimBody(i as u32));
+            res.matter_rate += pm;
+            res.energy_rate += pe;
+            res.fuel_rate += pf;
+            res.fuel += b.fuel;
+        }
+    }
+    m::GameView {
+        me,
+        now,
+        ends_at: game.end_t,
+        bodies,
+        ships,
+        players: game.players.iter().map(player_model).collect(),
+        resources: res,
+        chat: game.chat.iter().map(|c| m::ChatMsg { from: c.from, t: c.t, text: c.text.clone() }).collect(),
+    }
+}
+
+impl Backend for ClientBackend {
+    fn poll(&mut self) -> Vec<BackendEvent> {
+        let incoming = self.net.as_ref().map(|n| n.poll()).unwrap_or_default();
+        for e in incoming {
+            match e {
+                NetEvent::Connected => {}
+                NetEvent::Msg(m) => self.on_msg(m),
+                NetEvent::Failed(err) => {
+                    self.net = None;
+                    if self.logged_in {
+                        self.reconnect_at = unix_now() + 5.0;
+                    } else {
+                        self.events.push(BackendEvent::LoginFailed(err));
+                        self.creds = None;
+                    }
+                }
+                NetEvent::Closed => {
+                    self.net = None;
+                    if self.logged_in {
+                        self.notice(m::NoticeKind::Bad, "Disconnected", "Reconnecting to the server...", None);
+                        self.reconnect_at = unix_now() + 3.0;
+                    }
+                }
+            }
+        }
+        if self.net.is_none() && self.logged_in && self.creds.is_some() && unix_now() > self.reconnect_at {
+            self.connect(false);
+        }
+        // keep the local copy ticking between snapshots
+        let now = self.now();
+        if let Some(game) = &mut self.game {
+            if game.status == Status::Running && now > game.t + 30.0 {
+                game.advance_to(now);
+                self.rebuild();
+            }
+        }
+        if let Some(v) = &mut self.view {
+            v.now = now;
+        }
+        std::mem::take(&mut self.events)
+    }
+
+    fn act(&mut self, action: UiAction) {
+        let code = self.code();
+        match action {
+            UiAction::Login { user, pass, register } => {
+                self.creds = Some((user, pass));
+                self.logged_in = false;
+                self.connect(register);
+            }
+            UiAction::Logout => {
+                self.net = None;
+                self.creds = None;
+                self.logged_in = false;
+                self.game = None;
+                self.view = None;
+                self.events.push(BackendEvent::LoggedOut);
+            }
+            UiAction::CreateGame { name, length_days, bots } => self.send(ClientMsg::CreateGame {
+                name,
+                size: SystemSize::Medium,
+                length_days: length_days as f64,
+                speed: 1.0,
+                max_players: 4,
+                bots,
+            }),
+            UiAction::JoinGame { code } => self.send(ClientMsg::JoinGame { code }),
+            UiAction::OpenGame { code } => self.send(ClientMsg::Open { code }),
+            UiAction::AddBot { difficulty } => {
+                if let Some(code) = code {
+                    self.send(ClientMsg::AddBot { code, difficulty });
+                }
+            }
+            UiAction::SetFaction(faction) => {
+                if let Some(code) = code {
+                    self.send(ClientMsg::SetFaction { code, faction });
+                }
+            }
+            UiAction::StartGame => {
+                if let Some(code) = code {
+                    self.send(ClientMsg::StartGame { code });
+                }
+            }
+            UiAction::LeaveLobby | UiAction::BackToMenu => {
+                self.game = None;
+                self.view = None;
+                self.send(ClientMsg::ListGames);
+            }
+            UiAction::ScheduleTransfer(p) => {
+                if let Some(code) = code {
+                    let ships = self.ship_ids(p.ship);
+                    self.send(ClientMsg::Cmd { code, cmd: Command::Transfer { ships, to: SimBody(p.target), depart_t: Some(p.depart_t) } });
+                }
+            }
+            UiAction::SetNodes { ship, nodes } => {
+                if let Some(code) = code {
+                    let burns = nodes.iter().map(|n| Burn { t: n.t, prograde: n.prograde, radial: n.radial }).collect();
+                    self.send(ClientMsg::Cmd { code, cmd: Command::SetBurns { ship: g::ShipId(ship), burns } });
+                }
+            }
+            UiAction::CancelFlight { ship } => {
+                if let Some(code) = code {
+                    self.send(ClientMsg::Cmd { code, cmd: Command::CancelDeparture { ship: g::ShipId(ship) } });
+                }
+            }
+            UiAction::Chat(text) => {
+                if let Some(code) = code {
+                    self.send(ClientMsg::Cmd { code, cmd: Command::Chat { text } });
+                }
+            }
+        }
+    }
+
+    fn my_games(&self) -> Vec<m::GameSummary> {
+        self.games
+            .iter()
+            .map(|s| m::GameSummary {
+                code: s.code.clone(),
+                name: s.name.clone(),
+                day: (s.t / 86_400.0) as u32 + 1,
+                length_days: (s.length / 86_400.0).round() as u32,
+                players: s.players.len(),
+                unread: 0,
+            })
+            .collect()
+    }
+
+    fn view(&self) -> Option<&m::GameView> {
+        self.view.as_ref().filter(|_| self.game.as_ref().is_some_and(|g| g.status != Status::Lobby))
+    }
+
+    fn body_pos(&self, id: BodyId, t: f64) -> [f64; 2] {
+        match &self.game {
+            Some(g) if (id as usize) < g.system.bodies.len() => arr(g.system.pos(SimBody(id), t)),
+            _ => [0.0, 0.0],
+        }
+    }
+
+    fn ship_pos(&self, id: ShipId, t: f64) -> Option<[f64; 2]> {
+        let g = self.game.as_ref()?;
+        let s = g.ship(g::ShipId(id))?;
+        match &s.state {
+            ShipState::Parked { body, departure } => {
+                if let (Some(d), Some(p)) = (departure, self.paths.get(&id)) {
+                    if t >= d.state.t {
+                        return p.sample(t).or_else(|| p.points.last().map(|q| q.1));
+                    }
+                }
+                Some(arr(g.system.pos(*body, t)))
+            }
+            ShipState::Flying(_) => {
+                let p = self.paths.get(&id)?;
+                p.sample(t).or_else(|| if t < p.start()? { p.points.first().map(|q| q.1) } else { p.points.last().map(|q| q.1) })
+            }
+        }
+    }
+
+    fn plan_transfer(&self, ship: ShipId, target: BodyId, after: f64) -> Option<m::TransferPlan> {
+        let key = (ship, target, (after / 60.0) as i64);
+        if let Some(p) = self.plan_cache.borrow().get(&key) {
+            return p.clone();
+        }
+        let res = (|| {
+            let g = self.game.as_ref()?;
+            let s = g.ship(g::ShipId(ship))?;
+            let now = self.now();
+            let depart = if after > now + 120.0 { Some(after) } else { None };
+            let mut game = g.clone();
+            game.t = now;
+            let (p, _) = game.plan_for(s, SimBody(target), depart).ok()?;
+            let from = s.parked_at()?;
+            let first = p.to;
+            let span = sim::plan::search_span(&g.system, from, first);
+            let windows = sim::plan::windows(&g.system, from, first, now, span).into_iter().map(|w| w.depart_t).collect();
+            Some(m::TransferPlan {
+                ship,
+                target,
+                depart_t: p.depart_t(),
+                arrive_t: p.arrive_t,
+                dv_depart: p.depart_dv,
+                dv_capture: p.capture_dv,
+                fuel_needed: (s.fuel_for(p.depart_dv) + g::fuel_needed(s.class, (s.fuel - s.fuel_for(p.depart_dv)).max(0.0), p.capture_dv)) as f32,
+                path: to_model_traj(&g.system, &p.traj),
+                windows,
+            })
+        })();
+        self.plan_cache.borrow_mut().insert(key, res.clone());
+        res
+    }
+
+    fn preview_nodes(&self, ship: ShipId, nodes: &[m::ManeuverNode]) -> Option<m::Trajectory> {
+        let g = self.game.as_ref()?;
+        let s = g.ship(g::ShipId(ship))?;
+        let ShipState::Flying(f) = &s.state else { return None };
+        let mut burns: Vec<Burn> = nodes.iter().map(|n| Burn { t: n.t, prograde: n.prograde, radial: n.radial }).collect();
+        burns.sort_by(|a, b| a.t.total_cmp(&b.t));
+        let tr = sim::traj::predict(&g.system, f.start, &burns, f.dest, f.start.t + g::Flight::HORIZON);
+        Some(to_model_traj(&g.system, &tr))
+    }
+}
