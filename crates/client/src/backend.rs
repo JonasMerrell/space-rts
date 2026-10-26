@@ -934,6 +934,11 @@ impl Backend for ClientBackend {
                 }
             }
             UiAction::DismissReport => self.report = None,
+            UiAction::MoveJob { body, from, to } => {
+                if let Some(code) = code.clone() {
+                    self.send(ClientMsg::Cmd { code, cmd: Command::MoveJob { body: SimBody(body), from, to } });
+                }
+            }
             UiAction::CancelJob { body, index } => {
                 if let Some(code) = code {
                     self.send(ClientMsg::Cmd { code, cmd: Command::CancelJob { body: SimBody(body), index } });

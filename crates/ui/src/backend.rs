@@ -49,6 +49,8 @@ pub enum UiAction {
     Reconnect,
     /// Remove item `index` (0 = building now) from a body's build queue, refunding its cost.
     CancelJob { body: BodyId, index: usize },
+    /// Move queue item `from` to position `to` (indices into `BodyInfo.queue`).
+    MoveJob { body: BodyId, from: usize, to: usize },
     /// Start `tech` (a `TechInfo::id`) at a lab body.
     Research { body: BodyId, tech: String },
     /// `kind` is one of `model::STATION_KINDS`.

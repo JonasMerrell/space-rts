@@ -134,8 +134,23 @@ pub fn draw(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameVi
                 }
                 text(&format!("{}. {}", i + 1, label.to_uppercase()), rr.x + 40.0 * s(), rr.y + 13.0 * s(), 13.0, PAPER, FontKind::Title, Align::Left);
                 let eta = if i == 0 { format!("{} left", fmt_dur(done - view.now)) } else { format!("ready in {}", fmt_dur(done - view.now)) };
-                text(&eta, rr.x + rr.w - 46.0 * s(), rr.y + 13.0 * s(), 12.0, MUTED, FontKind::Body, Align::Right);
-                widgets::bar(Rect::new(rr.x + 40.0 * s(), rr.y + 26.0 * s(), rr.w - 90.0 * s(), 6.0 * s()), frac, if i == 0 { ACCENT } else { Color::new(1.0, 1.0, 1.0, 0.25) });
+                text(&eta, rr.x + rr.w - 112.0 * s(), rr.y + 13.0 * s(), 12.0, MUTED, FontKind::Body, Align::Right);
+                widgets::bar(Rect::new(rr.x + 40.0 * s(), rr.y + 26.0 * s(), rr.w - 156.0 * s(), 6.0 * s()), frac, if i == 0 { ACCENT } else { Color::new(1.0, 1.0, 1.0, 0.25) });
+                // reorder: up / down
+                let n = info.queue.len();
+                for (k, (dir, to)) in [(-1.0f32, i.checked_sub(1)), (1.0, (i + 1 < n).then_some(i + 1))].into_iter().enumerate() {
+                    let br = Rect::new(rr.x + rr.w - 100.0 * s() + k as f32 * 34.0 * s(), rr.y + 5.0 * s(), 30.0 * s(), rr.h - 10.0 * s());
+                    let Some(to) = to else { continue };
+                    if widgets::button(inp, br, "", Style::Secondary) {
+                        art::sfx("menu_select");
+                        g.emit(UiAction::MoveJob { body: *body, from: i, to });
+                    }
+                    let c = br.center();
+                    // chevron: apex up for "earlier", down for "later"
+                    let a = 3.5 * s() * dir;
+                    draw_line(c.x - 6.0 * s(), c.y - a, c.x, c.y + a, 2.0 * s(), PAPER);
+                    draw_line(c.x, c.y + a, c.x + 6.0 * s(), c.y - a, 2.0 * s(), PAPER);
+                }
                 let xr = vec2(rr.x + rr.w - 20.0 * s(), rr.center().y);
                 if widgets::round_button(inp, xr, 11.0 * s(), "X", PAPER, 0) {
                     art::sfx("menu_close");

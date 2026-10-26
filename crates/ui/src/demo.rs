@@ -578,6 +578,19 @@ impl Backend for DemoBackend {
             }
             UiAction::BackToMenu => self.view = None,
             UiAction::Reconnect => {}
+            UiAction::MoveJob { body, from, to } => {
+                let ids: Vec<usize> = (0..self.queue.len()).filter(|&i| self.queue[i].0 == body).collect();
+                if let (Some(&a), Some(&b)) = (ids.get(from), ids.get(to)) {
+                    let start = ids.first().map(|&i| self.queue[i].2 - ship_cost(self.queue[i].3).seconds).unwrap_or(self.now());
+                    self.queue.swap(a, b);
+                    // recompute finish times in the new order
+                    let mut t = start;
+                    for &i in &ids {
+                        t += ship_cost(self.queue[i].3).seconds;
+                        self.queue[i].2 = t;
+                    }
+                }
+            }
             UiAction::CancelJob { body, index } => {
                 let ids: Vec<usize> = (0..self.queue.len()).filter(|&i| self.queue[i].0 == body).collect();
                 if let Some(&qi) = ids.get(index) {
