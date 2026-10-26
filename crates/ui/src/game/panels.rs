@@ -234,6 +234,15 @@ pub fn sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameV
                 ship_sheet(g, inp, view, sh, true);
             }
         }
+        Mode::Planning { target, .. } => {
+            let name = view.body(target).map(|b| b.name.to_uppercase()).unwrap_or_default();
+            let label = format!("PLOTTING COURSE TO {name}...");
+            let w = measure(&label, FontKind::Title, 16.0).x + 32.0 * s();
+            let r = Rect::new((screen_width() - w) / 2.0, scrub_top() - 70.0 * s(), w, 40.0 * s());
+            cel::round_rect(r, r.h / 2.0, PANEL);
+            cel::round_rect_lines(r, r.h / 2.0, 1.5 * s(), ACCENT);
+            text(&label, r.center().x, r.center().y + s(), 16.0, ACCENT, FontKind::Title, Align::Center);
+        }
         Mode::Idle => match g.selected {
             Some(Focus::Ship(id)) => {
                 if let Some(sh) = view.ship(id) {
@@ -315,7 +324,9 @@ fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Bo
                 let ok = affordable(view, cost);
                 let br = Rect::new(cr.x + cr.w - 44.0 * s(), cr.y + (cr.h - 32.0 * s()) / 2.0, 36.0 * s(), 32.0 * s());
                 let cx = cr.x + 14.0 * s() + u.max as f32 * 12.0 * s();
-                text(&cost_line(cost), cx, cr.y + cr.h * 0.7, 11.0, if ok { MUTED } else { DANGER }, FontKind::Body, Align::Left);
+                // Narrow cell: matter + energy only (the queue shows build time).
+                let short = format!("{}M {}E", fmt_amount(cost.matter), fmt_amount(cost.energy));
+                text(&short, cx, cr.y + cr.h * 0.7, 11.0, if ok { MUTED } else { DANGER }, FontKind::Body, Align::Left);
                 if widgets::button(inp, br, "+", if ok { Style::Primary } else { Style::Ghost }) {
                     if ok {
                         art::sfx("purchase");
@@ -410,13 +421,55 @@ fn body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Body) {
     }
 }
 
+fn ship_icon(view: &GameView, sh: &Ship, c: Vec2, px: f32) {
+    let player = view.player(sh.owner);
+    let skin = player.map(|p| art::skin_of(&p.faction)).unwrap_or("vanguard");
+    match art::ship_tex(sh.class, skin, player.map(|p| p.color)) {
+        Some(t) => art::draw_centered(&t, c, vec2(px, px), -0.5, WHITE),
+        None => cel::ship(c, vec2(1.0, -0.5), px * 0.4, team(player.map(|p| p.color)).0),
+    }
+}
+
+/// Compact bar while picking a target, so the map above stays tappable.
+fn target_bar(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship) {
+    let r = sheet_rect(112.0);
+    inp.block(r);
+    cel::panel(r, PANEL);
+    ship_icon(view, sh, vec2(r.x + 28.0 * s(), r.y + 28.0 * s()), 34.0 * s());
+    let title = if sh.count > 1 { format!("{} ×{}", sh.name.to_uppercase(), sh.count) } else { sh.name.to_uppercase() };
+    inked(&title, r.x + 54.0 * s(), r.y + 20.0 * s(), 18.0, PAPER, Align::Left);
+    text("Tap a planet or moon to plot a course", r.x + 54.0 * s(), r.y + 40.0 * s(), 13.0, ACCENT, FontKind::Body, Align::Left);
+    let by = r.y + r.h - 52.0 * s();
+    let bw = (r.w - 4.0 * 10.0 * s()) / 3.0;
+    let b = |i: usize| Rect::new(r.x + 10.0 * s() + i as f32 * (bw + 10.0 * s()), by, bw, 42.0 * s());
+    if widgets::button(inp, b(0), "MANEUVER", Style::Secondary) {
+        g.mode = Mode::Nodes(NodeEdit {
+            ship: sh.id,
+            nodes: if sh.nodes.is_empty() { vec![ManeuverNode { t: view.now + 1800.0, prograde: 0.0, radial: 0.0 }] } else { sh.nodes.clone() },
+            sel: 0,
+            preview: None,
+            dirty: true,
+            drag: None,
+        });
+    }
+    if widgets::button(inp, b(1), "DETAILS", Style::Secondary) {
+        g.mode = Mode::Idle;
+    }
+    if widgets::button(inp, b(2), "CANCEL", Style::Ghost) {
+        g.mode = Mode::Idle;
+        g.selected = None;
+    }
+}
+
 fn ship_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship, targeting: bool) {
     let mine = sh.owner == view.me;
+    if targeting {
+        return target_bar(g, inp, view, sh);
+    }
     let r = sheet_rect(if mine { 200.0 } else { 110.0 });
     inp.block(r);
     cel::panel(r, PANEL);
-    let (l, _) = team(view.color_of(Some(sh.owner)));
-    cel::ship(vec2(r.x + 34.0 * s(), r.y + 34.0 * s()), vec2(1.0, -0.4), 16.0 * s(), if mine { PAPER } else { l });
+    ship_icon(view, sh, vec2(r.x + 34.0 * s(), r.y + 34.0 * s()), 40.0 * s());
     let title = if sh.count > 1 { format!("{} ×{}", sh.name.to_uppercase(), sh.count) } else { sh.name.to_uppercase() };
     inked(&title, r.x + 64.0 * s(), r.y + 24.0 * s(), 22.0, PAPER, Align::Left);
     let status = if map::is_flying(sh, view.now) {
@@ -451,10 +504,6 @@ fn ship_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship, t
         let by = r.y + r.h - 58.0 * s();
         let bw = (r.w - 4.0 * 12.0 * s()) / 3.0;
         let b = |i: usize| Rect::new(r.x + 12.0 * s() + i as f32 * (bw + 12.0 * s()), by, bw, 46.0 * s());
-        if targeting {
-            cel::bubble(Rect::new(r.x + r.w - 150.0 * s(), r.y - 30.0 * s(), 140.0 * s(), 36.0 * s()), Some(vec2(r.x + r.w - 40.0 * s(), r.y - 60.0 * s())), PAPER);
-            text("TAP A TARGET", r.x + r.w - 80.0 * s(), r.y - 12.0 * s(), 16.0, INK, FontKind::Title, Align::Center);
-        }
         if widgets::button(inp, b(0), "MANEUVER", Style::Secondary) {
             g.mode = Mode::Nodes(NodeEdit {
                 ship: sh.id,
@@ -516,9 +565,6 @@ fn plan_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
         let after = p.windows.iter().copied().find(|&w| w > p.depart_t + 60.0).unwrap_or(p.depart_t + 3600.0);
         let (ship, tgt) = (p.ship, p.target);
         g.plan(be, view, ship, tgt, after);
-        if let Mode::Plan(np) = &g.mode {
-            g.scrub = (np.depart_t - view.now).clamp(0.0, SCRUB_SPAN);
-        }
     }
     if widgets::button(inp, b(2), "CANCEL", Style::Ghost) {
         g.mode = Mode::Idle;

@@ -39,6 +39,8 @@ pub enum Mode {
     /// A ship is picked; next tap on a body plans a transfer.
     Target(ShipId),
     Plan(TransferPlan),
+    /// Planner call pending: drawn for one frame ("plotting...") before the blocking call.
+    Planning { ship: ShipId, target: BodyId, after: f64, shown: bool },
     Nodes(NodeEdit),
 }
 
@@ -128,6 +130,7 @@ impl GameScreen {
             }
             let t = view.now + self.scrub;
             self.sound_cues(view);
+            self.run_pending_plan(be_ref, view.now);
 
             // Overlays are drawn after the map but must win the input, so they register their
             // rects (Input::block) and the map only handles gestures that started elsewhere.
@@ -162,6 +165,7 @@ impl GameScreen {
     fn selected_ship(&self) -> Option<ShipId> {
         match (&self.mode, self.selected) {
             (Mode::Plan(p), _) => Some(p.ship),
+            (Mode::Planning { ship, .. }, _) => Some(*ship),
             (Mode::Nodes(n), _) => Some(n.ship),
             (Mode::Target(s), _) => Some(*s),
             (_, Some(Focus::Ship(s))) => Some(s),
@@ -224,7 +228,7 @@ impl GameScreen {
                     self.mode = Mode::Idle;
                 }
             }
-            (Mode::Nodes(_), _) => {}
+            (Mode::Nodes(_), _) | (Mode::Planning { .. }, _) => {}
             (Mode::Idle, Some(Focus::Ship(s))) => self.pick_ship(view, s),
             (Mode::Idle, h) => self.selected = h,
         }
@@ -241,18 +245,34 @@ impl GameScreen {
         }
     }
 
-    pub fn plan(&mut self, be: &dyn Backend, view: &GameView, ship: ShipId, target: BodyId, after: f64) {
+    pub fn plan(&mut self, _be: &dyn Backend, view: &GameView, ship: ShipId, target: BodyId, after: f64) {
         if view.ship(ship).is_some_and(|s| s.parked_at == Some(target) && !map::is_flying(s, view.now)) {
             self.say("Already there");
+            return;
+        }
+        self.selected = Some(Focus::Ship(ship));
+        self.mode = Mode::Planning { ship, target, after, shown: false };
+    }
+
+    /// Runs a pending plan once its "plotting" frame has been shown.
+    fn run_pending_plan(&mut self, be: &dyn Backend, now: f64) {
+        let Mode::Planning { ship, target, after, shown } = self.mode else { return };
+        if !shown {
+            self.mode = Mode::Planning { ship, target, after, shown: true };
             return;
         }
         match be.plan_transfer(ship, target, after) {
             Some(plan) => {
                 self.selected = Some(Focus::Ship(ship));
+                // "Next window" asks for a later departure: scrub ahead to show it.
+                if after > now + 60.0 {
+                    self.scrub = (plan.depart_t - now).clamp(0.0, SCRUB_SPAN);
+                }
                 self.mode = Mode::Plan(plan);
             }
             None => {
                 crate::art::sfx("ui_error");
+                self.mode = Mode::Target(ship);
                 self.say("No route (check fuel)")
             }
         }
