@@ -43,6 +43,11 @@ pub enum Mode {
     /// Waiting on `Backend::plan_transfer_async` ("plotting course...").
     Planning { ship: ShipId, target: BodyId, after: f64 },
     Nodes(NodeEdit),
+    /// Our asteroid is picked; next tap on a planet/moon previews an impact.
+    Aim(BodyId),
+    /// Waiting on `Backend::plan_impact_async`.
+    Impacting { asteroid: BodyId, target: BodyId },
+    Impact(ImpactPreview),
 }
 
 pub struct Toast {
@@ -142,6 +147,7 @@ impl GameScreen {
             let t = view.now + self.scrub;
             self.sound_cues(view);
             self.run_pending_plan(be_ref, view.now);
+            self.run_pending_impact(be_ref);
 
             // Overlays are drawn after the map but must win the input, so they register their
             // rects (Input::block) and the map only handles gestures that started elsewhere.
@@ -242,7 +248,16 @@ impl GameScreen {
                     self.mode = Mode::Idle;
                 }
             }
-            (Mode::Nodes(_), _) | (Mode::Planning { .. }, _) => {}
+            (Mode::Aim(a), Some(Focus::Body(b))) | (Mode::Impact(ImpactPreview { asteroid: a, .. }), Some(Focus::Body(b)))
+                if *a != b && view.body(b).is_some_and(|x| matches!(x.kind, BodyKind::Planet | BodyKind::Moon)) =>
+            {
+                let asteroid = *a;
+                self.selected = Some(Focus::Body(asteroid));
+                self.mode = Mode::Impacting { asteroid, target: b };
+            }
+            (Mode::Aim(_), Some(_)) => self.say("Pick a planet or moon"),
+            (Mode::Aim(_), None) | (Mode::Impact(_), _) => self.mode = Mode::Idle,
+            (Mode::Nodes(_), _) | (Mode::Planning { .. }, _) | (Mode::Impacting { .. }, _) => {}
             (Mode::Idle, Some(Focus::Ship(s))) => self.pick_ship(view, s),
             (Mode::Idle, h) => self.selected = h,
         }
@@ -266,6 +281,19 @@ impl GameScreen {
         }
         self.selected = Some(Focus::Ship(ship));
         self.mode = Mode::Planning { ship, target, after };
+    }
+
+    fn run_pending_impact(&mut self, be: &dyn Backend) {
+        let Mode::Impacting { asteroid, target } = self.mode else { return };
+        match be.plan_impact_async(asteroid, target) {
+            crate::ImpactPoll::Pending => {}
+            crate::ImpactPoll::Done(Some(p)) => self.mode = Mode::Impact(p),
+            crate::ImpactPoll::Done(None) => {
+                crate::art::sfx("ui_error");
+                self.mode = Mode::Aim(asteroid);
+                self.say("Can't reach that target");
+            }
+        }
     }
 
     /// Picks up the pending plan once the backend has it.
@@ -334,6 +362,7 @@ impl GameScreen {
         match &self.mode {
             Mode::Plan(plan) => panels::plan_world(plan, be, view, cam, t),
             Mode::Nodes(ne) => panels::nodes_world(ne, be, view, cam, t),
+            Mode::Impact(ip) => panels::impact_world(ip, be, view, cam, t),
             _ => {}
         }
     }

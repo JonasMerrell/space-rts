@@ -44,6 +44,8 @@ pub enum UiAction {
     Research { body: BodyId, tech: String },
     /// `kind` is one of `model::STATION_KINDS`.
     BuildStation { body: BodyId, kind: String },
+    /// Fit a drive (if needed) to our asteroid and push it onto a collision course with `target`.
+    AimAsteroid { body: BodyId, target: BodyId },
 }
 
 /// Result of polling `Backend::plan_transfer_async`.
@@ -51,6 +53,12 @@ pub enum UiAction {
 pub enum PlanPoll {
     Pending,
     Done(Option<TransferPlan>),
+}
+
+/// Result of polling `Backend::plan_impact_async`.
+pub enum ImpactPoll {
+    Pending,
+    Done(Option<ImpactPreview>),
 }
 
 pub trait Backend {
@@ -74,6 +82,11 @@ pub trait Backend {
     /// `Pending`. The default just runs `plan_transfer` synchronously.
     fn plan_transfer_async(&self, ship: ShipId, target: BodyId, after: f64) -> PlanPoll {
         PlanPoll::Done(self.plan_transfer(ship, target, after))
+    }
+    /// Asteroid impact planner, polled every frame like `plan_transfer_async`. None = can't aim it
+    /// (not ours, no tech, no route). Default: unsupported.
+    fn plan_impact_async(&self, _asteroid: BodyId, _target: BodyId) -> ImpactPoll {
+        ImpactPoll::Done(None)
     }
     /// Trajectory the ship would fly with these manual nodes (for the node editor preview).
     fn preview_nodes(&self, ship: ShipId, nodes: &[ManeuverNode]) -> Option<Trajectory>;

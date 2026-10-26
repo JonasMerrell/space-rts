@@ -28,6 +28,7 @@ pub struct Body {
     /// What our telescopes know about the contents (None = never scanned).
     pub intel: Option<Intel>,
     /// Art key from assets/manifest.json `bodies` (e.g. "planet_ocean"); None = pick by id.
+    /// "rubble" = shattered by an asteroid impact (drawn as debris). Destroyed bodies aren't sent.
     pub art: Option<String>,
     /// Points of the orbit around the parent, relative to the parent (closed loop), for drawing.
     pub orbit_path: Vec<[f64; 2]>,
@@ -215,6 +216,31 @@ pub struct Notice {
 pub enum Focus {
     Body(BodyId),
     Ship(ShipId),
+}
+
+/// Preview of pushing an owned asteroid into a planet (`Backend::plan_impact_async`).
+#[derive(Clone, Debug)]
+pub struct ImpactPreview {
+    pub asteroid: BodyId,
+    pub target: BodyId,
+    /// Drive burn: start time and length (s).
+    pub burn_t: f64,
+    pub burn_s: f64,
+    pub dv: f64,
+    /// Fuel the burn needs at the asteroid, and what's available there.
+    pub fuel: f64,
+    pub fuel_available: f64,
+    /// One-off cost of installing a drive (0 if one is already fitted).
+    pub drive_cost: Cost,
+    /// None = the push misses (no impact within the prediction horizon).
+    pub impact_t: Option<f64>,
+    /// km/s at impact.
+    pub impact_speed: f64,
+    /// Joules.
+    pub impact_energy: f64,
+    /// <1 damages (≈ fraction of upgrades lost), ≥1 wipes upgrades + everything in orbit, ≥4 shatters.
+    pub severity: f64,
+    pub path: Trajectory,
 }
 
 /// Result of the auto-planner for "ship → target".

@@ -1,6 +1,6 @@
 //! Offline UI demo on the fake backend.
 //!   cargo run -p ui --example demo
-//! Screenshot mode: UI_SCENE=<login|menu|create|lobby|map|body|owned|yard|ship|gmenu|target|plan|nodes|scrub|chat|toast> UI_SHOT=out.png
+//! Screenshot mode: UI_SCENE=<login|menu|create|lobby|map|body|owned|yard|ship|gmenu|rock|impact|target|plan|nodes|scrub|chat|toast> UI_SHOT=out.png
 //! sets the scene up, renders a few frames, saves the PNG and exits.
 
 use macroquad::prelude::*;
@@ -81,6 +81,13 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                         sh.parked_at = Some(3);
                     }
                     g.selected = Some(Focus::Body(3));
+                }
+                "rock" => g.selected = Some(Focus::Body(9)),
+                "impact" => {
+                    if let ui::ImpactPoll::Done(Some(ip)) = be.plan_impact_async(9, 4) {
+                        g.selected = Some(Focus::Body(9));
+                        g.mode = Mode::Impact(ip);
+                    }
                 }
                 "ship" => g.selected = Some(Focus::Ship(1)),
                 "target" => {

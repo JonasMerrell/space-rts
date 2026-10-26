@@ -287,6 +287,17 @@ pub fn nearest_on(points: &[(f64, [f64; 2])], cam: &Camera, p: Vec2, max_px: f32
 /// One body: sprite with the star-facing shadow overlay (vector fallback), plus an inked team
 /// ring when someone owns it.
 pub fn draw_body(b: &Body, c: Vec2, r: f32, star: Vec2, owner_color: Option<usize>, time: f32) {
+    if b.art.as_deref() == Some("rubble") {
+        // Shattered by an impact: a slowly tumbling debris cloud.
+        for i in 0..9u32 {
+            let a = i as f32 * 2.399 + time * 0.05;
+            let d = r * (0.25 + 0.12 * (i % 4) as f32) * 2.2;
+            let rr = r * (0.18 + 0.06 * (i % 3) as f32);
+            let rock = Body { id: b.id.wrapping_mul(31).wrapping_add(i), kind: BodyKind::Asteroid, art: None, ..b.clone() };
+            draw_body(&rock, c + Vec2::from_angle(a) * d, rr, star, None, time);
+        }
+        return;
+    }
     let (key, ratio) = art::body_art(b);
     match art::tex(&key) {
         Some(t) => {

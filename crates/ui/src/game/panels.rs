@@ -238,9 +238,15 @@ pub fn sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameV
                 ship_sheet(g, inp, view, sh, true);
             }
         }
-        Mode::Planning { target, .. } => {
+        Mode::Aim(ast) => aim_bar(g, inp, view, ast),
+        Mode::Impact(ip) => impact_sheet(g, inp, view, &ip),
+        Mode::Planning { target, .. } | Mode::Impacting { target, .. } => {
             let name = view.body(target).map(|b| b.name.to_uppercase()).unwrap_or_default();
-            let label = format!("PLOTTING COURSE TO {name}...");
+            let label = if matches!(g.mode, Mode::Impacting { .. }) {
+                format!("COMPUTING IMPACT ON {name}...")
+            } else {
+                format!("PLOTTING COURSE TO {name}...")
+            };
             let w = measure(&label, FontKind::Title, 16.0).x + 32.0 * s();
             let r = Rect::new((screen_width() - w) / 2.0, scrub_top() - 70.0 * s(), w, 40.0 * s());
             cel::round_rect(r, r.h / 2.0, PANEL);
@@ -281,6 +287,117 @@ pub fn sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameV
     }
 }
 
+/// "Aim at a planet" entry on our own asteroid's panel. Returns the button's bottom edge.
+fn aim_button(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Body, r: Rect) {
+    if b.kind != BodyKind::Asteroid || b.owner != Some(view.me) {
+        return;
+    }
+    let label = if r.w < 200.0 * s() { "AIM ROCK" } else { "AIM AT A PLANET" };
+    if widgets::button(inp, r, label, Style::Danger) {
+        art::sfx("ui_click");
+        g.mode = Mode::Aim(b.id);
+        g.selected = Some(Focus::Body(b.id));
+    }
+}
+
+fn aim_bar(g: &mut GameScreen, inp: &mut Input, view: &GameView, ast: BodyId) {
+    let r = sheet_rect(100.0);
+    inp.block(r);
+    cel::panel(r, PANEL);
+    let name = view.body(ast).map(|b| b.name.to_uppercase()).unwrap_or_default();
+    inked(&format!("AIM {name}"), r.x + 16.0 * s(), r.y + 22.0 * s(), 20.0, DANGER, Align::Left);
+    text("Tap the planet or moon to crash it into", r.x + 16.0 * s(), r.y + 44.0 * s(), 13.0, PAPER, FontKind::Body, Align::Left);
+    let br = Rect::new(r.x + r.w - 120.0 * s(), r.y + r.h - 50.0 * s(), 108.0 * s(), 40.0 * s());
+    if widgets::button(inp, br, "CANCEL", Style::Ghost) {
+        g.mode = Mode::Idle;
+    }
+}
+
+fn severity_label(sev: f64) -> (String, Color) {
+    if sev >= 4.0 {
+        ("SHATTERS THE PLANET".into(), DANGER)
+    } else if sev >= 1.0 {
+        ("WIPES UPGRADES + EVERYTHING IN ORBIT".into(), DANGER)
+    } else {
+        (format!("DAMAGES ~{:.0}% OF UPGRADES", (sev * 100.0).clamp(1.0, 99.0)), ACCENT)
+    }
+}
+
+fn impact_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, ip: &ImpactPreview) {
+    let r = sheet_rect(214.0);
+    inp.block(r);
+    cel::panel(r, PANEL);
+    let ast = view.body(ip.asteroid).map(|b| b.name.to_uppercase()).unwrap_or_default();
+    let tgt = view.body(ip.target).map(|b| b.name.to_uppercase()).unwrap_or_default();
+    inked(&format!("{ast} AT {tgt}"), r.x + 16.0 * s(), r.y + 22.0 * s(), 20.0, DANGER, Align::Left);
+    let hits = ip.impact_t.is_some();
+    let cols: [(&str, String); 3] = [
+        ("IMPACT", ip.impact_t.map(|t| format!("in {}", fmt_dur(t - view.now))).unwrap_or_else(|| "MISSES".into())),
+        ("SPEED", format!("{:.1} km/s", ip.impact_speed)),
+        ("ENERGY", format!("{:.1e} J", ip.impact_energy)),
+    ];
+    let cw = (r.w - 32.0 * s()) / 3.0;
+    for (i, (k, v)) in cols.iter().enumerate() {
+        let x = r.x + 16.0 * s() + i as f32 * cw;
+        text(k, x, r.y + 48.0 * s(), 12.0, MUTED, FontKind::Title, Align::Left);
+        inked(v, x, r.y + 68.0 * s(), 17.0, PAPER, Align::Left);
+    }
+    if hits {
+        let (label, col) = severity_label(ip.severity);
+        text(&label, r.x + 16.0 * s(), r.y + 94.0 * s(), 14.0, col, FontKind::Title, Align::Left);
+    } else {
+        text("This push doesn't hit. Try another target or wait for a better window.", r.x + 16.0 * s(), r.y + 94.0 * s(), 13.0, MUTED, FontKind::Body, Align::Left);
+    }
+    let fuel_ok = ip.fuel <= ip.fuel_available;
+    let cost_ok = affordable(view, &ip.drive_cost);
+    let mut line = format!(
+        "Burn {} starting in {} · dv {:.1} km/s · fuel {:.0}/{:.0}",
+        fmt_dur(ip.burn_s),
+        fmt_dur((ip.burn_t - view.now).max(0.0)),
+        ip.dv,
+        ip.fuel,
+        ip.fuel_available
+    );
+    if ip.drive_cost.matter > 0.0 {
+        line += &format!(" · drive {}", cost_line(&ip.drive_cost));
+    }
+    for (k, l) in wrap(&line, FontKind::Body, 12.0, r.w - 32.0 * s()).iter().take(2).enumerate() {
+        text(l, r.x + 16.0 * s(), r.y + 116.0 * s() + k as f32 * 16.0 * s(), 12.0, if fuel_ok && cost_ok { PAPER } else { DANGER }, FontKind::Body, Align::Left);
+    }
+    let ok = hits && fuel_ok && cost_ok;
+    let by = r.y + r.h - 54.0 * s();
+    let bw = (r.w - 3.0 * 12.0 * s()) / 2.0;
+    if widgets::button(inp, Rect::new(r.x + 12.0 * s(), by, bw, 44.0 * s()), "LAUNCH PUSH", if ok { Style::Danger } else { Style::Ghost }) {
+        if ok {
+            art::sfx("transfer_scheduled");
+            g.emit(UiAction::AimAsteroid { body: ip.asteroid, target: ip.target });
+            g.push_notice(Notice { kind: NoticeKind::Battle, title: format!("{ast} is on its way"), body: format!("Impact on {tgt} in {}", fmt_dur(ip.impact_t.unwrap_or(view.now) - view.now)), focus: Some(Focus::Body(ip.target)) });
+            g.mode = Mode::Idle;
+        } else {
+            art::sfx("ui_error");
+        }
+    }
+    if widgets::button(inp, Rect::new(r.x + 24.0 * s() + bw, by, bw, 44.0 * s()), "CANCEL", Style::Ghost) {
+        g.mode = Mode::Idle;
+    }
+}
+
+pub fn impact_world(ip: &ImpactPreview, be: &dyn Backend, view: &GameView, cam: &Camera, t: f64) {
+    let pts = poly(cam, &ip.path, f64::MIN);
+    cel::inked_path(&pts, 4.0 * s(), DANGER);
+    if let Some(&(_, d)) = ip.path.points.first() {
+        cel::diamond(cam.to_screen(d), 8.0 * s(), DANGER);
+    }
+    if let (Some(it), Some(b)) = (ip.impact_t, view.body(ip.target)) {
+        let c = cam.to_screen(be.body_pos(ip.target, it));
+        let r = map::body_radius_px(b, cam);
+        cel::burst(c, r + 14.0 * s(), 10, alpha(DANGER, 0.75), get_time() as f32 * 0.5);
+    }
+    if let Some(sp) = ip.path.sample(t) {
+        draw_circle(cam.to_screen(sp).x, cam.to_screen(sp).y, 5.0 * s(), alpha(NEUTRAL.0, 0.8));
+    }
+}
+
 fn affordable(view: &GameView, c: &Cost) -> bool {
     view.resources.matter >= c.matter && view.resources.energy >= c.energy
 }
@@ -299,7 +416,7 @@ fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Bo
     inked(&b.name.to_uppercase(), r.x + 56.0 * s(), r.y + 22.0 * s(), 22.0, PAPER, Align::Left);
     let mine: f64 = info.power.iter().filter(|p| p.0 == view.me).map(|p| p.1).sum();
     let enemy: f64 = info.power.iter().filter(|p| p.0 != view.me).map(|p| p.1).sum();
-    let mut sub = format!("YOURS · power {:.0}", mine);
+    let mut sub = format!("YOURS · power {:.0}", mine.max(0.0));
     if enemy > 0.0 {
         sub += &format!(" vs {:.0} hostile", enemy);
     }
@@ -311,8 +428,10 @@ fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Bo
         return;
     }
 
-    // Tabs.
+    // Tabs (+ the aim control on our asteroids).
     let ty = r.y + 82.0 * s();
+    // Our asteroids can be aimed at planets (button sits under the close X).
+    aim_button(g, inp, view, b, Rect::new(r.x + r.w - 126.0 * s(), r.y + 40.0 * s(), 110.0 * s(), 28.0 * s()));
     let tw = ((r.w - 32.0 * s() - 20.0 * s()) / 3.0).min(116.0 * s());
     for (i, label) in ["UPGRADES", "SHIPYARD", "STATIONS"].iter().enumerate() {
         let tr = Rect::new(r.x + 16.0 * s() + i as f32 * (tw + 10.0 * s()), ty, tw, 30.0 * s());
@@ -403,9 +522,13 @@ fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Bo
 }
 
 fn body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Body, can_build_station: bool) {
-    let r = sheet_rect(150.0);
+    let own_rock = b.kind == BodyKind::Asteroid && b.owner == Some(view.me);
+    let r = sheet_rect(if own_rock { 204.0 } else { 150.0 });
     inp.block(r);
     cel::panel(r, PANEL);
+    if own_rock {
+        aim_button(g, inp, view, b, Rect::new(r.x + 12.0 * s(), r.y + r.h - 54.0 * s(), r.w - 24.0 * s(), 44.0 * s()));
+    }
     let c = vec2(r.x + 36.0 * s(), r.y + 36.0 * s());
     map::draw_body(b, c, 16.0 * s(), c + vec2(-100.0, -60.0), view.color_of(b.owner), get_time() as f32);
     inked(&b.name.to_uppercase(), r.x + 66.0 * s(), r.y + 26.0 * s(), 24.0, PAPER, Align::Left);

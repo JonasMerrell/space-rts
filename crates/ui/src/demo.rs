@@ -152,7 +152,7 @@ impl DemoBackend {
         add(6, "Pip", BodyKind::Moon, Some(2), 9.0, 0.0, 0.0, 1.0, 0.5, Some(1), &mut kep);
         add(7, "Hydra", BodyKind::Moon, Some(4), 16.0, 0.05, 0.0, 3.0, 0.8, None, &mut kep);
         add(8, "Scylla", BodyKind::Moon, Some(4), 26.0, 0.02, 1.0, 0.2, 0.6, Some(3), &mut kep);
-        add(9, "Rook-12", BodyKind::Asteroid, Some(0), 190.0, 0.32, 3.4, 2.0, 0.3, None, &mut kep);
+        add(9, "Rook-12", BodyKind::Asteroid, Some(0), 190.0, 0.32, 3.4, 2.0, 0.3, Some(1), &mut kep);
         add(10, "Vesper", BodyKind::Asteroid, Some(0), 270.0, 0.22, 0.7, 4.4, 0.3, None, &mut kep);
         self.kep = kep;
 
@@ -507,6 +507,11 @@ impl Backend for DemoBackend {
             }
             UiAction::BackToMenu => self.view = None,
             UiAction::Reconnect => {}
+            UiAction::AimAsteroid { body, target } => {
+                let name = |id| self.view.as_ref().and_then(|v| v.body(id)).map(|b| b.name.clone()).unwrap_or_default();
+                let (a, t) = (name(body), name(target));
+                self.events.push(BackendEvent::Notice(Notice { kind: NoticeKind::Info, title: "Drive fitted".into(), body: format!("{a} burning toward {t}"), focus: Some(Focus::Body(body)) }));
+            }
             UiAction::Build { body, class } => {
                 let now = self.now();
                 let cost = ship_cost(class);
@@ -667,6 +672,51 @@ impl Backend for DemoBackend {
             })
             .collect();
         Some(StationsView { here, options, present })
+    }
+
+    fn plan_impact_async(&self, asteroid: BodyId, target: BodyId) -> crate::ImpactPoll {
+        let v = match self.view.as_ref() {
+            Some(v) => v,
+            None => return crate::ImpactPoll::Done(None),
+        };
+        if v.body(asteroid).map(|b| b.owner) != Some(Some(v.me)) {
+            return crate::ImpactPoll::Done(None);
+        }
+        // Pretend the rock is a parked ship and reuse the Hohmann planner for the path.
+        let rock = Ship {
+            id: u32::MAX,
+            name: String::new(),
+            class: ShipClass::Tanker,
+            owner: v.me,
+            count: 1,
+            fuel: 0.0,
+            fuel_max: 0.0,
+            parked_at: Some(asteroid),
+            trajectory: None,
+            nodes: vec![],
+            destination: None,
+            retreat: false,
+        };
+        let res = self.plan_for(&rock, target, v.now).map(|p| {
+            let speed = p.dv_capture + 9.0;
+            let mass = 4.0e15;
+            ImpactPreview {
+                asteroid,
+                target,
+                burn_t: p.depart_t,
+                burn_s: 10.0 * 3600.0,
+                dv: p.dv_depart,
+                fuel: p.dv_depart * 40.0,
+                fuel_available: 600.0,
+                drive_cost: Cost { matter: 200.0, energy: 150.0, seconds: 7200.0 },
+                impact_t: Some(p.arrive_t),
+                impact_speed: speed,
+                impact_energy: 0.5 * mass * (speed * 1000.0).powi(2),
+                severity: 1.6,
+                path: p.path,
+            }
+        });
+        crate::ImpactPoll::Done(res)
     }
 
     fn default_server(&self) -> String {

@@ -12,7 +12,7 @@ pub mod screens;
 pub mod theme;
 pub mod widgets;
 
-pub use backend::{Backend, BackendEvent, PlanPoll, UiAction};
+pub use backend::{Backend, BackendEvent, ImpactPoll, PlanPoll, UiAction};
 
 use game::GameScreen;
 use input::Input;
