@@ -79,6 +79,7 @@ dependencies = [
  "proto",
  "serde",
  "serde_json",
+ "server",
  "sim",
  "ui",
 ]

@@ -732,3 +732,74 @@ Approved as written (combat is now merged, rebase on origin/master). Notes: keep
 non-fleet multi-ship orders too; fleet token ids must never collide with real ShipIds (assert `next_ship < 0x8000_0000`
 in spawn); `view_for` must also strip *your* fleet ids from other players' ship views. Branch `fleet` → I merge.
 Combat merged (e3e695c) and notify follow-up merged; kepler-server restarted. — core
+### Scrub thread (2026-10-26 02:50): branch **`scrub`** ready for core review (rebased on cf0cc3b, pushed)
+Two commits on origin/scrub. Touches (small, as planned):
+- sim/game.rs: `Game::forecast_to` (= advance without `bot::think_all`), `Job.then: Option<QueuedOrder>` (serde default)
+  + `Command::QueueOrder{body,done_t,to,depart_t}` (owner-only, ship jobs; runs `order_transfer` on spawn, "Order failed"
+  event otherwise), `Command::SetSpeed{speed}` host-only, clamps 1..1000, shifts `started_real` so game time is continuous
+  (paused-lobby thread: if you change how start/`started_real` works, keep that invariant), `spawn` made pub.
+- client: new `forecast.rs` (worker runs the fog view forward 1 week ≈1 s, keyframes on change; forecast-born ships
+  ids ≥ 0x8000_0000 mapped to their build job), Backend `predicted`/`forecast_until`, planning/QueueOrder/cancel for
+  unbuilt ships, `ship_model()` helper (ghost chain kept), CreateGame/SetSpeed, `examples/scrubshot.rs` (in-process
+  server + real backend → PNGs, `SCENE=before|built|plan|queued|ranges`).
+- (02:52) GAME SPEED choices now 1–168× (Jonas asked), commit ca26b78 on origin/scrub.
+- ui (UI thread FYI): `Backend::predicted/forecast_until` (defaults None/∞), `UiAction::CreateGame.speed`,
+  `UiAction::SetSpeed`, `m::Ship.planned`, `GameView.speed`, `LobbyInfo.speed`; scrubber range picker 1H–1W,
+  camera follows the selection while scrubbing, map/sheets draw `predicted(t)`, GAME SPEED chips on create, host
+  menu "GAME SPEED: n×", clock shows n×.
+- tests: simtests/tests/forecast.rs (5). All simtests + uitests green. FYI tests thread: client_e2e failed once
+  ("plan needs 179 fuel, ship has 160") then passed 3× — random system seed makes it flaky, not from this branch.
+Core: OK to merge? I can fast-forward/merge into core-merge myself if you prefer. Restart kepler-server after (new
+Command variants; Job.then is serde-default so old saves load).
+— scrub thread
+
+### Fog thread: "while you were away" report — branch `report` ready (2026-10-26 02:55 UTC), core please review/merge
+`report` @ dbd6de9 (pushed), 3 commits on origin/master. All sim + simtests pass in release (new `simtests/tests/report.rs`: 5).
+Done per core's conditions:
+- **Separate per-player log**: `Player.sensor_log: Vec<fog::SensorItem>` (serde default), capped at `LOG_CAP` = 200.
+  `Game.events` and its 400 cap are untouched. Items are written in `update_intel` from that player's own vision
+  diff only: Spotted, Lost, Burn, Territory (third-party changes at bodies you can see), Battle (sighted, not your
+  own). One item per (kind, owner, body) per hour (`LOG_MERGE`), ships unioned. Nothing is logged on the first
+  tick after a restart.
+- `Game::away_report(p, since, max)` = `events_for(p)` + sensor log rendered as `EventKind::Sensor` events,
+  oldest first. `Player.last_active` (serde default) is stamped every server tick while a connection has the game
+  open. On `Open` the server sends `ServerMsg::Report { code, since, now, events }` (≤ 300) *before* the State,
+  then stamps it. `view_for` blanks others' `sensor_log`/`last_active`. The notify `Events` endpoint skips `Sensor`.
+- **client**: `EventKind::Sensor` → `NoticeKind::Info`, keeps the report if away ≥ 15 game-min and non-empty
+  (reconnect blips don't replace it), `Backend::away_report()`, `UiAction::DismissReport`.
+- **ui** (UI thread FYI): new `game/report.rs` (full sheet, sections Battles & territory / Sensor contacts / Your
+  empire, drag to scroll, row tap → focus + dismiss, menu_open/select/close sfx). Hook = one `report` field + one
+  call after `research_screen` in `GameScreen::draw`. Model: `AwayReport`, `ReportItem`, `ReportSection`.
+  Demo scene `report`. Note: Rajdhani/Barlow lack "→", so sim text uses "from X to Y".
+— fog thread
+
+### Lobby thread → core, UI, scrub, tests (2026-10-26 03:10 UTC): branch `lobby` ready for review
+`lobby` @ d5a66c7 (2 commits on 703f6e7, pushed). The waiting period is now the game screen:
+- sim: `add_player`/`remove_player` (new, Lobby only, never host, re-numbers ids/colours/chat) re-run `pick_homes`
+  into `p.home` as a preview (no owner, no fleet); `start()` gives the same homes. Unit tests in game.rs.
+- server/proto: `ClientMsg::RemoveBot{code, player}` (host, bots only); JoinGame after start → "already started,
+  joining is closed"; StartGame on a running game is an error (it used to reset `started_real`!); bot names reuse
+  the lowest free number. Clock invariant for scrub's SetSpeed: lobby never advances (t = 0) and Start sets
+  `started_real = now` with t = 0, so `started_real = now - t/speed` holds from the first tick. simtests
+  `server::waiting_period_lets_players_and_bots_join_until_the_host_starts`.
+- client: `view()` also in Lobby; `GameView.lobby: Option<LobbyInfo>` + `GameView.home`; `LobbyInfo.speed`;
+  errors while a game is open are notices (LobbyFailed only when no game is open, e.g. bad code). `UiAction::RemoveBot`.
+- UI: new `ui/src/game/lobby.rs` (banner with code + WAITING FOR HOST, roster with REMOVE on bots, faction chips,
+  + BOT / START GAME for the host; map shows the system + YOUR HOME ring). Hook in game/mod.rs = early branch in
+  `draw` when `view.lobby` is Some (+2 fields). `BackendEvent::Lobby` → game screen; old `screens::Lobby` and
+  `Screen::Lobby` removed. Demo scenes `lobby` / `lobby_guest`. uitests ui_flow updated (16/16 pass).
+Core: please merge when convenient (restart kepler-server afterwards; no save-format change). — lobby thread
+
+### UI → core + flyby thread: node-editor projection (2026-10-26)
+Jonas: "for the maneuver node show a projection for where the ship will end up". This is now in ui on master.
+While editing nodes the map shows the END marker (+time), the closest approach (ghost ring of the body at that
+time, tie line), and the node sheet says "Ends in orbit of X / Encounter: X in 1d 7h (658 Mm) / Closest: ...".
+- New `Backend::node_outcome(ship, nodes) -> Option<NodeOutcome { end_t, end_pos, captured, encounter:
+  Option<Encounter{body, t, distance, inside_soi}>, fuel_left: Option<f64> }>` (default None). With the default,
+  the UI derives end + closest approach from `preview_nodes` itself (ignores the SOI it's leaving from).
+- **Core (client):** please implement it from `sim::traj::predict`: `captured` = the dest body when the path ends
+  captured, `fuel_left` = fuel after the burns via `fuel_for_with` (negative = can't afford, shown red), and
+  `encounter` = the first SOI entry (or closest pass) after the first burn. It's called only when the nodes change.
+- **Flyby thread:** your `m::Trajectory.flybys` markers fit right in. Draw them in `panels::nodes_world` next to the
+  END marker (same pill style: `round_rect` PANEL + Title 12dp), e.g. "FLYBY IXVO +3.1 km/s".
+— UI thread

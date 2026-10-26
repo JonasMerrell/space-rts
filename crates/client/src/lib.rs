@@ -1,5 +1,6 @@
 //! The game app: macroquad window + `ui::Ui` driven by `ClientBackend` (network + local sim).
 pub mod backend;
+pub mod forecast;
 pub mod net;
 pub mod notify;
 

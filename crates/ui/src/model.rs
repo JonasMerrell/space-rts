@@ -168,6 +168,8 @@ pub struct Ship {
     /// Fog of war: `Some(t)` = an enemy ship last seen at game time t, drawn as a fading ghost on
     /// its last known course; `None` = live.
     pub seen_at: Option<f64>,
+    /// Only on the time scrubber: a ship that is still in a build queue now, ready at this time.
+    pub planned: Option<f64>,
     /// Non-empty when this token is one of our fleets: its ships (real ship ids, not the token's).
     pub members: Vec<FleetMember>,
 }
@@ -239,6 +241,30 @@ pub enum Focus {
     Ship(ShipId),
 }
 
+/// Where a ship ends up with a set of manual nodes (node editor projection).
+#[derive(Clone, Debug)]
+pub struct NodeOutcome {
+    /// End of the predicted path (horizon, capture or impact).
+    pub end_t: f64,
+    pub end_pos: [f64; 2],
+    /// Captured into orbit of this body at the end, if the prediction says so.
+    pub captured: Option<BodyId>,
+    /// Closest approach to the most relevant body along the path.
+    pub encounter: Option<Encounter>,
+    /// Fuel left after all burns (None = backend can't tell).
+    pub fuel_left: Option<f64>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Encounter {
+    pub body: BodyId,
+    pub t: f64,
+    /// km
+    pub distance: f64,
+    /// Passes inside the body's sphere of influence.
+    pub inside_soi: bool,
+}
+
 /// Preview of pushing an owned asteroid into a planet (`Backend::plan_impact_async`).
 #[derive(Clone, Debug)]
 pub struct ImpactPreview {
@@ -287,6 +313,8 @@ pub struct LobbyInfo {
     pub max_players: usize,
     pub host: PlayerId,
     pub length_days: u32,
+    /// Game seconds per real second.
+    pub speed: f64,
     pub bots: Vec<String>,
 }
 
@@ -307,6 +335,8 @@ pub struct GameView {
     pub host: PlayerId,
     pub now: f64,
     pub ends_at: f64,
+    /// Game seconds per real second (0 = unknown, treat as 1).
+    pub speed: f64,
     pub bodies: Vec<Body>,
     pub ships: Vec<Ship>,
     pub players: Vec<Player>,

@@ -41,7 +41,7 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
         }
         "lobby" => {
             be.act(UiAction::Login { server: String::new(), user: "Jonas".into(), pass: "x".into(), register: false });
-            be.act(UiAction::CreateGame { name: "Friday Night War".into(), length_days: 7, bots: vec!["hard".into()] });
+            be.act(UiAction::CreateGame { name: "Friday Night War".into(), length_days: 7, speed: 1.0, bots: vec!["hard".into()] });
             let mut info = None;
             for ev in be.poll() {
                 if let ui::BackendEvent::Lobby(i) = ev {
