@@ -198,11 +198,28 @@ fn player_model(p: &g::Player) -> m::Player {
 
 fn ship_class(c: g::ShipClass) -> m::ShipClass {
     match c {
-        g::ShipClass::Interceptor | g::ShipClass::Scout => m::ShipClass::Interceptor,
-        g::ShipClass::Gunship | g::ShipClass::Dreadnought => m::ShipClass::Gunship,
+        g::ShipClass::Scout => m::ShipClass::Scout,
+        g::ShipClass::Interceptor => m::ShipClass::Interceptor,
+        g::ShipClass::Gunship => m::ShipClass::Gunship,
         g::ShipClass::Bomber => m::ShipClass::Bomber,
+        g::ShipClass::Dreadnought => m::ShipClass::Dreadnought,
         g::ShipClass::Tanker => m::ShipClass::Tanker,
     }
+}
+
+fn sim_class(c: m::ShipClass) -> g::ShipClass {
+    match c {
+        m::ShipClass::Scout => g::ShipClass::Scout,
+        m::ShipClass::Interceptor => g::ShipClass::Interceptor,
+        m::ShipClass::Gunship => g::ShipClass::Gunship,
+        m::ShipClass::Bomber => g::ShipClass::Bomber,
+        m::ShipClass::Dreadnought => g::ShipClass::Dreadnought,
+        m::ShipClass::Tanker => g::ShipClass::Tanker,
+    }
+}
+
+fn upgrade_by_name(name: &str) -> Option<g::Upgrade> {
+    g::Upgrade::ALL.into_iter().find(|u| format!("{u:?}").eq_ignore_ascii_case(name))
 }
 
 fn arr(v: V2) -> [f64; 2] {
@@ -253,12 +270,15 @@ fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Tr
                 radius: b.radius,
                 soi: if b.is_star() { 0.0 } else { b.soi },
                 owner: st.owner,
-                intel: Some(m::Intel {
-                    seen_at: now,
-                    power: game.power_at(b.id).iter().map(|p| p.1).sum::<f64>() as f32,
-                    upgrades,
-                    stations: vec![],
-                }),
+                intel: {
+                    let seen = game.players.get(me as usize).and_then(|p| p.intel.get(b.id.0 as usize).cloned().flatten());
+                    seen.map(|i| m::Intel {
+                        seen_at: i.seen_t,
+                        power: i.power.iter().filter(|p| p.0 != me).map(|p| p.1).sum::<f64>() as f32,
+                        upgrades,
+                        stations: vec![],
+                    })
+                },
                 art: if b.kind == SimKind::GasGiant { Some("planet_gas".into()) } else { None },
                 orbit_path,
             }
@@ -289,6 +309,7 @@ fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Tr
                 trajectory: paths.get(&s.id.0).cloned(),
                 nodes,
                 destination,
+                retreat: s.order == g::StandingOrder::Retreat,
             }
         })
         .collect();
@@ -307,6 +328,7 @@ fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Tr
         }
     }
     m::GameView {
+        host: game.host,
         me,
         now,
         ends_at: game.end_t,
@@ -346,14 +368,9 @@ impl Backend for ClientBackend {
         if self.net.is_none() && self.logged_in && self.creds.is_some() && unix_now() > self.reconnect_at {
             self.connect(false);
         }
-        // keep the local copy ticking between snapshots
+        // the server re-sends state on every event and every 20 s; between snapshots ship and body
+        // positions come from their (deterministic) trajectories, so only the clock moves here
         let now = self.now();
-        if let Some(game) = &mut self.game {
-            if game.status == Status::Running && now > game.t + 30.0 {
-                game.advance_to(now);
-                self.rebuild();
-            }
-        }
         if let Some(v) = &mut self.view {
             v.now = now;
         }
@@ -363,7 +380,11 @@ impl Backend for ClientBackend {
     fn act(&mut self, action: UiAction) {
         let code = self.code();
         match action {
-            UiAction::Login { user, pass, register } => {
+            UiAction::Login { server, user, pass, register } => {
+                if !server.trim().is_empty() {
+                    self.server = server.trim().to_string();
+                    crate::save_server(&self.server);
+                }
                 self.creds = Some((user, pass));
                 self.logged_in = false;
                 self.connect(register);
@@ -426,6 +447,26 @@ impl Backend for ClientBackend {
             UiAction::Chat(text) => {
                 if let Some(code) = code {
                     self.send(ClientMsg::Cmd { code, cmd: Command::Chat { text } });
+                }
+            }
+            UiAction::Build { body, class } => {
+                if let Some(code) = code {
+                    self.send(ClientMsg::Cmd { code, cmd: Command::Build { body: SimBody(body), class: sim_class(class) } });
+                }
+            }
+            UiAction::Upgrade { body, upgrade } => match (code, upgrade_by_name(&upgrade)) {
+                (Some(code), Some(upgrade)) => self.send(ClientMsg::Cmd { code, cmd: Command::Upgrade { body: SimBody(body), upgrade } }),
+                _ => self.notice(m::NoticeKind::Bad, "Unknown upgrade", &upgrade, None),
+            },
+            UiAction::SetOrder { ship, retreat } => {
+                if let Some(code) = code {
+                    let order = if retreat { g::StandingOrder::Retreat } else { g::StandingOrder::Hold };
+                    self.send(ClientMsg::Cmd { code, cmd: Command::SetOrder { ship: g::ShipId(ship), order } });
+                }
+            }
+            UiAction::ExtendGame { days } => {
+                if let Some(code) = code {
+                    self.send(ClientMsg::Cmd { code, cmd: Command::Extend { seconds: days as f64 * 86_400.0 } });
                 }
             }
         }
@@ -506,6 +547,58 @@ impl Backend for ClientBackend {
         })();
         self.plan_cache.borrow_mut().insert(key, res.clone());
         res
+    }
+
+    fn default_server(&self) -> String {
+        self.server.clone()
+    }
+
+    fn body_info(&self, id: BodyId) -> Option<m::BodyInfo> {
+        let g = self.game.as_ref()?;
+        let b = SimBody(id);
+        let st = g.bodies.get(id as usize)?;
+        let mine = st.owner == Some(self.me);
+        let pending = |u: g::Upgrade| st.queue.iter().filter(|j| matches!(j.kind, g::JobKind::Upgrade(x) if x == u)).count() as u8;
+        let upgrades = g::Upgrade::ALL
+            .iter()
+            .map(|&u| {
+                let next_level = st.level(u) + pending(u) + 1;
+                m::UpgradeInfo {
+                    name: format!("{u:?}"),
+                    level: st.level(u),
+                    max: g::Upgrade::MAX_LEVEL,
+                    next: (mine && next_level <= g::Upgrade::MAX_LEVEL).then(|| {
+                        let (matter, energy, seconds) = u.cost(next_level);
+                        m::Cost { matter, energy, seconds }
+                    }),
+                }
+            })
+            .collect();
+        let buildable = if mine {
+            g::ShipClass::ALL
+                .iter()
+                .filter(|c| st.level(g::Upgrade::Shipyard) >= c.stats().min_shipyard)
+                .map(|&c| {
+                    let s = c.stats();
+                    (ship_class(c), m::Cost { matter: s.matter, energy: s.energy, seconds: s.build_time })
+                })
+                .collect()
+        } else {
+            vec![]
+        };
+        let queue = st
+            .queue
+            .iter()
+            .map(|j| {
+                let label = match &j.kind {
+                    g::JobKind::Ship(c) => c.stats().name.to_string(),
+                    g::JobKind::Upgrade(u) => u.label().to_string(),
+                };
+                (label, j.done_t)
+            })
+            .collect();
+        let (matter_rate, energy_rate, fuel_rate) = if mine { g.production(b) } else { (0.0, 0.0, 0.0) };
+        Some(m::BodyInfo { upgrades, buildable, queue, fuel: st.fuel, power: g.power_at(b), matter_rate, energy_rate, fuel_rate })
     }
 
     fn preview_nodes(&self, ship: ShipId, nodes: &[m::ManeuverNode]) -> Option<m::Trajectory> {

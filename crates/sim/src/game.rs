@@ -308,6 +308,9 @@ pub struct Player {
     /// bots: (from, to, until) routes that recently failed to plan, so they aren't retried every tick
     #[serde(default)]
     pub bot_avoid: Vec<(BodyId, BodyId, f64)>,
+    /// fog of war: last sensor reading per body (index = body id)
+    #[serde(default)]
+    pub intel: Vec<Option<crate::fog::Intel>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -452,6 +455,7 @@ impl Game {
             bot,
             home: None,
             bot_avoid: vec![],
+            intel: vec![],
         });
         Ok(id)
     }
@@ -480,6 +484,7 @@ impl Game {
             }
         }
         self.status = Status::Running;
+        self.update_intel();
         self.event(None, EventKind::Info, "Game started", "Fleets are fuelled. Good hunting.", None, None);
     }
 
@@ -719,6 +724,7 @@ impl Game {
                 self.jobs();
                 self.combat(TICK);
                 self.ownership();
+                self.update_intel();
                 crate::bot::think_all(self);
                 if self.t >= self.end_t {
                     self.finish();

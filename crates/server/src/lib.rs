@@ -133,19 +133,19 @@ impl Server {
     }
 
     fn state_line(g: &Game, me: PlayerId) -> String {
-        // hand-built so the (large) game JSON is serialised once per broadcast, not per subscriber
-        let game = serde_json::to_string(g).unwrap_or_default();
+        // each player only gets what their sensors know (fog of war)
+        let game = serde_json::to_string(&g.view_for(me)).unwrap_or_default();
         format!("{{\"State\":{{\"game\":{game},\"me\":{me},\"real_time\":{}}}}}\n", unix_now())
     }
 
     fn broadcast(&mut self, code: &str) {
         let Some(g) = self.games.get(code) else { return };
-        let game = serde_json::to_string(g).unwrap_or_default();
-        let now = unix_now();
+        let mut lines: HashMap<PlayerId, String> = HashMap::new();
         for c in self.conns.values() {
             if c.open.as_deref() == Some(code) {
                 if let Some(me) = c.user.as_deref().and_then(|u| g.player_by_name(u)).map(|p| p.id) {
-                    let _ = c.tx.send(format!("{{\"State\":{{\"game\":{game},\"me\":{me},\"real_time\":{now}}}}}\n"));
+                    let line = lines.entry(me).or_insert_with(|| Self::state_line(g, me));
+                    let _ = c.tx.send(line.clone());
                 }
             }
         }

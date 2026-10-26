@@ -3,10 +3,10 @@ plugins {
 }
 
 android {
-    namespace = "net.lego.orbitfall"
+    namespace = "net.lego.hahmannsreach"
     compileSdk = 35
     defaultConfig {
-        applicationId = "net.lego.orbitfall"
+        applicationId = "net.lego.hahmannsreach"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

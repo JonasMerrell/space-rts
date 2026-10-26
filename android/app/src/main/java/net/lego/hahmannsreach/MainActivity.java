@@ -1,4 +1,4 @@
-package net.lego.orbitfall;
+package net.lego.hahmannsreach;
 
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;

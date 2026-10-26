@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build the Android APK: Rust client (cargo-ndk) + Gradle packaging. Output: ./Kepler.apk
+# Build the Android APK: Rust client (cargo-ndk) + Gradle packaging. Output: ./HahmannsReach.apk
 #   ./build-apk.sh            release build, arm64-v8a + x86_64 (phone + emulator)
 #   ABIS="arm64-v8a" ./build-apk.sh   phone only (smaller)
 set -euo pipefail
@@ -9,7 +9,7 @@ export ANDROID_HOME="${ANDROID_HOME:-$HOME/android-sdk}"
 export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$ANDROID_HOME/ndk/25.2.9519653}"
 export JAVA_HOME="${JAVA_HOME:-/usr/lib64/jvm/java-17-openjdk-17}"
 ABIS="${ABIS:-arm64-v8a x86_64}"
-OUT="${OUT:-Kepler.apk}"
+OUT="${OUT:-HahmannsReach.apk}"
 
 APP=android/app/src/main
 rm -rf "$APP/jniLibs"
