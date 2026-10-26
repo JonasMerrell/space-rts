@@ -135,7 +135,7 @@ fn build_completes_after_build_time_and_costs_resources() {
     assert_eq!(g.ships.iter().filter(|s| s.owner == 0).count(), n0, "built too early");
     g.advance_to(st.build_time + 2.0 * TICK);
     let n1 = g.ships.iter().filter(|s| s.owner == 0 && s.parked_at() == Some(home)).count();
-    assert!(n1 >= n0 + 1, "interceptor not built");
+    assert!(n1 > n0, "interceptor not built");
 }
 
 #[test]

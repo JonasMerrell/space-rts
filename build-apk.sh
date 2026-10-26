@@ -9,6 +9,7 @@ export ANDROID_HOME="${ANDROID_HOME:-$HOME/android-sdk}"
 export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$ANDROID_HOME/ndk/25.2.9519653}"
 export JAVA_HOME="${JAVA_HOME:-/usr/lib64/jvm/java-17-openjdk-17}"
 ABIS="${ABIS:-arm64-v8a x86_64}"
+OUT="${OUT:-Kepler.apk}"
 
 APP=android/app/src/main
 rm -rf "$APP/jniLibs"
@@ -28,5 +29,5 @@ for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
 done
 
 (cd android && ./gradlew -q :app:assembleRelease --no-daemon)
-cp android/app/build/outputs/apk/release/app-release.apk Kepler.apk
-echo "APK: $(du -h Kepler.apk | cut -f1)  $(pwd)/Kepler.apk"
+cp android/app/build/outputs/apk/release/app-release.apk "$OUT"
+echo "APK: $(du -h "$OUT" | cut -f1)  $(pwd)/$OUT"

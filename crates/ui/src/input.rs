@@ -89,6 +89,17 @@ impl Input {
         let was_down = !self.prev_pointers.is_empty();
         let is_down = !self.pointers.is_empty();
 
+        // A touch that began and ended between two frames (fast taps, adb input) only shows up
+        // as an Ended touch we never saw down: treat it as a complete tap.
+        if !is_down && !was_down {
+            if let Some(p) = self.released.take() {
+                self.pressed = Some(p);
+                self.owned_by_ui = self.blocked(p);
+                self.tap = Some(p);
+                self.released = Some(p);
+            }
+        }
+
         if is_down && !was_down {
             let p = self.pointers[0].1;
             self.start = Some((p, now));

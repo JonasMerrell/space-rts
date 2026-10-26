@@ -61,7 +61,9 @@ step "clippy"
 if [ $strict = 1 ]; then
   run cargo clippy --workspace --all-targets -- -D warnings
 else
-  cargo clippy --workspace --all-targets 2>&1 | tee /dev/stderr | grep -c '^warning' | xargs -I{} echo "clippy: {} warning lines"
+  out=$(cargo clippy --workspace --all-targets 2>&1)
+  echo "$out"
+  echo "clippy: $(grep -c '^warning' <<<"$out") warning lines"
 fi
 
 echo
