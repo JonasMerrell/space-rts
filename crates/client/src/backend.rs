@@ -63,7 +63,7 @@ impl ClientBackend {
     pub fn resume(&mut self) {
         if let Some((server, user, pass)) = crate::notify::load() {
             if std::env::var("SPACE_RTS_SERVER").is_err() {
-                self.server = server;
+                self.server = crate::migrate_server(server);
             }
             self.auto_user = Some(user.clone());
             self.creds = Some((user, pass));

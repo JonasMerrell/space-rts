@@ -8,7 +8,19 @@ pub mod tls;
 use macroquad::prelude::*;
 
 /// Default server: netdash on the home LAN. Override with SPACE_RTS_SERVER (desktop).
-pub const DEFAULT_SERVER: &str = "192.168.0.247:7777";
+pub const DEFAULT_SERVER: &str = "192.168.0.105:7777";
+
+/// Servers the game used to live on; a remembered one is moved to `DEFAULT_SERVER`.
+const OLD_SERVERS: &[&str] = &["192.168.0.247:7777", "192.168.0.247"];
+
+/// Point a remembered address that is a retired server at the current default.
+pub fn migrate_server(addr: String) -> String {
+    if OLD_SERVERS.contains(&addr.trim()) {
+        DEFAULT_SERVER.to_string()
+    } else {
+        addr
+    }
+}
 
 fn window_conf() -> Conf {
     Conf {
@@ -24,7 +36,7 @@ fn window_conf() -> Conf {
 
 #[macroquad::main(window_conf)]
 async fn main() {
-    let server = std::env::var("SPACE_RTS_SERVER").ok().or_else(load_server).unwrap_or_else(|| DEFAULT_SERVER.to_string());
+    let server = std::env::var("SPACE_RTS_SERVER").ok().or_else(|| load_server().map(migrate_server)).unwrap_or_else(|| DEFAULT_SERVER.to_string());
     ui::art::load("assets").await;
     let mut ui = ui::Ui::new();
     let mut be = backend::ClientBackend::new(server);

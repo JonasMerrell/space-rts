@@ -15,7 +15,10 @@ pub type FirstSeen = Arc<Mutex<Option<String>>>;
 
 /// (address, cert sha256) known at build time, e.g. the home server's self-signed cert.
 /// `HOHMANN_PIN="host:port=sha256hex"` at build time adds one more.
-const BUILT_IN: &[(&str, &str)] = &[];
+const BUILT_IN: &[(&str, &str)] = &[
+    // hohmann-reach-server VM (LAN), self-signed cert generated 2026-10-26
+    ("192.168.0.105:7777", "7f0e1c3f878beb14c583ea19a6c4cb595a81a9de49662325e1a66f7fc22892ad"),
+];
 
 pub fn fingerprint(der: &[u8]) -> String {
     use sha2::{Digest, Sha256};
