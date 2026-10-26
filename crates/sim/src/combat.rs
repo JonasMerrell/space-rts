@@ -230,7 +230,7 @@ mod tests {
         g.start();
         let x = g.system.bodies.iter().find(|b| b.kind == crate::BodyKind::Moon && g.bodies[b.id.0 as usize].owner.is_none()).unwrap().id;
         g.ships.clear();
-        g.stations.push(Station { id: StationId(0), owner: 0, kind: StationKind::Defense, body: x, hp: StationKind::Defense.max_hp(), fuel: 0.0, done_t: 0.0 });
+        g.stations.push(Station { id: StationId(0), owner: 0, kind: StationKind::Defense, body: x, hp: StationKind::Defense.max_hp(), fuel: 0.0, done_t: 0.0, work_left: 0.0 });
         let st = ShipClass::Bomber.stats();
         g.spawn(1, ShipClass::Bomber, x);
         g.advance_to(g.t + 1800.0);

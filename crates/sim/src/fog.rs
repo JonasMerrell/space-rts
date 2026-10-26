@@ -6,7 +6,7 @@
 //!
 //! Visibility is evaluated once per tick (`update_intel`) and cached per player, so the server
 //! can cut `Game::view_for(p)` cheaply for every State it sends.
-use crate::game::{BodyState, Game, PlayerId, Ship, ShipClass, ShipId, ShipState, Upgrade};
+use crate::game::{Event, EventKind, BodyState, Game, PlayerId, Ship, ShipClass, ShipId, ShipState, Upgrade};
 use crate::station::StationKind;
 use crate::system::BodyId;
 use crate::v2::V2;
@@ -253,6 +253,11 @@ impl Game {
             if self.players[p].intel.len() != self.bodies.len() {
                 self.players[p].intel = vec![None; self.bodies.len()];
             }
+            // vision isn't saved, so after a restart (or at game start) there's nothing to diff against
+            if !self.players[p].vision.ships.is_empty() {
+                let news = self.sensor_news(me, &self.players[p].vision, &v, &pos);
+                log_sensor_items(&mut self.players[p].sensor_log, news);
+            }
             for &b in &v.bodies {
                 let power = self.power_at(b).into_iter().filter(|&(q, _)| q == me || self.bodies[b.0 as usize].owner == Some(q) || self.power_seen(&v, b, q)).collect();
                 let mut state = self.bodies[b.0 as usize].clone();
@@ -281,6 +286,118 @@ impl Game {
             self.players[p].vision = v;
         }
     }
+
+    /// What changed in `me`'s sensor picture since the last tick: contacts spotted and lost,
+    /// engine burns, other players' bodies changing hands and battles sighted. Only from `me`'s
+    /// own vision (`prev` → `v`), grouped per owner and nearest body.
+    fn sensor_news(&self, me: PlayerId, prev: &Vision, v: &Vision, pos: &[V2]) -> Vec<SensorItem> {
+        let t = v.t;
+        let mut out: Vec<SensorItem> = vec![];
+        let mut add = |kind: ReportKind, owner: PlayerId, body: Option<BodyId>, s: &Ship, dest: Option<BodyId>| {
+            match out.iter_mut().find(|x| x.kind == kind && x.owner == Some(owner) && x.body == body) {
+                Some(x) => {
+                    x.ships.push((s.id, s.class));
+                    x.dest = x.dest.or(dest);
+                }
+                None => out.push(SensorItem { t, kind, owner: Some(owner), body, ships: vec![(s.id, s.class)], dest, other: None }),
+            }
+        };
+        for (i, s) in self.ships.iter().enumerate() {
+            if s.owner == me {
+                continue;
+            }
+            let now = v.ships.binary_search(&s.id).is_ok();
+            let before = prev.ships.binary_search(&s.id).is_ok();
+            let at = s.parked_at().or_else(|| self.nearest_body(pos[i]));
+            let dest = match &s.state {
+                ShipState::Flying(f) if v.scanned.binary_search(&s.id).is_ok() => f.dest,
+                _ => None,
+            };
+            if now && !before {
+                add(ReportKind::Spotted, s.owner, at, s, dest);
+            } else if !now && before {
+                add(ReportKind::Lost, s.owner, at, s, None);
+            }
+            if now && s.last_burn_t > prev.t && s.last_burn_t <= t {
+                add(ReportKind::Burn, s.owner, at, s, dest);
+            }
+        }
+        let intel = self.players.get(me as usize).map(|p| &p.intel);
+        for &b in &v.bodies {
+            let now = &self.bodies[b.0 as usize];
+            let Some(Some(old)) = intel.and_then(|x| x.get(b.0 as usize)) else { continue };
+            // our own wins and losses already have their own events
+            if now.owner != old.state.owner && now.owner != Some(me) && old.state.owner != Some(me) {
+                out.push(SensorItem { t, kind: ReportKind::Territory, owner: now.owner, body: Some(b), ships: vec![], dest: None, other: old.state.owner });
+            }
+            let mine_there = self.ships.iter().any(|s| s.owner == me && s.parked_at() == Some(b));
+            if now.in_combat && !old.state.in_combat && now.owner != Some(me) && !mine_there {
+                out.push(SensorItem { t, kind: ReportKind::Battle, owner: now.owner, body: Some(b), ships: vec![], dest: None, other: None });
+            }
+        }
+        out
+    }
+
+    /// A sensor log item as a report line (title, text).
+    pub fn describe_sensor_item(&self, x: &SensorItem) -> (String, String) {
+        let name = |q: Option<PlayerId>| q.and_then(|q| self.players.get(q as usize)).map(|p| p.name.clone()).unwrap_or_else(|| "nobody".into());
+        let bname = |b: Option<BodyId>| b.map(|b| self.system.body(b).name.clone()).unwrap_or_else(|| "deep space".into());
+        let mut classes: Vec<(&str, usize)> = vec![];
+        for (_, c) in &x.ships {
+            let c = c.stats().name;
+            match classes.iter_mut().find(|y| y.0 == c) {
+                Some(y) => y.1 += 1,
+                None => classes.push((c, 1)),
+            }
+        }
+        let list = classes.iter().map(|(c, k)| if *k > 1 { format!("{k} {c}s") } else { c.to_string() }).collect::<Vec<_>>().join(", ");
+        let to = x.dest.map(|d| format!(", heading for {}", bname(Some(d)))).unwrap_or_default();
+        let who = name(x.owner);
+        match x.kind {
+            ReportKind::Spotted => ("Contact".into(), format!("{who}: {list} near {}{to}", bname(x.body))),
+            ReportKind::Lost => ("Contact lost".into(), format!("Lost track of {who}'s {list} near {}", bname(x.body))),
+            ReportKind::Burn => ("Engine burn".into(), format!("{who}'s {list} burned near {}{to}", bname(x.body))),
+            ReportKind::Territory => ("Territory".into(), format!("{} changed hands from {} to {who}", bname(x.body), name(x.other))),
+            ReportKind::Battle => ("Battle sighted".into(), format!("Fighting at {}", bname(x.body))),
+        }
+    }
+
+    /// Everything player `p` should hear about after game time `since`: their events (battles,
+    /// territory, builds, research…) plus their sensor log as `EventKind::Sensor` events, oldest
+    /// first, at most `max` (the most recent are kept).
+    pub fn away_report(&self, p: PlayerId, since: f64, max: usize) -> Vec<Event> {
+        let mut v: Vec<Event> = self.events_for(p).filter(|e| e.t > since).cloned().collect();
+        if let Some(pl) = self.players.get(p as usize) {
+            for x in pl.sensor_log.iter().filter(|x| x.t > since) {
+                let (title, body) = self.describe_sensor_item(x);
+                v.push(Event {
+                    seq: 0,
+                    t: x.t,
+                    to: Some(p),
+                    kind: EventKind::Sensor,
+                    title,
+                    body,
+                    body_ref: x.body,
+                    ship_ref: x.ships.first().map(|s| s.0),
+                });
+            }
+        }
+        v.sort_by(|a, b| a.t.total_cmp(&b.t));
+        let n = v.len();
+        v.drain(..n.saturating_sub(max));
+        v
+    }
+
+    /// Planet or moon nearest to a point (for "near X" in sensor reports).
+    fn nearest_body(&self, pos: V2) -> Option<BodyId> {
+        self.system
+            .bodies
+            .iter()
+            .filter(|b| !b.is_star())
+            .min_by(|a, b| self.system.pos(a.id, self.t).dist(pos).total_cmp(&self.system.pos(b.id, self.t).dist(pos)))
+            .map(|b| b.id)
+    }
+
 
     /// Did vision `v` detect the armed ships of player `q` at body `b`?
     fn power_seen(&self, v: &Vision, b: BodyId, q: PlayerId) -> bool {
@@ -377,8 +494,59 @@ fn blank_player(pl: &mut crate::game::Player) {
     pl.home = None;
     pl.intel.clear();
     pl.contacts.clear();
+    pl.sensor_log.clear();
+    pl.last_active = 0.0;
     pl.research.clear();
     pl.techs.clear();
     pl.vision = Vision::default();
     pl.bot_avoid.clear();
+}
+
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReportKind {
+    Spotted,
+    Lost,
+    Burn,
+    Territory,
+    Battle,
+}
+
+/// One line of a player's sensor log (the "while you were away" report). Repeated sightings of
+/// the same kind, owner and body within `LOG_MERGE` are merged into one item.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SensorItem {
+    pub t: f64,
+    pub kind: ReportKind,
+    pub owner: Option<PlayerId>,
+    pub body: Option<BodyId>,
+    pub ships: Vec<(ShipId, ShipClass)>,
+    /// where the ships are heading (only if a scanner saw their plan)
+    pub dest: Option<BodyId>,
+    /// previous owner (territory changes)
+    pub other: Option<PlayerId>,
+}
+
+/// Sensor log items of the same kind/owner/body this close together are merged.
+pub const LOG_MERGE: f64 = 3600.0;
+/// Sensor log entries kept per player.
+pub const LOG_CAP: usize = 200;
+
+fn log_sensor_items(log: &mut Vec<SensorItem>, news: Vec<SensorItem>) {
+    for x in news {
+        let merge = log.iter_mut().rev().take_while(|y| x.t - y.t < LOG_MERGE).find(|y| y.kind == x.kind && y.owner == x.owner && y.body == x.body && y.other == x.other);
+        match merge {
+            Some(y) => {
+                for s in x.ships {
+                    if !y.ships.iter().any(|z| z.0 == s.0) {
+                        y.ships.push(s);
+                    }
+                }
+                y.dest = x.dest.or(y.dest);
+            }
+            None => log.push(x),
+        }
+    }
+    let n = log.len();
+    log.drain(..n.saturating_sub(LOG_CAP));
 }

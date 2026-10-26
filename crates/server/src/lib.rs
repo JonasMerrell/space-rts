@@ -277,7 +277,7 @@ impl Server {
                 let mut out = vec![];
                 for g in self.games.values() {
                     let Some(me) = g.player_by_name(&u).map(|p| p.id) else { continue };
-                    for e in g.events_for(me) {
+                    for e in g.events_for(me).filter(|e| e.kind != sim::game::EventKind::Sensor) {
                         let real = g.started_real + e.t / g.settings.speed;
                         if real > since {
                             out.push((g.code.clone(), real, e.clone()));
@@ -299,7 +299,17 @@ impl Server {
             let u = c.user.clone().unwrap_or_default();
             self.games.get(code).and_then(|g| g.player_by_name(&u)).map(|p| p.id)
         };
-        if let (Some(g), Some(me)) = (self.games.get(code), me) {
+        if let (Some(g), Some(me)) = (self.games.get_mut(code), me) {
+            if g.status == Status::Running {
+                let t = g.time_at(unix_now());
+                g.advance_to(t);
+                let since = g.players[me as usize].last_active;
+                let report = ServerMsg::Report { code: code.to_string(), since, now: g.t, events: g.away_report(me, since, 300) };
+                g.players[me as usize].last_active = g.t;
+                self.dirty.insert(code.to_string());
+                self.send(conn, &report);
+            }
+            let g = &self.games[code];
             let line = Self::state_line(g, me);
             if let Some(c) = self.conns.get(&conn) {
                 let _ = c.tx.send(line);
@@ -324,6 +334,15 @@ impl Server {
             }
             if broadcast_all && g.status == Status::Running {
                 self.changed.insert(code.clone());
+            }
+        }
+        // players with the game open are "here": the away report starts when they leave
+        for c in self.conns.values() {
+            let (Some(code), Some(u)) = (c.open.as_deref(), c.user.as_deref()) else { continue };
+            if let Some(g) = self.games.get_mut(code) {
+                if let Some(i) = g.players.iter().position(|p| p.name == u) {
+                    g.players[i].last_active = g.t;
+                }
             }
         }
         let changed: Vec<String> = self.changed.drain().collect();

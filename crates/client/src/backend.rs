@@ -54,6 +54,8 @@ pub struct ClientBackend {
     forecast: Forecaster,
     /// last `predicted` answer: (run gen, frame index, view)
     predicted: RefCell<Option<(u64, usize, Rc<m::GameView>)>>,
+    /// "While you were away" report waiting to be shown / dismissed.
+    report: Option<m::AwayReport>,
 }
 
 impl ClientBackend {
@@ -99,6 +101,7 @@ impl ClientBackend {
             last_error: None,
             forecast: Forecaster::default(),
             predicted: RefCell::new(None),
+            report: None,
         }
     }
 
@@ -189,6 +192,12 @@ impl ClientBackend {
                     self.notice(m::NoticeKind::Bad, "Can't do that", &msg, None);
                 }
             }
+            ServerMsg::Report { code, since, now, events } => {
+                // only worth a sheet after a real absence (not a reconnect blip)
+                if self.code().as_deref() == Some(code.as_str()) && now - since >= REPORT_MIN_AWAY && !events.is_empty() {
+                    self.report = Some(away_report(since, now, &events));
+                }
+            }
             ServerMsg::Events(_) | ServerMsg::Pong => {}
         }
     }
@@ -214,6 +223,7 @@ impl ClientBackend {
                 g::EventKind::Good => m::NoticeKind::Good,
                 g::EventKind::Bad => m::NoticeKind::Bad,
                 g::EventKind::Battle => m::NoticeKind::Battle,
+                g::EventKind::Sensor => m::NoticeKind::Info,
             };
             let focus = e.ship_ref.map(|s| m::Focus::Ship(s.0)).or(e.body_ref.map(|b| m::Focus::Body(b.0)));
             self.notice(kind, &e.title, &e.body, focus);
@@ -480,6 +490,40 @@ pub(crate) fn ship_model(s: &g::Ship, trajectory: Option<m::Trajectory>) -> m::S
     }
 }
 
+/// Game seconds away before the report sheet is worth showing.
+const REPORT_MIN_AWAY: f64 = 900.0;
+
+fn away_report(since: f64, now: f64, events: &[g::Event]) -> m::AwayReport {
+    let items = events
+        .iter()
+        .map(|e| {
+            let territory = e.title.starts_with("Territory") || e.title == "Battle sighted";
+            let section = match e.kind {
+                g::EventKind::Battle => m::ReportSection::Battles,
+                _ if territory => m::ReportSection::Battles,
+                g::EventKind::Sensor => m::ReportSection::Contacts,
+                _ => m::ReportSection::Empire,
+            };
+            let tone = match e.kind {
+                g::EventKind::Good => 1,
+                g::EventKind::Bad | g::EventKind::Battle => -1,
+                g::EventKind::Sensor if e.title == "Contact" || e.title == "Engine burn" => -1,
+                _ => 0,
+            };
+            m::ReportItem {
+                t: e.t,
+                section,
+                title: e.title.clone(),
+                text: e.body.clone(),
+                focus: e.ship_ref.map(|s| m::Focus::Ship(s.0)).or(e.body_ref.map(|b| m::Focus::Body(b.0))),
+                fallback: e.body_ref.map(|b| m::Focus::Body(b.0)),
+                tone,
+            }
+        })
+        .collect();
+    m::AwayReport { since, now, items }
+}
+
 fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Trajectory>) -> m::GameView {
     let sys = &game.system;
     let bodies = sys
@@ -735,6 +779,7 @@ impl Backend for ClientBackend {
                     self.send(ClientMsg::Cmd { code, cmd: Command::CancelDeparture { ship: g::ShipId(ship) } });
                 }
             }
+            UiAction::DismissReport => self.report = None,
             UiAction::Chat(text) => {
                 if let Some(code) = code {
                     self.send(ClientMsg::Cmd { code, cmd: Command::Chat { text } });
@@ -1052,6 +1097,10 @@ impl Backend for ClientBackend {
             .collect();
         debug_assert!(Branch::ALL.iter().zip(m::TECH_BRANCHES).all(|(b, n)| b.label() == n));
         Some(m::ResearchView { techs, labs })
+    }
+
+    fn away_report(&self) -> Option<&m::AwayReport> {
+        self.report.as_ref()
     }
 
     fn stations(&self, id: BodyId) -> Option<m::StationsView> {

@@ -86,6 +86,7 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                     g.selected = Some(Focus::Ship(90));
                     g.mode = Mode::Target(90);
                 }
+                "report" => be.report = Some(ui::demo::demo_report(v.now)),
                 "rock" => g.selected = Some(Focus::Body(9)),
                 "res_energy" => g.res_open = Some(1),
                 "detail_up" => {
@@ -153,6 +154,7 @@ fn add_builders(be: &mut DemoBackend, body: BodyId, n: u32) {
             destination: None,
             retreat: false,
             seen_at: None,
+            planned: None,
         });
     }
 }
