@@ -471,3 +471,25 @@ pub fn draw_body(b: &Body, c: Vec2, r: f32, star: Vec2, owner_color: Option<usiz
         draw_circle_lines(c.x, c.y, rr, 3.0 * s(), l);
     }
 }
+
+/// Hover outline + name pill for whatever is under the mouse.
+pub fn draw_hover(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64, f: Focus) {
+    let (c, r, name) = match f {
+        Focus::Body(id) => {
+            let Some(b) = view.body(id) else { return };
+            (cam.to_screen(be.body_pos(id, t)), body_radius_px(b, cam) + 8.0 * s(), b.name.clone())
+        }
+        Focus::Ship(id) => {
+            let Some(sh) = view.ship(id) else { return };
+            let Some((p, _)) = ship_screen(be, view, cam, sh, t) else { return };
+            let who = view.player(sh.owner).map(|p| p.name.clone()).unwrap_or_default();
+            let n = if sh.count > 1 { format!("{} ×{} · {who}", sh.name, sh.count) } else { format!("{} · {who}", sh.name) };
+            (p, 16.0 * s(), n)
+        }
+    };
+    draw_circle_lines(c.x, c.y, r, 2.0 * s(), Color::new(1.0, 1.0, 1.0, 0.7));
+    let w = measure(&name, FontKind::Title, 13.0).x + 16.0 * s();
+    let pr = Rect::new(c.x - w / 2.0, c.y + r + 6.0 * s(), w, 22.0 * s());
+    cel::round_rect(pr, pr.h / 2.0, alpha(PANEL, 0.92));
+    text(&name, pr.center().x, pr.center().y + s(), 13.0, PAPER, FontKind::Title, Align::Center);
+}

@@ -66,7 +66,7 @@ pub fn hud(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
     let res = view.resources;
     let btn_space = 2.0 * 52.0 * s();
     let avail = w - 2.0 * margin() - btn_space;
-    let cw = (avail - 2.0 * 8.0 * s()) / 3.0;
+    let cw = ((avail - 2.0 * 8.0 * s()) / 3.0).min(if wide() { 150.0 * s() } else { f32::MAX });
     let ch = 44.0 * s();
     type Item<'a> = (&'a str, f64, f64, fn(Vec2, f32));
     let items: [Item; 3] =
@@ -321,6 +321,11 @@ pub fn prediction_banner(scrub: f64, simulating: bool) {
 pub(super) fn sheet_rect(h_dp: f32) -> Rect {
     let w = screen_width();
     let h = h_dp * s();
+    if wide() {
+        // Computer mode: a panel on the right under the HUD, leaving the map wide open.
+        let h = h.min(scrub_top() - hud_bottom() - 26.0 * s());
+        return Rect::new(w - margin() - side_w(), hud_bottom() + 8.0 * s(), side_w(), h);
+    }
     Rect::new(margin(), scrub_top() - h - 18.0 * s(), w - 2.0 * margin(), h)
 }
 
@@ -1383,7 +1388,9 @@ pub fn toasts(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
         let slide = ((age / 0.25).min(1.0) * std::f32::consts::FRAC_PI_2).sin();
         let fade = ((5.0 - age) / 0.4).clamp(0.0, 1.0);
         let tw = (w - 2.0 * margin()).min(380.0 * s());
-        let x = w - margin() - tw * slide + (1.0 - fade) * tw;
+        // computer mode: slide in at the right edge of the map, left of the side panel
+        let right = if wide() { w - 2.0 * margin() - side_w() } else { w - margin() };
+        let x = right - tw * slide + (1.0 - fade) * tw;
         let r = Rect::new(x, y, tw, 62.0 * s());
         inp.block(r);
         cel::panel(r, PANEL);
@@ -1435,7 +1442,9 @@ pub fn hint(g: &mut GameScreen) {
 pub fn chat(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
     let w = screen_width();
     let top = hud_bottom() + 4.0 * s();
-    let r = Rect::new(margin(), top, w - 2.0 * margin(), scrub_top() - top - 12.0 * s());
+    // computer mode: a column on the left, the map stays visible
+    let cw = if wide() { side_w() } else { w - 2.0 * margin() };
+    let r = Rect::new(margin(), top, cw, scrub_top() - top - 12.0 * s());
     inp.block(r);
     // Opaque: the map and sheets must not show through the conversation.
     cel::panel(r, alpha(PANEL, 1.0));

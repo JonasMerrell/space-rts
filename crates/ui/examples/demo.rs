@@ -220,6 +220,9 @@ async fn main() {
     if !scene.is_empty() {
         setup(&scene, &mut ui, &mut be);
     }
+    if let Some((x, y)) = std::env::var("UI_HOVER").ok().and_then(|v| v.split_once(',').map(|(a, b)| (a.parse().unwrap_or(0.0), b.parse().unwrap_or(0.0)))) {
+        ui.input.script_hover = Some(vec2(x, y));
+    }
     let mut frame = 0;
     loop {
         ui.frame(&mut be);

@@ -8,10 +8,10 @@ UI=$ROOT/crates/ui
 export PATH=$HOME/.cargo/bin:$PATH
 mkdir -p "$ROOT/target-ui/lib" && ln -sf /usr/lib64/libasound.so.2 "$ROOT/target-ui/lib/libasound.so"
 CARGO_TARGET_DIR=$ROOT/target-ui RUSTFLAGS="-L $ROOT/target-ui/lib" cargo build -q -p ui --example demo --release
-mkdir -p "$UI/shots"
+mkdir -p "${SHOTS:-$UI/shots}"
 for scene in "$@"; do
   podman run --rm -v "$ROOT":"$ROOT":Z -w "$ROOT" \
-    -e UI_SCENE=$scene -e UI_SHOT=$UI/shots/$scene.png -e UI_W=${UI_W:-540} -e UI_H=${UI_H:-1170} \
-    localhost/rts-ui-shot bash -c "Xvfb :1 -screen 0 1600x1300x24 -nolisten tcp >/dev/null 2>&1 & sleep 1; DISPLAY=:1 timeout 30 $ROOT/target-ui/release/examples/demo" \
-    && echo "shots/$scene.png"
+    -e UI_SCENE=$scene -e UI_SHOT=${SHOTS:-$UI/shots}/$scene.png -e UI_HOVER=${UI_HOVER:-} -e UI_W=${UI_W:-540} -e UI_H=${UI_H:-1170} \
+    localhost/rts-ui-shot bash -c "Xvfb :1 -screen 0 2000x1400x24 -nolisten tcp >/dev/null 2>&1 & sleep 1; DISPLAY=:1 timeout 30 $ROOT/target-ui/release/examples/demo" \
+    && echo "${SHOTS:-shots}/$scene.png"
 done

@@ -216,6 +216,7 @@ pub fn arrow(a: Vec2, b: Vec2, w: f32, color: Color) {
 
 thread_local! {
     // ManuallyDrop: see theme::FONTS.
+    static PENDING: std::cell::Cell<(u32, u32, f64)> = const { std::cell::Cell::new((0, 0, 0.0)) };
     static BACKDROP: RefCell<std::mem::ManuallyDrop<Option<(u32, u32, Texture2D)>>> = const { RefCell::new(std::mem::ManuallyDrop::new(None)) };
 }
 
@@ -223,9 +224,22 @@ thread_local! {
 /// screen size into a texture.
 pub fn backdrop() {
     let (w, h) = (screen_width().max(1.0) as u32, screen_height().max(1.0) as u32);
+    let now = get_time();
+    // While a browser window is being resized the size changes every frame: stretch the old bake
+    // and only re-bake once the size has held still for a moment.
+    let settled = PENDING.with(|p| {
+        let (pw, ph, since) = p.get();
+        if (pw, ph) != (w, h) {
+            p.set((w, h, now));
+            false
+        } else {
+            now - since > 0.25
+        }
+    });
     let tex = BACKDROP.with(|b| {
         let mut b = b.borrow_mut();
-        if !matches!(&**b, Some((bw, bh, _)) if *bw == w && *bh == h) {
+        let stale = !matches!(&**b, Some((bw, bh, _)) if *bw == w && *bh == h);
+        if stale && (settled || b.is_none()) {
             if let Some((_, _, old)) = b.take() {
                 drop(old);
             }
@@ -233,7 +247,7 @@ pub fn backdrop() {
         }
         b.as_ref().unwrap().2.clone()
     });
-    draw_texture(&tex, 0.0, 0.0, WHITE);
+    draw_texture_ex(&tex, 0.0, 0.0, WHITE, DrawTextureParams { dest_size: Some(vec2(w as f32, h as f32)), ..Default::default() });
 }
 
 fn bake_backdrop(w: u32, h: u32) -> Texture2D {

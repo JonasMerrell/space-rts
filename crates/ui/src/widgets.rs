@@ -35,7 +35,8 @@ pub fn button(inp: &mut Input, r: Rect, label: &str, st: Style) -> bool {
     let (fill, border, fg) = style_colors(st);
     let rad = 8.0 * s();
     let b = (1.2 * s()).max(1.0);
-    cel::round_rect(r, rad, if down { lighten(fill, 0.18) } else { fill });
+    let hot = inp.hovering(r);
+    cel::round_rect(r, rad, if down { lighten(fill, 0.18) } else if hot { lighten(fill, 0.09) } else { fill });
     cel::round_rect_lines(r, rad, b, border);
     let size = (r.h / s() * 0.42).min(22.0);
     text(label, r.center().x, r.center().y + s(), size, fg, FontKind::Title, Align::Center);
@@ -56,7 +57,7 @@ pub fn round_button(inp: &mut Input, c: Vec2, rad: f32, label: &str, fill: Color
     let down = inp.holding(r);
     let ring = if fill == PAPER { Color::new(1.0, 1.0, 1.0, 0.3) } else { alpha(fill, 0.8) };
     draw_circle(c.x, c.y, rad + 1.2 * s(), ring);
-    draw_circle(c.x, c.y, rad, if down { PANEL_HI } else { PANEL });
+    draw_circle(c.x, c.y, rad, if down || inp.hovering(r) { PANEL_HI } else { PANEL });
     // "@name" = icon from assets/sprites/icons, text fallback.
     match label.strip_prefix('@') {
         Some(name) => match crate::art::tex(&format!("sprites/icons/{name}.png")) {
@@ -172,7 +173,7 @@ pub fn stepper(inp: &mut Input, r: Rect, label: &str, v: u32, lo: u32, hi: u32) 
 pub fn chip(inp: &mut Input, r: Rect, label: &str, on: bool, color: Color) -> bool {
     inp.block(r);
     let b = (1.2 * s()).max(1.0);
-    cel::round_rect(r, r.h / 2.0, if on { alpha(color, 0.22) } else { PANEL });
+    cel::round_rect(r, r.h / 2.0, if on { alpha(color, 0.22) } else if inp.hovering(r) { PANEL_HI } else { PANEL });
     cel::round_rect_lines(r, r.h / 2.0, b, if on { color } else { BORDER });
     let size = (r.h / s() * 0.42).min(18.0);
     if on {

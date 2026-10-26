@@ -63,6 +63,7 @@ thread_local! {
     // Leaked on purpose: dropping GL textures in TLS destructors after the context is gone segfaults.
     static FONTS: Cell<Option<&'static Fonts>> = const { Cell::new(None) };
     static SCALE: Cell<f32> = const { Cell::new(1.0) };
+    static WIDE: Cell<bool> = const { Cell::new(false) };
 }
 
 pub fn init() {
@@ -73,10 +74,25 @@ pub fn init() {
     FONTS.with(|f| f.set(Some(Box::leak(Box::new(Fonts { title, body })))));
 }
 
-/// Recompute the dp→px scale; call once per frame. 1 dp ≈ 1/400 of the short screen side.
+/// Recompute layout mode and the dp→px scale; call once per frame (the browser canvas resizes live).
+/// Phone (portrait): 1 dp ≈ 1/400 of the short side. Computer (landscape window): 1 dp ≈ 1/760 of
+/// the height, so a 1600×900 window gets ~1.2 px/dp and the map gets the space.
 pub fn update_scale() {
-    let short = screen_width().min(screen_height());
-    SCALE.with(|s| s.set((short / 400.0).max(0.75)));
+    let (w, h) = (screen_width(), screen_height());
+    let wide = w > h * 1.15;
+    WIDE.with(|x| x.set(wide));
+    let sc = if wide { (h / 760.0).clamp(0.8, 2.5) } else { (w.min(h) / 400.0).max(0.75) };
+    SCALE.with(|s| s.set(sc));
+}
+
+/// Computer mode: landscape window, mouse + keyboard. Panels go to the side instead of the bottom.
+pub fn wide() -> bool {
+    WIDE.with(|x| x.get())
+}
+
+/// Width of the right-hand side panel in computer mode (px).
+pub fn side_w() -> f32 {
+    (400.0 * s()).min(screen_width() * 0.42)
 }
 
 /// dp → px.
