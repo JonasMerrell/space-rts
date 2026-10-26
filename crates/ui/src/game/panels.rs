@@ -1,5 +1,6 @@
 //! HUD, scrubber, bottom sheets, planner/node-editor overlays, chat and toasts.
 
+use super::details::Detail;
 use super::map::{self, Camera};
 use super::{GameScreen, Handle, Mode, NodeEdit, SCRUB_SPAN};
 use crate::art;
@@ -73,7 +74,13 @@ pub fn hud(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
     for (i, (label, v, rate, icon)) in items.iter().enumerate() {
         let r = Rect::new(margin() + i as f32 * (cw + 8.0 * s()), top, cw, ch);
         inp.block(r);
-        cel::panel(r, PANEL);
+        let open = g.res_open == Some(i);
+        cel::panel(r, if open { PANEL_HI } else { PANEL });
+        if inp.tapped(r) {
+            inp.consume_tap();
+            g.res_open = if open { None } else { Some(i) };
+            art::sfx(if open { "menu_close" } else { "menu_open" });
+        }
         let ic = vec2(r.x + 18.0 * s(), r.center().y);
         match art::tex(&format!("sprites/icons/{}.png", label.to_lowercase())) {
             Some(t) => art::draw_centered(&t, ic, vec2(26.0, 26.0) * s(), 0.0, WHITE),
@@ -230,6 +237,9 @@ fn sheet_rect(h_dp: f32) -> Rect {
 }
 
 pub fn sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView) {
+    if let Some(res) = g.res_open {
+        return resource_sheet(g, inp, be, view, res);
+    }
     match g.mode.clone() {
         Mode::Plan(plan) => plan_sheet(g, inp, be, view, &plan),
         Mode::Nodes(ne) => node_sheet(g, inp, be, view, ne),
@@ -398,6 +408,76 @@ pub fn impact_world(ip: &ImpactPreview, be: &dyn Backend, view: &GameView, cam: 
     }
 }
 
+/// Where matter / energy / fuel come from: per owned body, plus refining and other spending.
+fn resource_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView, res: usize) {
+    let (name, stock, net) = match res {
+        0 => ("MATTER", view.resources.matter, view.resources.matter_rate),
+        1 => ("ENERGY", view.resources.energy, view.resources.energy_rate),
+        _ => ("FUEL", view.resources.fuel, view.resources.fuel_rate),
+    };
+    // (label, per hour, body to jump to)
+    let mut rows: Vec<(String, f64, Option<BodyId>)> = vec![];
+    let mut refining = 0.0;
+    for b in view.bodies.iter().filter(|b| b.owner == Some(view.me)) {
+        let Some(info) = be.body_info(b.id) else { continue };
+        let v = [info.matter_rate, info.energy_rate, info.fuel_rate][res.min(2)];
+        refining += info.fuel_rate * 0.5;
+        if v.abs() > 0.05 {
+            rows.push((b.name.clone(), v, Some(b.id)));
+        }
+    }
+    rows.sort_by(|a, b| b.1.total_cmp(&a.1));
+    if res == 1 && refining > 0.05 {
+        // sim: refining costs 0.5 energy per tonne of fuel
+        rows.push(("Fuel refining".into(), -refining, None));
+    }
+    let listed: f64 = rows.iter().map(|r| r.1).sum();
+    if (net - listed).abs() > 0.5 {
+        rows.push((if res == 2 { "Ships refuelling / other".into() } else { "Other (stations, upkeep)".into() }, net - listed, None));
+    }
+
+    let row_h = 40.0 * s();
+    let shown = rows.len().min(7);
+    let r = sheet_rect(120.0 + shown as f32 * 40.0);
+    inp.block(r);
+    cel::panel(r, alpha(PANEL, 0.98));
+    let (x, w) = (r.x + 16.0 * s(), r.w - 32.0 * s());
+    inked(&format!("{name} SOURCES"), x, r.y + 22.0 * s(), 20.0, ACCENT, Align::Left);
+    text(&format!("stock {}", fmt_amount(stock)), x, r.y + 44.0 * s(), 13.0, MUTED, FontKind::Title, Align::Left);
+    if close_x(inp, r) {
+        g.res_open = None;
+        return;
+    }
+    let mut y = r.y + 62.0 * s();
+    let fmt = |v: f64| format!("{}{}/h", if v >= 0.0 { "+" } else { "" }, fmt_amount(v));
+    if rows.is_empty() {
+        text("Nothing produces this yet. Upgrade a planet you own.", x, y + 14.0 * s(), 14.0, MUTED, FontKind::Body, Align::Left);
+    }
+    for (label, v, body) in rows.iter().take(shown) {
+        let rr = Rect::new(r.x + 8.0 * s(), y, r.w - 16.0 * s(), row_h - 4.0 * s());
+        cel::round_rect(rr, 6.0 * s(), Color::new(1.0, 1.0, 1.0, if body.is_some() && inp.holding(rr) { 0.12 } else { 0.05 }));
+        if let Some(b) = body.and_then(|id| view.body(id)) {
+            let c = vec2(rr.x + 20.0 * s(), rr.center().y);
+            map::draw_body(b, c, 10.0 * s(), c + vec2(-80.0, -50.0), view.color_of(b.owner), get_time() as f32);
+        }
+        text(label, rr.x + 40.0 * s(), rr.center().y, 15.0, PAPER, FontKind::Body, Align::Left);
+        text(&fmt(*v), rr.x + rr.w - 10.0 * s(), rr.center().y, 15.0, if *v >= 0.0 { GOOD } else { DANGER }, FontKind::Title, Align::Right);
+        if let Some(id) = body {
+            if inp.tapped(rr) {
+                inp.consume_tap();
+                g.res_open = None;
+                g.mode = Mode::Idle;
+                g.focus(be, Focus::Body(*id), view.now + g.scrub);
+                return;
+            }
+        }
+        y += row_h;
+    }
+    draw_line(x, y + 4.0 * s(), x + w, y + 4.0 * s(), 1.0, BORDER);
+    text("NET", x, y + 24.0 * s(), 14.0, MUTED, FontKind::Title, Align::Left);
+    text(&fmt(net), x + w, y + 24.0 * s(), 17.0, if net >= 0.0 { GOOD } else { DANGER }, FontKind::Title, Align::Right);
+}
+
 fn affordable(view: &GameView, c: &Cost) -> bool {
     view.resources.matter >= c.matter && view.resources.energy >= c.energy
 }
@@ -409,6 +489,9 @@ fn cost_line(c: &Cost) -> String {
 /// Our own planet/moon: upgrades and shipyard tabs, build queue, power in orbit.
 fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Body, info: &BodyInfo) {
     let r = sheet_rect(332.0);
+    if super::details::draw(g, inp, view, info, r) {
+        return;
+    }
     inp.block(r);
     cel::panel(r, PANEL);
     let c = vec2(r.x + 30.0 * s(), r.y + 30.0 * s());
@@ -481,6 +564,12 @@ fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Bo
             } else {
                 text("MAX", cr.x + cr.w - 12.0 * s(), cr.center().y, 13.0, GOOD, FontKind::Title, Align::Right);
             }
+            // Tap the rest of the cell for what it does.
+            if inp.tapped(cr) {
+                inp.consume_tap();
+                art::sfx("menu_select");
+                g.detail = Some(Detail::Upgrade { body: b.id, name: u.name.clone() });
+            }
         }
     } else if info.buildable.is_empty() {
         text("No shipyard here yet. Upgrade Shipyard to build ships.", grid.x + 4.0 * s(), grid.y + 16.0 * s(), 14.0, MUTED, FontKind::Body, Align::Left);
@@ -508,12 +597,17 @@ fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Bo
                     art::sfx("ui_error");
                 }
             }
+            if inp.tapped(cr) {
+                inp.consume_tap();
+                art::sfx("menu_select");
+                g.detail = Some(Detail::Ship { body: b.id, class: *class });
+            }
         }
     }
     // Build queue.
     let qy = r.y + r.h - 22.0 * s();
     let q = if info.queue.is_empty() {
-        "Queue empty".to_string()
+        "Queue empty · tap an item for details".to_string()
     } else {
         let items: Vec<String> = info.queue.iter().take(3).map(|(l, t)| format!("{l} {}", fmt_dur(t - view.now))).collect();
         format!("Queue: {}", items.join(" · "))
