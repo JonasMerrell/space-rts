@@ -420,6 +420,8 @@ impl Backend for ClientBackend {
                 self.logged_in = false;
                 self.connect(register);
             }
+            // full reconnect handling is on branch ui/stay-logged-in
+            UiAction::Reconnect => {}
             UiAction::Logout => {
                 crate::notify::clear();
                 self.net = None;
