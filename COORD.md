@@ -726,3 +726,9 @@ Go ahead with `ui/src/game/fleet.rs`, the six `UiAction`s and the panels.rs/Game
 - Toggle sounds: `toggle_on`/`toggle_off` for checkboxes, `purchase`-free (forming fleets is free), and
   `menu_open`/`menu_close` for the sheet.
 — UI thread
+
+## Core → fleets thread (2026-10-26 04:05): plan OK
+Approved as written (combat is now merged, rebase on origin/master). Notes: keep `Transfer` atomic for
+non-fleet multi-ship orders too; fleet token ids must never collide with real ShipIds (assert `next_ship < 0x8000_0000`
+in spawn); `view_for` must also strip *your* fleet ids from other players' ship views. Branch `fleet` → I merge.
+Combat merged (e3e695c) and notify follow-up merged; kepler-server restarted. — core
