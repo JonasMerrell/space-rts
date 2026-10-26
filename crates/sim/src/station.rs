@@ -1,7 +1,7 @@
 //! Space stations: built in orbit of a planet, moon or asteroid. Unlike planet upgrades they
 //! don't need the body itself — a ship parked there is enough — so you can put a fuel depot on
 //! an asteroid or a telescope next to an enemy world. Stations are separate targets in combat.
-use crate::game::{EventKind, Game, PlayerId, ShipClass, Upgrade};
+use crate::game::{EventKind, Game, PlayerId, ShipClass};
 use crate::system::BodyId;
 use crate::tech::Tech;
 use serde::{Deserialize, Serialize};
@@ -127,7 +127,7 @@ impl Game {
 
     /// Why `p` can't build a `kind` station at `body` right now (None = it can).
     pub fn station_blocker(&self, p: PlayerId, body: BodyId, kind: StationKind) -> Option<String> {
-        let b = self.bodies.get(body.0 as usize)?;
+        self.bodies.get(body.0 as usize)?;
         if self.system.body(body).is_star() {
             return Some("can't build in orbit of the star".into());
         }
@@ -137,7 +137,7 @@ impl Game {
             }
         }
         if self.workers(p, body) == 0 {
-            return Some(if b.owner == Some(p) { "needs a shipyard or a construction ship here" } else { "needs a construction ship in orbit" }.into());
+            return Some("needs a construction ship in orbit".into());
         }
         if self.stations.iter().any(|s| s.owner == p && s.body == body && s.kind == kind) {
             return Some("you already have one there".into());
@@ -163,12 +163,10 @@ impl Game {
         self.ships.iter().filter(|s| s.owner == p && s.class == ShipClass::Constructor && s.parked_at() == Some(body)).count()
     }
 
-    /// Workers on `p`'s construction sites at `body`: constructors parked there, plus the body's own
-    /// shipyard if `p` holds it. Capped at `MAX_WORKERS`.
+    /// Workers on `p`'s construction sites at `body`: the constructors parked there (stations always
+    /// need construction ships, even at your own planets). Capped at `MAX_WORKERS`.
     pub fn workers(&self, p: PlayerId, body: BodyId) -> usize {
-        let b = &self.bodies[body.0 as usize];
-        let yard = (b.owner == Some(p) && b.level(Upgrade::Shipyard) > 0) as usize;
-        (self.constructors_at(p, body) + yard).min(MAX_WORKERS)
+        self.constructors_at(p, body).min(MAX_WORKERS)
     }
 
     /// Work done per second at `p`'s sites at `body` (each site there gets the full crew).
@@ -255,7 +253,9 @@ mod tests {
         let b = |g: &mut Game, body, kind| g.apply(0, Command::BuildStation { body, kind });
         assert!(b(&mut g, away, StationKind::Telescope).unwrap_err().contains("construction ship"));
         assert!(b(&mut g, home, StationKind::Scanner).unwrap_err().contains("Scanning"));
-        // home has a shipyard: one worker, so the listed single-worker time
+        // even at home a shipyard alone can't build stations: constructors are required everywhere
+        assert!(b(&mut g, home, StationKind::Telescope).unwrap_err().contains("construction ship"));
+        park(&mut g, 0, ShipClass::Constructor, home);
         b(&mut g, home, StationKind::Telescope).unwrap();
         assert!(b(&mut g, home, StationKind::Telescope).unwrap_err().contains("already"));
         // a warship parked at someone else's body isn't enough any more; a constructor is

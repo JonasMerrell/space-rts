@@ -740,7 +740,7 @@ impl Backend for DemoBackend {
         let v = self.view.as_ref()?;
         let now = self.now();
         let constructors: usize = v.ships.iter().filter(|s| s.owner == v.me && s.class == ShipClass::Constructor && s.parked_at == Some(id) && s.trajectory.is_none()).map(|s| s.count as usize).sum();
-        let workers = (constructors + (v.body(id)?.owner == Some(v.me)) as usize).min(6);
+        let workers = constructors.min(6);
         let present = workers > 0;
         let here = self
             .stations
