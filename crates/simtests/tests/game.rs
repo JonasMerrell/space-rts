@@ -432,18 +432,103 @@ fn planetary_defense_fights_invaders() {
 }
 
 /// Design (round 4): weapons account for relative velocity — energy is instant, kinetic must lead
-/// and does more damage. Combat currently happens between ships parked at the same body only and
-/// kinetic is a flat ×1.25, so there is nothing velocity-dependent to test yet.
+/// and does more damage.
 #[test]
-#[ignore = "not implemented yet: velocity-dependent kinetic vs energy combat"]
 fn kinetic_accuracy_falls_with_relative_velocity() {
-    panic!("waiting for a combat API that takes relative velocity");
+    use sim::combat::{evasion, shot, size, KINETIC_RANGE};
+    use sim::v2;
+    let c = ShipClass::Gunship;
+    let r = v2(800.0, 0.0);
+    let mut last = 2.0;
+    for v in [0.0, 1.0, 3.0, 6.0, 10.0, 15.0, 20.0] {
+        let k = shot(Weapon::Kinetic, r, v2(0.0, v), size(c), evasion(c)).expect("in range, catchable");
+        assert!(k.hit <= last, "kinetic hit {} at {v} km/s should not rise", k.hit);
+        last = k.hit;
+        // beams arrive at light speed: the target's motion doesn't matter
+        let e = shot(Weapon::Energy, r, v2(0.0, v), size(c), evasion(c)).unwrap();
+        assert!((e.hit - 1.0).abs() < 1e-12 && e.tof < 0.01);
+    }
+    assert!(last < 0.5, "fast crossers should mostly dodge slugs");
+    // kinetic out-damages energy against a slow target
+    let k = shot(Weapon::Kinetic, r, sim::V2::ZERO, size(c), evasion(c)).unwrap();
+    let e = shot(Weapon::Energy, r, sim::V2::ZERO, size(c), evasion(c)).unwrap();
+    assert!(k.hit * k.factor > e.hit * e.factor);
+    // a target crossing faster than the slugs can't be hit at all; nothing fires outside range
+    assert!(shot(Weapon::Kinetic, r, v2(0.0, 40.0), size(c), evasion(c)).is_none());
+    assert!(shot(Weapon::Kinetic, v2(KINETIC_RANGE * 1.01, 0.0), sim::V2::ZERO, size(c), evasion(c)).is_none());
+}
+
+/// A ship flying past an enemy fleet gets shot during the pass: beams always connect, slugs miss a
+/// fast flyby.
+#[test]
+fn flybys_are_shot_by_energy_but_outrun_kinetic() {
+    use sim::traj::State;
+    use sim::v2;
+    let run = |class: ShipClass, speed: f64| -> f64 {
+        let mut g = game4(31);
+        let x = neutral_body(&g);
+        g.ships.clear();
+        for _ in 0..3 {
+            put_ship(&mut g, 1, class, x);
+        }
+        let id = put_ship(&mut g, 0, ShipClass::Dreadnought, x);
+        let rp = g.system.body(x).park_radius() * 1.2;
+        let vesc = (2.0 * g.system.body(x).mu / rp).sqrt();
+        let s = g.ships.iter_mut().find(|s| s.id == id).unwrap();
+        let start = State { parent: x, t: g.t, r: v2(rp, 0.0), v: v2(0.0, (vesc * vesc + speed * speed).sqrt()) };
+        s.state = ShipState::Flying(Flight { start, burns: vec![], dest: None, cache: None });
+        g.advance_to(g.t + 20.0 * 60.0);
+        let hp = g.ship(id).map(|s| s.hp).unwrap_or(0.0);
+        ShipClass::Dreadnought.stats().hp - hp
+    };
+    let laser_slow = run(ShipClass::Gunship, 2.0);
+    let laser_fast = run(ShipClass::Gunship, 30.0);
+    let slug_slow = run(ShipClass::Bomber, 2.0);
+    let slug_fast = run(ShipClass::Bomber, 30.0);
+    println!("laser {laser_slow:.1}/{laser_fast:.1}  slug {slug_slow:.1}/{slug_fast:.1}");
+    assert!(laser_slow > 0.0 && laser_fast > 0.0, "beams should hit any flyby");
+    assert!(slug_slow > 0.0, "slugs should hit a slow flyby");
+    assert!(slug_fast < 0.25 * slug_slow, "a fast flyby should mostly outrun slugs");
+    assert!(laser_fast < laser_slow, "a fast flyby spends less time in range");
 }
 
 /// Design (rounds 4–6): asteroids with drives can be crashed into planets; damage = ½ m v², and a
 /// large enough impact wipes upgrades and everything in orbit.
 #[test]
-#[ignore = "not implemented yet: asteroid impacts"]
 fn asteroid_impact_energy_scales_with_mass_and_velocity_squared() {
-    panic!("waiting for asteroid drives / impacts in sim");
+    use sim::asteroid::{impact_energy, plan_impact, strength, WIPE};
+    assert_eq!(impact_energy(1000.0, 10.0), 50_000.0);
+    assert_eq!(impact_energy(2000.0, 10.0), 2.0 * impact_energy(1000.0, 10.0));
+    assert_eq!(impact_energy(1000.0, 30.0), 9.0 * impact_energy(1000.0, 10.0));
+
+    // crash the heaviest asteroid with a course into player 1's home
+    let mut g = game4(6);
+    let home = g.players[1].home.unwrap();
+    let mut asts: Vec<BodyId> = g.system.bodies.iter().filter(|b| b.kind == BodyKind::Asteroid).map(|b| b.id).collect();
+    asts.sort_by(|a, b| g.system.body(*b).radius.total_cmp(&g.system.body(*a).radius));
+    let (ast, plan) = asts.iter().find_map(|&a| plan_impact(&g, a, home, g.t).map(|p| (a, p))).expect("an impact course");
+    let imp = plan.impact.unwrap();
+    assert_eq!(imp.body, home);
+    assert!((imp.energy - impact_energy(sim::asteroid::mass(&g.system, ast), imp.v)).abs() < 1e-6 * imp.energy);
+    assert!((imp.severity - imp.energy / strength(&g.system, home)).abs() < 1e-9);
+    // nobody owns it yet: rejected; then give it to player 0 with enough fuel
+    assert!(g.apply(0, Command::AimAsteroid { body: ast, target: home }).is_err());
+    g.bodies[ast.0 as usize].owner = Some(0);
+    g.bodies[ast.0 as usize].fuel = plan.fuel + 1.0;
+    g.players[0].matter = 1e5;
+    g.players[0].energy = 1e5;
+    g.apply(0, Command::AimAsteroid { body: ast, target: home }).unwrap();
+    assert!(g.apply(0, Command::AimAsteroid { body: ast, target: home }).is_err(), "one drive at a time");
+    let before = g.ships.iter().filter(|s| s.parked_at() == Some(home)).count();
+    assert!(before > 0);
+    g.advance_to(imp.t + 2.0 * TICK);
+    assert!(g.bodies[ast.0 as usize].gone);
+    assert!(g.events.iter().any(|e| e.title == "Impact" || e.title == "Planet shattered"));
+    if imp.severity >= WIPE {
+        assert_eq!(g.bodies[home.0 as usize].owner, None, "a wiping impact leaves nobody in charge");
+        assert!(g.bodies[home.0 as usize].levels.iter().all(|&l| l == 0));
+        assert_eq!(g.ships.iter().filter(|s| s.parked_at() == Some(home)).count(), 0, "everything in orbit dies");
+    } else {
+        panic!("expected the biggest asteroid to wipe a home planet, severity {}", imp.severity);
+    }
 }

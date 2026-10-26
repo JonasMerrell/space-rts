@@ -317,6 +317,12 @@ pub struct BodyState {
     /// a battle was going on here last tick (so "Under attack" fires once per battle)
     #[serde(default)]
     pub in_combat: bool,
+    /// destroyed by an asteroid impact: produces nothing and can't be owned
+    #[serde(default)]
+    pub shattered: bool,
+    /// an asteroid that crashed into something; no longer exists (UI: don't draw it)
+    #[serde(default)]
+    pub gone: bool,
 }
 
 impl BodyState {
@@ -438,6 +444,12 @@ pub struct Game {
     pub stations: Vec<Station>,
     #[serde(default)]
     pub next_station: u32,
+    /// asteroid drives waiting to burn
+    #[serde(default)]
+    pub drives: Vec<crate::asteroid::Drive>,
+    /// pushed asteroids being tracked for flybys and impacts
+    #[serde(default)]
+    pub drifts: Vec<crate::asteroid::Drift>,
 }
 
 /// Commands players send. Applied at the current game time.
@@ -456,6 +468,10 @@ pub enum Command {
     BuildStation { body: BodyId, kind: StationKind },
     Chat { text: String },
     Extend { seconds: f64 },
+    /// Bolt a drive onto an asteroid and push it (burn.t = middle of the low-thrust burn).
+    PushAsteroid { body: BodyId, burn: Burn },
+    /// Auto-plan the cheapest push that crashes `body` into `target`.
+    AimAsteroid { body: BodyId, target: BodyId },
 }
 
 pub const TICK: f64 = 60.0;
@@ -486,6 +502,8 @@ impl Game {
             started_real: 0.0,
             stations: vec![],
             next_station: 0,
+            drives: vec![],
+            drifts: vec![],
         };
         let _ = g.add_player(host_name, None);
         g
@@ -647,13 +665,15 @@ impl Game {
         let bad = |b: &BodyId| b.0 >= n;
         match &cmd {
             Command::Transfer { to, .. } if bad(to) => return Err("no such body".into()),
-            Command::Build { body, .. } | Command::Upgrade { body, .. } | Command::Research { body, .. } | Command::BuildStation { body, .. } if bad(body) => {
+            Command::Build { body, .. } | Command::Upgrade { body, .. } | Command::Research { body, .. } | Command::BuildStation { body, .. } | Command::PushAsteroid { body, .. } if bad(body) => {
                 return Err("no such body".into())
             }
             Command::SetBurns { burns, .. } if burns.iter().any(|b| !b.t.is_finite() || !b.prograde.is_finite() || !b.radial.is_finite() || b.dv() > 1000.0) => {
                 return Err("invalid burn".into())
             }
             Command::Transfer { depart_t: Some(t), .. } if !t.is_finite() => return Err("invalid departure time".into()),
+            Command::AimAsteroid { body, target } if bad(body) || bad(target) => return Err("no such body".into()),
+            Command::PushAsteroid { burn, .. } if !burn.t.is_finite() || !burn.prograde.is_finite() || !burn.radial.is_finite() => return Err("invalid burn".into()),
             Command::Extend { seconds } if !seconds.is_finite() => return Err("invalid duration".into()),
             _ => {}
         }
@@ -689,6 +709,14 @@ impl Game {
                     self.schedule(player, id, plan)?;
                 }
                 Ok(())
+            }
+            Command::PushAsteroid { body, burn } => {
+                let plan = Ok(crate::asteroid::plan_push(self, body, burn));
+                self.order_push(player, body, plan)
+            }
+            Command::AimAsteroid { body, target } => {
+                let plan = crate::asteroid::plan_impact(self, body, target, self.t).ok_or_else(|| "no collision course within reach".to_string());
+                self.order_push(player, body, plan)
             }
             Command::CancelDeparture { ship } => {
                 let s = self.own_ship(player, ship)?;
@@ -820,6 +848,7 @@ impl Game {
         while self.t < t {
             let next_tick = self.last_tick + TICK;
             let step_end = next_tick.min(t);
+            self.asteroid_events(step_end);
             self.ship_events(step_end);
             self.t = step_end;
             if step_end >= next_tick {
@@ -993,7 +1022,7 @@ impl Game {
     /// Production per hour for a body (matter, energy, fuel) given its upgrades.
     pub fn production(&self, body: BodyId) -> (f64, f64, f64) {
         let b = &self.bodies[body.0 as usize];
-        if b.owner.is_none() {
+        if b.owner.is_none() || b.shattered || b.gone {
             return (0.0, 0.0, 0.0);
         }
         let kind = self.system.body(body).kind;
@@ -1150,7 +1179,7 @@ impl Game {
     fn ownership(&mut self) {
         for bi in 0..self.bodies.len() {
             let body = BodyId(bi as u32);
-            if self.system.body(body).is_star() {
+            if self.system.body(body).is_star() || self.bodies[bi].shattered || self.bodies[bi].gone {
                 continue;
             }
             let powers: Vec<(PlayerId, f64)> = self.power_at(body).into_iter().filter(|p| p.1 > 0.0).collect();

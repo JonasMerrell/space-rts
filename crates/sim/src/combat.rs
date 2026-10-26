@@ -41,7 +41,7 @@ pub fn size(class: ShipClass) -> f64 {
 
 /// How hard a ship can jink while slugs are in flight, km/s².
 pub fn evasion(class: ShipClass) -> f64 {
-    0.002 / class.stats().signature.sqrt()
+    0.0003 / class.stats().signature.sqrt()
 }
 
 /// Anything that shoots or can be shot at.
