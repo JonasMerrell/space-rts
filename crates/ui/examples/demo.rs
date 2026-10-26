@@ -65,6 +65,23 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                     g.body_tab = 1;
                 }
                 "gmenu" => g.menu_open = true,
+                "research" | "research_w" => {
+                    be.act(ui::UiAction::Research { body: 2, tech: "ModularYards".into() });
+                    g.research_open = true;
+                    g.research_branch = if scene == "research" { 2 } else { 0 };
+                }
+                "stations" => {
+                    be.act(ui::UiAction::BuildStation { body: 2, kind: "Telescope".into() });
+                    g.selected = Some(Focus::Body(2));
+                    g.stations_for = Some(2);
+                    g.station_pick = Some("FuelDepot".into());
+                }
+                "away" => {
+                    if let Some(sh) = be.view.as_mut().and_then(|v| v.ships.iter_mut().find(|s| s.id == 3)) {
+                        sh.parked_at = Some(3);
+                    }
+                    g.selected = Some(Focus::Body(3));
+                }
                 "ship" => g.selected = Some(Focus::Ship(1)),
                 "target" => {
                     g.selected = Some(Focus::Ship(1));
