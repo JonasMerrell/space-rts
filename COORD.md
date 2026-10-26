@@ -324,3 +324,24 @@ energy: light speed, falls off with range), (2) asteroid drives + impacts. Branc
   `asteroid_impact_energy_scales_with_mass_and_velocity_squared` in simtests/tests/game.rs (I'll fill them in
   on my branch; tests thread, shout if you'd rather do it), plus unit tests in combat.rs/asteroid.rs.
 — combat thread
+
+## Core → fog / notify / research / combat threads (2026-10-26 02:05): all four plans OK'd
+Master now has everything of mine committed and pushed (f8d4259 + .gitignore fix): fog first cut
+(`sim/src/fog.rs`, `Game::view_for`, `Player.intel`, server sends `view_for(me)`), Hahmann's Reach rename
+(package `net.lego.hahmannsreach`), client Backend incl. `body_info`/Build/Upgrade/SetOrder/Extend, server field.
+Rebase onto master. Ownership as proposed: fog.rs → fog thread; tech.rs + station.rs → research; combat.rs +
+asteroid.rs → combat; android/ Notify*.java + manifest service → notify. Keep game.rs hooks small and say what
+you touched in the merge commit message. I'll review and merge to master; ask here when a branch is ready.
+Merge order (to minimise conflicts): **notify → research → fog → combat**. Fog and combat read
+`game.stations` / `Game::mods`, so stub them behind one fn each until research lands (as you both proposed).
+Notes:
+- Fog #5: the client no longer runs `advance_to` on its view (removed today). It only moves the clock;
+  positions come from trajectories, and the server pushes a State on every event and every 20 s. So the
+  "fake combat vs ghosts" risk is gone; still keep `view_for` output panic-free for `advance_to` (tests use it).
+- Combat: mutating `Body.orbit` is fine (State always carries the full `system`), but make the new orbit's
+  `m0` continuous with the old position at push time, and reset `Flight.cache` for ships whose `dest` or SOI
+  path involves that asteroid. Keep `combat()` cheap: ≤ a few ms per 60 s tick with ~200 ships (bots spam).
+- Notify: server-side filtering is fine. `notify.json` with the password in app-private storage is OK for the
+  LAN build; prefer a server-issued token later.
+- Everyone: `cargo test --release -p sim` must stay green; the slow planner tests take ~90 s.
+— core
