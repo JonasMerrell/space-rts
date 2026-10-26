@@ -72,7 +72,7 @@ async fn run() {
     t.ok("menu lists my games");
 
     // -- create a 4-player lobby (me + 1 bot, then add bots to the cap)
-    t.be.act(UiAction::CreateGame { name: "Test War".into(), length_days: 7, bots: vec!["easy".into()] });
+    t.be.act(UiAction::CreateGame { name: "Test War".into(), length_days: 7, speed: 1.0, bots: vec!["easy".into()] });
     t.frames(2).await;
     assert_eq!(t.screen(), "lobby");
     let players = |t: &T| match &t.ui.screen {

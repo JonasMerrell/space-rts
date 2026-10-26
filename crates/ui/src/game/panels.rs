@@ -2,7 +2,7 @@
 
 use super::details::Detail;
 use super::map::{self, Camera};
-use super::{GameScreen, Handle, Mode, NodeEdit, SCRUB_SPAN};
+use super::{GameScreen, Handle, Mode, NodeEdit, SCRUB_RANGES};
 use crate::art;
 use crate::backend::{Backend, UiAction};
 use crate::cel;
@@ -107,14 +107,15 @@ pub fn hud(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
     }
     // Clock line.
     let y = top + ch + 16.0 * s();
-    inked(&fmt_clock(view.now), margin(), y, 17.0, PAPER, Align::Left);
+    let clock = if view.speed > 1.0 { format!("{} · {}×", fmt_clock(view.now), view.speed) } else { fmt_clock(view.now) };
+    inked(&clock, margin(), y, 17.0, PAPER, Align::Left);
     let left = view.ends_at - view.now;
     text(&format!("WAR ENDS IN {}", fmt_dur(left)), w - margin(), y, 14.0, MUTED, FontKind::Title, Align::Right);
 }
 
 fn game_menu(g: &mut GameScreen, inp: &mut Input, view: &GameView, at: Rect) {
     let host = view.host == view.me;
-    let items = if host { 4 } else { 3 };
+    let items = if host { 5 } else { 3 };
     let bh = 44.0 * s();
     let pad = 10.0 * s();
     let r = Rect::new(at.x, at.y, at.w, pad + items as f32 * (bh + pad));
@@ -132,6 +133,13 @@ fn game_menu(g: &mut GameScreen, inp: &mut Input, view: &GameView, at: Rect) {
         g.emit(UiAction::ExtendGame { days: 1 });
         g.menu_open = false;
     }
+    // Host: cycle the game speed (time multiplier) for a shorter war.
+    let speed = if view.speed > 0.0 { view.speed } else { 1.0 };
+    if host && widgets::button(inp, row(3), &format!("GAME SPEED: {speed}×"), Style::Secondary) {
+        let next = crate::screens::SPEEDS.iter().copied().find(|&k| k > speed + 1e-6).unwrap_or(crate::screens::SPEEDS[0]);
+        art::sfx("ui_click");
+        g.emit(UiAction::SetSpeed { speed: next });
+    }
     if widgets::button(inp, row(items - 1), "LEAVE TO MENU", Style::Ghost) {
         g.menu_open = false;
         g.emit(UiAction::BackToMenu);
@@ -144,51 +152,61 @@ fn game_menu(g: &mut GameScreen, inp: &mut Input, view: &GameView, at: Rect) {
 
 // ---------------------------------------------------------------- Scrubber
 
-pub fn scrubber(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
+pub fn scrubber(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView) {
     let w = screen_width();
+    let span = g.scrub_span;
     let r = Rect::new(margin(), scrub_top(), w - 2.0 * margin(), SCRUB_H * s() - margin());
     inp.block(r);
     cel::panel(r, PANEL);
-    let now_w = 62.0 * s();
-    let track = Rect::new(r.x + 14.0 * s(), r.y + r.h * 0.42, r.w - now_w - 34.0 * s(), 8.0 * s());
-    let x_of = |dt: f64| track.x + track.w * (dt / SCRUB_SPAN).clamp(0.0, 1.0) as f32;
+    let btn_w = 54.0 * s();
+    let track = Rect::new(r.x + 14.0 * s(), r.y + r.h * 0.42, r.w - 2.0 * btn_w - 40.0 * s(), 8.0 * s());
+    let x_of = |dt: f64| track.x + track.w * (dt / span).clamp(0.0, 1.0) as f32;
+    let (tick, label_every) = scrub_ticks(span);
 
     // Drag anywhere on the bar to scrub.
     let grab = Rect::new(track.x - 12.0 * s(), r.y, track.w + 24.0 * s(), r.h);
     if let Some(p) = inp.held {
         if inp.gesture_on_ui() && grab.contains(p) {
-            let new = (((p.x - track.x) / track.w).clamp(0.0, 1.0) as f64) * SCRUB_SPAN;
-            if (new / 3600.0).floor() != (g.scrub / 3600.0).floor() {
+            let new = (((p.x - track.x) / track.w).clamp(0.0, 1.0) as f64) * span;
+            if (new / tick).floor() != (g.scrub / tick).floor() {
                 art::sfx("slider_tick");
             }
             g.scrub = new;
+            g.ranges_open = false;
         }
     }
 
-    widgets::bar(track, (g.scrub / SCRUB_SPAN) as f32, ACCENT);
-    // Ticks every 6h, labels every 12h.
-    let mut h = 0;
-    while h as f64 * 3600.0 <= SCRUB_SPAN {
-        let x = x_of(h as f64 * 3600.0);
-        let tall = h % 12 == 0;
+    widgets::bar(track, (g.scrub / span) as f32, ACCENT);
+    // Not simulated yet (the forecast fills in on a worker thread): dim the rest of the bar.
+    let until = be.forecast_until() - view.now;
+    if until < span {
+        let x0 = x_of(until.max(0.0));
+        let pulse = 0.25 + 0.15 * (get_time() * 4.0).sin() as f32;
+        draw_rectangle(x0, track.y, track.x + track.w - x0, track.h, alpha(PANEL, 0.6 + pulse));
+        text("simulating...", track.x + track.w, track.y - 9.0 * s(), 11.0, MUTED, FontKind::Body, Align::Right);
+    }
+    let mut k = 0.0;
+    while k <= span + 1.0 {
+        let x = x_of(k);
+        let tall = (k / label_every).fract().abs() < 1e-6 || ((k / label_every).fract() - 1.0).abs() < 1e-6;
         draw_line(x, track.y + track.h + 3.0 * s(), x, track.y + track.h + if tall { 10.0 } else { 6.0 } * s(), 2.0 * s(), MUTED);
         if tall {
-            let l = if h == 0 { "NOW".to_string() } else if h % 24 == 0 { format!("+{}d", h / 24) } else { format!("+{}h", h) };
+            let l = if k == 0.0 { "NOW".to_string() } else { format!("+{}", tick_label(k)) };
             text(&l, x, track.y + track.h + 20.0 * s(), 12.0, MUTED, FontKind::Title, Align::Center);
         }
-        h += 6;
+        k += tick;
     }
     // Transfer windows from the active plan.
     if let Mode::Plan(p) = &g.mode {
         for &wt in &p.windows {
             let dt = wt - view.now;
-            if (0.0..=SCRUB_SPAN).contains(&dt) {
+            if (0.0..=span).contains(&dt) {
                 let c = vec2(x_of(dt), track.y - 9.0 * s());
                 cel::diamond(c, 6.0 * s(), if (wt - p.depart_t).abs() < 60.0 { ACCENT } else { GOOD });
             }
         }
         let a = p.arrive_t - view.now;
-        if (0.0..=SCRUB_SPAN).contains(&a) {
+        if (0.0..=span).contains(&a) {
             let c = vec2(x_of(a), track.y - 9.0 * s());
             cel::burst(c, 8.0 * s(), 6, DANGER, 0.0);
         }
@@ -197,20 +215,68 @@ pub fn scrubber(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
     let kc = vec2(x_of(g.scrub), track.y + track.h / 2.0);
     draw_circle(kc.x, kc.y, 11.0 * s(), alpha(ACCENT, 0.35));
     draw_circle(kc.x, kc.y, 7.0 * s(), PAPER);
-    if g.scrub > 1.0 {
+    if g.scrub > 1.0 && !g.ranges_open {
         let label = format!("+{}", fmt_dur(g.scrub));
         let wl = measure(&label, FontKind::Title, 14.0).x + 14.0 * s();
         let br = Rect::new((kc.x - wl / 2.0).clamp(r.x, r.x + r.w - wl), r.y - 34.0 * s(), wl, 24.0 * s());
         cel::bubble(br, Some(vec2(kc.x, kc.y - 12.0 * s())), PAPER);
         text(&label, br.center().x, br.center().y, 14.0, INK, FontKind::Title, Align::Center);
     }
-    let nr = Rect::new(r.x + r.w - now_w - 8.0 * s(), r.y + 9.0 * s(), now_w, r.h - 18.0 * s());
+    // Range picker: the button shows the current range; tapping it opens a row of chips above.
+    let rr = Rect::new(r.x + r.w - 2.0 * btn_w - 14.0 * s(), r.y + 9.0 * s(), btn_w, r.h - 18.0 * s());
+    let cur = SCRUB_RANGES.iter().find(|x| x.0 == span).map(|x| x.1).unwrap_or("?");
+    if widgets::button(inp, rr, cur, if g.ranges_open { Style::Primary } else { Style::Secondary }) {
+        g.ranges_open = !g.ranges_open;
+        art::sfx(if g.ranges_open { "menu_open" } else { "menu_close" });
+    }
+    if g.ranges_open {
+        let n = SCRUB_RANGES.len() as f32;
+        let gap = 8.0 * s();
+        let cw = 50.0 * s();
+        let pw = n * cw + (n + 1.0) * gap;
+        let pr = Rect::new((r.x + r.w - pw).max(r.x), r.y - 54.0 * s(), pw, 46.0 * s());
+        inp.block(pr);
+        cel::panel(pr, PANEL);
+        for (i, &(secs, label)) in SCRUB_RANGES.iter().enumerate() {
+            let cr = Rect::new(pr.x + gap + i as f32 * (cw + gap), pr.y + 7.0 * s(), cw, pr.h - 14.0 * s());
+            if widgets::chip(inp, cr, label, secs == span, ACCENT) {
+                art::sfx("ui_click");
+                g.scrub_span = secs;
+                g.scrub = g.scrub.min(secs);
+                g.ranges_open = false;
+            }
+        }
+    }
+    let nr = Rect::new(r.x + r.w - btn_w - 8.0 * s(), r.y + 9.0 * s(), btn_w, r.h - 18.0 * s());
     if widgets::button(inp, nr, "NOW", if g.scrub > 1.0 { Style::Primary } else { Style::Ghost }) {
         g.scrub = 0.0;
     }
 }
 
-pub fn prediction_banner(scrub: f64) {
+/// (small tick, labelled tick) spacing in seconds for a scrubber span.
+fn scrub_ticks(span: f64) -> (f64, f64) {
+    const H: f64 = 3600.0;
+    match span {
+        x if x <= H => (5.0 * 60.0, 15.0 * 60.0),
+        x if x <= 10.0 * H => (H, 2.0 * H),
+        x if x <= 24.0 * H => (2.0 * H, 6.0 * H),
+        x if x <= 72.0 * H => (6.0 * H, 24.0 * H),
+        _ => (12.0 * H, 24.0 * H),
+    }
+}
+
+fn tick_label(secs: f64) -> String {
+    let m = (secs / 60.0).round() as u64;
+    if m % 1440 == 0 {
+        format!("{}d", m / 1440)
+    } else if m % 60 == 0 {
+        format!("{}h", m / 60)
+    } else {
+        format!("{}m", m)
+    }
+}
+
+pub fn prediction_banner(scrub: f64, simulating: bool) {
     let w = screen_width();
     let y = hud_bottom() + 6.0 * s();
     // Thin amber frame around the map = "you are looking at the future".
@@ -221,7 +287,7 @@ pub fn prediction_banner(scrub: f64) {
     draw_rectangle(0.0, b - k, w, k, col);
     draw_rectangle(0.0, t, k, b - t, col);
     draw_rectangle(w - k, t, k, b - t, col);
-    let label = format!("PREDICTED  +{}", fmt_dur(scrub));
+    let label = if simulating { format!("SIMULATING  +{}...", fmt_dur(scrub)) } else { format!("PREDICTED  +{}", fmt_dur(scrub)) };
     let lw = measure(&label, FontKind::Title, 15.0).x + 26.0 * s();
     let r = Rect::new((w - lw) / 2.0, y, lw, 26.0 * s());
     cel::round_rect(r, r.h / 2.0, alpha(ACCENT, 0.92));
@@ -685,11 +751,16 @@ fn target_bar(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship) {
     ship_icon(view, sh, vec2(r.x + 28.0 * s(), r.y + 28.0 * s()), 34.0 * s());
     let title = if sh.count > 1 { format!("{} ×{}", sh.name.to_uppercase(), sh.count) } else { sh.name.to_uppercase() };
     inked(&title, r.x + 54.0 * s(), r.y + 20.0 * s(), 18.0, PAPER, Align::Left);
-    text("Tap a planet or moon to plot a course", r.x + 54.0 * s(), r.y + 40.0 * s(), 13.0, ACCENT, FontKind::Body, Align::Left);
+    let building = sh.planned.filter(|&t| t > view.now);
+    let hint = match building {
+        Some(t) => format!("Ready in {} · tap a target to send it then", fmt_dur(t - view.now)),
+        None => "Tap a planet or moon to plot a course".to_string(),
+    };
+    text(&hint, r.x + 54.0 * s(), r.y + 40.0 * s(), 13.0, ACCENT, FontKind::Body, Align::Left);
     let by = r.y + r.h - 52.0 * s();
     let bw = (r.w - 4.0 * 10.0 * s()) / 3.0;
     let b = |i: usize| Rect::new(r.x + 10.0 * s() + i as f32 * (bw + 10.0 * s()), by, bw, 42.0 * s());
-    if widgets::button(inp, b(0), "MANEUVER", Style::Secondary) {
+    if building.is_none() && widgets::button(inp, b(0), "MANEUVER", Style::Secondary) {
         g.mode = Mode::Nodes(NodeEdit {
             ship: sh.id,
             nodes: if sh.nodes.is_empty() { vec![ManeuverNode { t: view.now + 1800.0, prograde: 0.0, radial: 0.0 }] } else { sh.nodes.clone() },
@@ -719,7 +790,11 @@ fn ship_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship, t
     ship_icon(view, sh, vec2(r.x + 34.0 * s(), r.y + 34.0 * s()), 40.0 * s());
     let title = if sh.count > 1 { format!("{} ×{}", sh.name.to_uppercase(), sh.count) } else { sh.name.to_uppercase() };
     inked(&title, r.x + 64.0 * s(), r.y + 24.0 * s(), 22.0, PAPER, Align::Left);
-    let status = if map::is_flying(sh, view.now) {
+    let building = sh.planned.filter(|&t| t > view.now);
+    let status = if let Some(ready) = building {
+        let dest = sh.destination.and_then(|d| view.body(d)).map(|d| format!(" · then {}", d.name)).unwrap_or_default();
+        format!("{} · ready in {}{}", sh.class.label(), fmt_dur(ready - view.now), dest)
+    } else if map::is_flying(sh, view.now) {
         let dest = sh.destination.and_then(|d| view.body(d)).map(|b| b.name.clone()).unwrap_or_else(|| "deep space".into());
         let eta = sh.trajectory.as_ref().and_then(|t| t.end()).map(|e| fmt_dur(e - view.now)).unwrap_or_default();
         format!("{} · to {} · ETA {}", sh.class.label(), dest, eta)
@@ -733,7 +808,20 @@ fn ship_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship, t
         sh.class.label().to_string()
     };
     text(&status, r.x + 64.0 * s(), r.y + 48.0 * s(), 14.0, MUTED, FontKind::Body, Align::Left);
-    if mine {
+    if mine && building.is_some() {
+        // Still in the build queue: only a transfer can be queued (tap a target), or cancelled.
+        text("Tap a target to send it there once it's built", r.x + 16.0 * s(), r.y + 92.0 * s(), 14.0, PAPER, FontKind::Body, Align::Left);
+        let by = r.y + r.h - 58.0 * s();
+        let bw = (r.w - 3.0 * 12.0 * s()) / 2.0;
+        let b = |i: usize| Rect::new(r.x + 12.0 * s() + i as f32 * (bw + 12.0 * s()), by, bw, 46.0 * s());
+        if sh.destination.is_some() && widgets::button(inp, b(0), "CANCEL ORDER", Style::Danger) {
+            g.emit(UiAction::CancelFlight { ship: sh.id });
+        }
+        if widgets::button(inp, b(1), "DONE", Style::Ghost) {
+            g.mode = Mode::Idle;
+            g.selected = None;
+        }
+    } else if mine {
         let fr = Rect::new(r.x + 64.0 * s(), r.y + 64.0 * s(), r.w - 150.0 * s(), 10.0 * s());
         widgets::bar(fr, sh.fuel / sh.fuel_max.max(1.0), SUN_SHADE);
         text(&format!("FUEL {:.0}/{:.0}", sh.fuel, sh.fuel_max), fr.x + fr.w + 10.0 * s(), fr.center().y, 13.0, PAPER, FontKind::Title, Align::Left);

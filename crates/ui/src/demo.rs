@@ -186,6 +186,7 @@ impl DemoBackend {
             destination: None,
             retreat: false,
             seen_at: None,
+            planned: None,
         };
         let mut ships = vec![
             ship(1, "Red Fang", ShipClass::Gunship, 1, 3, Some(2)),
@@ -203,6 +204,7 @@ impl DemoBackend {
             host: 1,
             now,
             ends_at: 7.0 * 86400.0,
+            speed: 1.0,
             bodies,
             ships: vec![],
             players,
@@ -388,7 +390,7 @@ impl Backend for DemoBackend {
         if let Some(v) = self.view.as_mut() {
             for (body, label, _, class) in done {
                 let id = v.ships.iter().map(|s| s.id).max().unwrap_or(0) + 1;
-                v.ships.push(Ship { id, name: format!("New {label}"), class, owner: v.me, count: 1, fuel: 200.0, fuel_max: 400.0, parked_at: Some(body), trajectory: None, nodes: vec![], destination: None, retreat: false, seen_at: None });
+                v.ships.push(Ship { id, name: format!("New {label}"), class, owner: v.me, count: 1, fuel: 200.0, fuel_max: 400.0, parked_at: Some(body), trajectory: None, nodes: vec![], destination: None, retreat: false, seen_at: None, planned: None });
                 self.events.push(BackendEvent::Notice(Notice { kind: NoticeKind::Good, title: format!("{label} ready"), body: "Fresh from the shipyard".into(), focus: Some(Focus::Ship(id)) }));
             }
         }
@@ -402,12 +404,12 @@ impl Backend for DemoBackend {
                 self.events.push(BackendEvent::LoggedIn { user });
             }
             UiAction::Logout => self.events.push(BackendEvent::LoggedOut),
-            UiAction::CreateGame { name, length_days, bots } => {
+            UiAction::CreateGame { name, length_days, speed, bots } => {
                 let mut players = vec![Player { id: 1, name: self.user.clone(), color: 0, faction: "VANGUARD NAVY".into(), online: true }];
                 for (i, b) in bots.iter().enumerate() {
                     players.push(Player { id: 10 + i as u32, name: format!("Bot ({b})"), color: i + 1, faction: "JUNKER CLANS".into(), online: true });
                 }
-                let info = LobbyInfo { code: "K7QX".into(), name, players, max_players: 4, host: 1, length_days, bots };
+                let info = LobbyInfo { code: "K7QX".into(), name, players, max_players: 4, host: 1, length_days, speed, bots };
                 self.lobby = Some(info.clone());
                 self.events.push(BackendEvent::Lobby(info));
             }
@@ -426,6 +428,7 @@ impl Backend for DemoBackend {
                         max_players: 4,
                         host: 2,
                         length_days: 7,
+                        speed: 1.0,
                         bots: vec![],
                     };
                     self.lobby = Some(info.clone());
@@ -570,6 +573,11 @@ impl Backend for DemoBackend {
                     v.ends_at += days as f64 * 86400.0;
                 }
             }
+            UiAction::SetSpeed { speed } => {
+                if let Some(v) = self.view.as_mut() {
+                    v.speed = speed;
+                }
+            }
         }
     }
 
@@ -700,6 +708,7 @@ impl Backend for DemoBackend {
             nodes: vec![],
             destination: None,
             retreat: false,
+            planned: None,
         };
         let res = self.plan_for(&rock, target, v.now).map(|p| {
             let speed = p.dv_capture + 9.0;

@@ -12,8 +12,8 @@ use crate::theme::*;
 use macroquad::prelude::*;
 use map::Camera;
 
-/// How far ahead the scrubber can predict (seconds).
-pub const SCRUB_SPAN: f64 = 2.0 * 86400.0;
+/// Scrubber ranges the player can pick (seconds ahead, label).
+pub const SCRUB_RANGES: [(f64, &str); 5] = [(3600.0, "1H"), (36_000.0, "10H"), (86_400.0, "1D"), (3.0 * 86_400.0, "3D"), (7.0 * 86_400.0, "1W")];
 
 #[derive(Clone, Debug)]
 pub struct NodeEdit {
@@ -60,6 +60,12 @@ pub struct GameScreen {
     pub cam: Option<Camera>,
     /// Seconds ahead of `now` the map is showing.
     pub scrub: f64,
+    /// Full length of the scrubber bar (one of `SCRUB_RANGES`).
+    pub scrub_span: f64,
+    /// Range picker above the scrubber is open.
+    pub ranges_open: bool,
+    /// `scrub` last frame: when it changes the camera follows the selection.
+    last_scrub: f64,
     pub selected: Option<Focus>,
     pub mode: Mode,
     pub chat_open: bool,
@@ -99,6 +105,9 @@ impl GameScreen {
         GameScreen {
             cam: None,
             scrub: 0.0,
+            scrub_span: 86_400.0,
+            ranges_open: false,
+            last_scrub: 0.0,
             selected: None,
             mode: Mode::Idle,
             chat_open: false,
@@ -155,6 +164,18 @@ impl GameScreen {
             self.sound_cues(view);
             self.run_pending_plan(be_ref, view.now);
             self.run_pending_impact(be_ref);
+            // Scrubbed ahead: draw the forecast (sim run forward from what we know) instead of the
+            // live view. `now` stays the real now.
+            let predicted = if self.scrub > 1.0 { be_ref.predicted(t) } else { None };
+            let simulating = self.scrub > 1.0 && predicted.is_none() && t > be_ref.forecast_until();
+            let view: &GameView = predicted.as_deref().unwrap_or(view);
+            // Keep whatever is selected in the middle while scrubbing.
+            if self.scrub != self.last_scrub {
+                if let Some(f) = self.selected {
+                    self.focus(be_ref, f, t);
+                }
+                self.last_scrub = self.scrub;
+            }
 
             // Overlays are drawn after the map but must win the input, so they register their
             // rects (Input::block) and the map only handles gestures that started elsewhere.
@@ -169,12 +190,12 @@ impl GameScreen {
             map::draw_labels(be_ref, view, &cam, t);
             self.draw_mode_overlay(be_ref, view, &cam, t);
             if self.scrub > 1.0 {
-                panels::prediction_banner(self.scrub);
+                panels::prediction_banner(self.scrub, simulating);
             }
 
             panels::hud(self, inp, view);
             panels::sheet(self, inp, be_ref, view);
-            panels::scrubber(self, inp, view);
+            panels::scrubber(self, inp, be_ref, view);
             // Toasts sit over the chat panel's corner; hold them while chatting.
             if !self.chat_open {
                 panels::toasts(self, inp, be_ref, view);
@@ -319,7 +340,8 @@ impl GameScreen {
                 self.selected = Some(Focus::Ship(ship));
                 // "Next window" asks for a later departure: scrub ahead to show it.
                 if after > now + 60.0 {
-                    self.scrub = (plan.depart_t - now).clamp(0.0, SCRUB_SPAN);
+                    self.scrub = (plan.depart_t - now).clamp(0.0, SCRUB_RANGES[SCRUB_RANGES.len() - 1].0);
+                    self.scrub_span = SCRUB_RANGES.iter().map(|r| r.0).find(|&r| r >= self.scrub).unwrap_or(self.scrub_span).max(self.scrub_span);
                 }
                 self.mode = Mode::Plan(plan);
             }
