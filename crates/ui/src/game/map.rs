@@ -181,14 +181,19 @@ pub fn draw_trajectories(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64
                 future.insert(0, cam.to_screen(p));
             }
         }
-        cel::dashed_path(&past, 2.0 * s(), 5.0 * s(), alpha(l, 0.35));
-        let w = if highlight == Some(sh.id) { 4.0 } else { 3.0 } * s();
-        if mine {
-            cel::inked_path(&future, w, l);
+        // Only the selected ship's course is drawn in full colour; the rest are faint grey dashes so the
+        // map doesn't turn into spaghetti.
+        let sel = highlight == Some(sh.id);
+        cel::dashed_path(&past, 2.0 * s(), 5.0 * s(), alpha(l, if sel { 0.35 } else { 0.12 }));
+        if !sel {
+            let grey = Color::new(0.75, 0.75, 0.85, if mine { 0.32 } else { 0.22 });
+            cel::dashed_path(&future, 2.0 * s(), 6.0 * s(), grey);
+        } else if mine {
+            cel::inked_path(&future, 4.0 * s(), l);
         } else {
-            cel::dashed_path(&future, w, 9.0 * s(), alpha(l, 0.85));
+            cel::dashed_path(&future, 3.0 * s(), 9.0 * s(), alpha(l, 0.85));
         }
-        if mine {
+        if mine && sel {
             for n in &sh.nodes {
                 if let Some(p) = tr.sample(n.t) {
                     cel::diamond(cam.to_screen(p), 7.0 * s(), PAPER);
@@ -201,7 +206,7 @@ pub fn draw_trajectories(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64
                 if let Some(b) = view.body(dest) {
                     let r = body_radius_px(b, cam) + 6.0 * s();
                     let ring: Vec<Vec2> = (0..=40).map(|i| c + Vec2::from_angle(i as f32 / 40.0 * std::f32::consts::TAU) * r).collect();
-                    cel::dashed_path(&ring, 2.5 * s(), 5.0 * s(), alpha(l, 0.9));
+                    cel::dashed_path(&ring, 2.5 * s(), 5.0 * s(), alpha(l, if sel { 0.9 } else { 0.25 }));
                 }
             }
         }
@@ -253,6 +258,79 @@ pub fn draw_ships(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64, selec
             draw_circle(b.x, b.y, 8.5 * s(), INK);
             draw_circle(b.x, b.y, 7.0 * s(), ACCENT);
             text(&sh.count.to_string(), b.x, b.y, 11.0, INK, FontKind::Title, Align::Center);
+        }
+        if sh.owner == view.me {
+            if let Some(st) = ship_status(sh, view.now) {
+                status_badge(p + vec2(-size, size), st);
+            }
+        }
+    }
+}
+
+/// What a ship is busy with, for the little badge on its token.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ShipStatus {
+    /// Still in a build queue (scrubber preview).
+    Queued,
+    /// Parked with a departure scheduled.
+    Departing,
+    /// A manual burn is still ahead.
+    Burn,
+    /// Coasting on a transfer.
+    Transfer,
+}
+
+pub fn ship_status(sh: &Ship, now: f64) -> Option<ShipStatus> {
+    if sh.planned.is_some() {
+        return Some(ShipStatus::Queued);
+    }
+    let tr = sh.trajectory.as_ref()?;
+    if tr.start().is_some_and(|t0| t0 > now) {
+        Some(ShipStatus::Departing)
+    } else if sh.nodes.iter().any(|n| n.t > now) {
+        Some(ShipStatus::Burn)
+    } else if tr.end().is_some_and(|e| e > now) {
+        Some(ShipStatus::Transfer)
+    } else {
+        None
+    }
+}
+
+/// Fixed-size (zoom-independent) glyph: clock = departing, diamond = burn ahead, chevron = in
+/// transfer, plus = being built.
+pub fn status_badge(c: Vec2, st: ShipStatus) {
+    let r = 7.5 * s();
+    let col = match st {
+        ShipStatus::Queued => MUTED,
+        ShipStatus::Departing => ACCENT,
+        ShipStatus::Burn => TEAMS[0].0,
+        ShipStatus::Transfer => GOOD,
+    };
+    draw_circle(c.x, c.y, r + 1.5 * s(), INK);
+    draw_circle(c.x, c.y, r, PANEL);
+    draw_circle_lines(c.x, c.y, r, 1.4 * s(), col);
+    let k = r * 0.55;
+    match st {
+        ShipStatus::Departing => {
+            draw_circle_lines(c.x, c.y, k, 1.3 * s(), col);
+            draw_line(c.x, c.y, c.x, c.y - k * 0.8, 1.4 * s(), col);
+            draw_line(c.x, c.y, c.x + k * 0.6, c.y, 1.4 * s(), col);
+        }
+        ShipStatus::Burn => {
+            let p = [c + vec2(0.0, -k), c + vec2(k, 0.0), c + vec2(0.0, k), c + vec2(-k, 0.0)];
+            draw_triangle(p[0], p[1], p[2], col);
+            draw_triangle(p[0], p[2], p[3], col);
+        }
+        ShipStatus::Transfer => {
+            for dx in [-0.35, 0.35] {
+                let o = c + vec2(dx * k, 0.0);
+                draw_line(o.x - k * 0.4, o.y - k * 0.7, o.x + k * 0.3, o.y, 1.6 * s(), col);
+                draw_line(o.x + k * 0.3, o.y, o.x - k * 0.4, o.y + k * 0.7, 1.6 * s(), col);
+            }
+        }
+        ShipStatus::Queued => {
+            draw_line(c.x - k, c.y, c.x + k, c.y, 1.6 * s(), col);
+            draw_line(c.x, c.y - k, c.x, c.y + k, 1.6 * s(), col);
         }
     }
 }

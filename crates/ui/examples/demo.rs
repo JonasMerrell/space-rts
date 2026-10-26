@@ -1,6 +1,6 @@
 //! Offline UI demo on the fake backend.
 //!   cargo run -p ui --example demo
-//! Screenshot mode: UI_SCENE=<login|menu|create|lobby|map|body|owned|yard|ship|gmenu|res_energy|detail_up|detail_ship|rock|impact|target|plan|nodes|scrub|chat|toast> UI_SHOT=out.png
+//! Screenshot mode: UI_SCENE=<login|menu|create|lobby|map|body|owned|yard|ship|gmenu|status|res_energy|detail_up|detail_ship|rock|impact|target|plan|nodes|scrub|chat|toast> UI_SHOT=out.png
 //! sets the scene up, renders a few frames, saves the PNG and exits.
 
 use macroquad::prelude::*;
@@ -88,6 +88,15 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                 }
                 "report" => be.report = Some(ui::demo::demo_report(v.now)),
                 "rock" => g.selected = Some(Focus::Body(9)),
+                "status" => {
+                    // departing (Red Fang), burn ahead (Hammerhead), selected = Hammerhead
+                    if let Some(p) = be.plan_transfer(1, 4, v.now) {
+                        be.act(UiAction::ScheduleTransfer(p));
+                    }
+                    let end = v.ship(4).and_then(|s| s.trajectory.as_ref()).and_then(|t| t.end()).unwrap_or(v.now);
+                    be.act(UiAction::SetNodes { ship: 4, nodes: vec![ManeuverNode { t: (v.now + end) / 2.0, prograde: 0.6, radial: 0.0 }] });
+                    g.selected = Some(Focus::Ship(4));
+                }
                 "res_energy" => g.res_open = Some(1),
                 "detail_up" => {
                     g.selected = Some(Focus::Body(2));
