@@ -15,12 +15,30 @@ fn file() -> Option<PathBuf> {
     }
 }
 
-/// (server, user, pass) from the last successful login, if the player hasn't logged out since.
-pub fn load() -> Option<(String, String, String)> {
+/// What a saved session logs in with: a session token from the server, or (servers from before
+/// tokens) the password.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Secret {
+    Pass(String),
+    Token(String),
+}
+
+/// (server, user, secret) from the last successful login, if the player hasn't logged out since.
+pub fn load() -> Option<(String, String, Secret)> {
     let text = read()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
     let get = |k: &str| v.get(k).and_then(|x| x.as_str()).map(str::to_string).filter(|s| !s.is_empty());
-    Some((get("server")?, get("user")?, get("pass")?))
+    let secret = get("token").map(Secret::Token).or_else(|| get("pass").map(Secret::Pass))?;
+    Some((get("server")?, get("user")?, secret))
+}
+
+/// The saved file / localStorage value. With a token, the password is not kept.
+fn json(server: &str, user: &str, secret: &Secret) -> String {
+    match secret {
+        Secret::Token(t) => serde_json::json!({ "server": server, "user": user, "token": t }),
+        Secret::Pass(p) => serde_json::json!({ "server": server, "user": user, "pass": p }),
+    }
+    .to_string()
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -32,8 +50,8 @@ fn read() -> Option<String> {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn save(server: &str, user: &str, pass: &str) {
-    crate::web::store_set(KEY, &serde_json::json!({ "server": server, "user": user, "pass": pass }).to_string());
+pub fn save(server: &str, user: &str, secret: &Secret) {
+    crate::web::store_set(KEY, &json(server, user, secret));
     crate::web::notifications(true);
 }
 
@@ -55,12 +73,12 @@ fn read() -> Option<String> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn save(server: &str, user: &str, pass: &str) {
+pub fn save(server: &str, user: &str, secret: &Secret) {
     let Some(p) = file() else { return };
     if let Some(d) = p.parent() {
         let _ = std::fs::create_dir_all(d);
     }
-    let _ = std::fs::write(p, serde_json::json!({ "server": server, "user": user, "pass": pass }).to_string());
+    let _ = std::fs::write(p, json(server, user, secret));
 }
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -17,7 +17,7 @@ fn running_game() -> Game {
 
 fn client_msgs() -> Vec<ClientMsg> {
     vec![
-        ClientMsg::Hello { user: "jonas".into(), pass: "pä$$ \"quoted\"\nnewline".into(), register: true, invite: None },
+        ClientMsg::Hello { user: "jonas".into(), pass: "pä$$ \"quoted\"\nnewline".into(), register: true, invite: None, token: None, stay: false },
         ClientMsg::ListGames,
         ClientMsg::CreateGame { name: "Friday".into(), size: SystemSize::Large, length_days: 7.0, speed: 1.0, max_players: 4, bots: vec!["easy".into(), "hard".into()] },
         ClientMsg::JoinGame { code: "K7QX".into() },
@@ -51,7 +51,7 @@ fn server_messages_round_trip() {
     let g = running_game();
     let events: Vec<_> = g.events.iter().cloned().map(|e| ("WXYZ".to_string(), 1.7e9 + e.t, e)).collect();
     let msgs = vec![
-        ServerMsg::Welcome { user: "jonas".into() },
+        ServerMsg::Welcome { user: "jonas".into(), token: None },
         ServerMsg::Error { msg: "bad password".into() },
         ServerMsg::Games(vec![GameSummary {
             code: "WXYZ".into(), name: "wire".into(), status: Status::Running, t: g.t, length: 7.0 * 86_400.0,

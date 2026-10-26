@@ -17,7 +17,15 @@ pub enum ClientMsg {
         /// Needed to register when the server is invite-only.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         invite: Option<String>,
+        /// Log in with a session token from an earlier Welcome instead of the password (`pass` empty).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        token: Option<String>,
+        /// "Stay logged in": a password login asks for a session token in the Welcome.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        stay: bool,
     },
+    /// Revoke the session token this device holds (logging out).
+    Logout { token: String },
     ListGames,
     CreateGame { name: String, size: SystemSize, length_days: f64, speed: f64, max_players: usize, bots: Vec<String> },
     JoinGame { code: String },
@@ -34,6 +42,11 @@ pub enum ClientMsg {
     Ping,
 }
 
+/// Session tokens: 32 random bytes as 64 lowercase hex digits.
+pub fn ok_token(t: &str) -> bool {
+    t.len() == 64 && t.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 /// Longest password the server will hash.
 pub const MAX_PASS: usize = 256;
 
@@ -44,7 +57,10 @@ impl ClientMsg {
         let short = |s: &str| s.len() <= 64;
         let ok_f = |x: f64| x.is_finite();
         let ok = match self {
-            ClientMsg::Hello { user, pass, invite, .. } => user.len() <= 64 && pass.len() <= MAX_PASS && invite.as_deref().is_none_or(short),
+            ClientMsg::Hello { user, pass, invite, token, .. } => {
+                user.len() <= 64 && pass.len() <= MAX_PASS && invite.as_deref().is_none_or(short) && token.as_deref().is_none_or(ok_token)
+            }
+            ClientMsg::Logout { token } => ok_token(token),
             ClientMsg::CreateGame { name, length_days, speed, bots, .. } => {
                 name.len() <= 200 && ok_f(*length_days) && ok_f(*speed) && bots.len() <= 16 && bots.iter().all(|b| short(b))
             }
@@ -78,7 +94,12 @@ pub struct GameSummary {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ServerMsg {
-    Welcome { user: String },
+    Welcome {
+        user: String,
+        /// A new session token, when the Hello asked to stay logged in (store it instead of the password).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        token: Option<String>,
+    },
     Error { msg: String },
     Games(Vec<GameSummary>),
     /// Full authoritative game state. `real_time` = server unix time (s) when `game.t` was taken.

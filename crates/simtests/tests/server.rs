@@ -63,9 +63,9 @@ impl Client {
         None
     }
     fn login(&mut self, pass: &str, register: bool) -> Result<String, String> {
-        self.send(&ClientMsg::Hello { user: self.name.clone(), pass: pass.into(), register, invite: None });
+        self.send(&ClientMsg::Hello { user: self.name.clone(), pass: pass.into(), register, invite: None, token: None, stay: false });
         self.wait(5.0, |m| match m {
-            ServerMsg::Welcome { user } => Some(Ok(user.clone())),
+            ServerMsg::Welcome { user, .. } => Some(Ok(user.clone())),
             ServerMsg::Error { msg } => Some(Err(msg.clone())),
             _ => None,
         })

@@ -30,7 +30,7 @@ fn start(cfg: Config) -> String {
 }
 
 fn hello(user: &str, pass: &str, register: bool, invite: Option<&str>) -> ClientMsg {
-    ClientMsg::Hello { user: user.into(), pass: pass.into(), register, invite: invite.map(String::from) }
+    ClientMsg::Hello { user: user.into(), pass: pass.into(), register, invite: invite.map(String::from), token: None, stay: false }
 }
 
 /// Connect with the real client and return the first answer to Hello (Ok = Welcome user, Err = text).
@@ -40,7 +40,7 @@ fn login(addr: &str, h: ClientMsg) -> Result<String, String> {
     while Instant::now() < end {
         for e in net.poll() {
             match e {
-                NetEvent::Msg(ServerMsg::Welcome { user }) => return Ok(user),
+                NetEvent::Msg(ServerMsg::Welcome { user, .. }) => return Ok(user),
                 NetEvent::Msg(ServerMsg::Error { msg }) => return Err(msg),
                 NetEvent::Failed(m) => return Err(m),
                 NetEvent::Closed => return Err("closed".into()),

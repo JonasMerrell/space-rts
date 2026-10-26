@@ -65,6 +65,10 @@ with sync_playwright() as pw:
         elif a == "--wheel":
             x, y, dy = map(float, rest[i + 1].split(",")); i += 1
             p.mouse.move(x, y); p.mouse.wheel(0, dy); p.wait_for_timeout(400)
+        elif a == "--eval":
+            print("eval:", p.evaluate(rest[i + 1])); i += 1
+        elif a == "--fps":
+            print("fps:", p.evaluate("() => new Promise(r => { let n = 0; const t0 = performance.now(); function f() { n++; if (performance.now() - t0 < 2000) requestAnimationFrame(f); else r(n / 2); } requestAnimationFrame(f); })"))
         elif a == "--shot":
             p.screenshot(path=rest[i + 1]); i += 1
         i += 1

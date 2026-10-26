@@ -60,8 +60,13 @@ public class NotifyJob extends JobService {
             s.setSoTimeout(15_000);
             OutputStream out = s.getOutputStream();
             BufferedReader in = new BufferedReader(new InputStreamReader(s.getInputStream(), StandardCharsets.UTF_8));
-            JSONObject hello = new JSONObject().put("user", login.getString("user"))
-                    .put("pass", login.getString("pass")).put("register", false);
+            // a session token from the game (newer servers), else the password (older saved sessions)
+            JSONObject hello = new JSONObject().put("user", login.getString("user")).put("register", false);
+            if (login.has("token")) {
+                hello.put("pass", "").put("token", login.getString("token"));
+            } else {
+                hello.put("pass", login.getString("pass"));
+            }
             send(out, new JSONObject().put("Hello", hello));
             send(out, new JSONObject().put("Events", new JSONObject().put("since", since)));
             String line;

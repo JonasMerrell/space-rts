@@ -3,6 +3,7 @@
 //! map keeps moving smoothly; every snapshot replaces it.
 use crate::forecast::{self, Forecaster, PLANNED_BASE};
 use crate::net::{Net, NetEvent};
+use crate::notify::Secret;
 use crate::unix_now;
 use proto::{ClientMsg, GameSummary as WireSummary, ServerMsg};
 use sim::game::{self as g, Command, Game, ShipState, Status};
@@ -60,7 +61,8 @@ impl<T: 'static> Job<T> {
 
 pub struct ClientBackend {
     server: String,
-    creds: Option<(String, String)>,
+    /// who we log in as, and with what (a token once the server handed one out)
+    creds: Option<(String, Secret)>,
     /// invite code typed with Register (invite-only servers)
     invite: Option<String>,
     net: Option<Net>,
@@ -104,12 +106,12 @@ pub struct ClientBackend {
 impl ClientBackend {
     /// Log back in with the saved session, if there is one (stay logged in across launches).
     pub fn resume(&mut self) {
-        if let Some((server, user, pass)) = crate::notify::load() {
+        if let Some((server, user, secret)) = crate::notify::load() {
             if crate::env_server().is_err() {
                 self.server = crate::migrate_server(server);
             }
             self.auto_user = Some(user.clone());
-            self.creds = Some((user, pass));
+            self.creds = Some((user, secret));
             self.logged_in = false;
             self.connect(false);
         }
@@ -175,8 +177,15 @@ impl ClientBackend {
     }
 
     fn connect(&mut self, register: bool) {
-        if let Some((u, p)) = &self.creds {
-            self.net = Some(Net::connect(self.server.clone(), ClientMsg::Hello { user: u.clone(), pass: p.clone(), register, invite: if register { self.invite.clone() } else { None } }));
+        if let Some((u, secret)) = &self.creds {
+            let (pass, token) = match secret {
+                Secret::Pass(p) => (p.clone(), None),
+                Secret::Token(t) => (String::new(), Some(t.clone())),
+            };
+            let invite = if register { self.invite.clone() } else { None };
+            // stay logged in: a password login asks for a session token to keep instead of the password
+            let hello = ClientMsg::Hello { user: u.clone(), pass, register, invite, token, stay: true };
+            self.net = Some(Net::connect(self.server.clone(), hello));
         }
     }
 
@@ -194,14 +203,18 @@ impl ClientBackend {
 
     fn on_msg(&mut self, msg: ServerMsg) {
         match msg {
-            ServerMsg::Welcome { user } => {
+            ServerMsg::Welcome { user, token } => {
                 self.logged_in = true;
                 self.auto_user = None;
                 self.online = true;
                 self.retry_delay = 1.0;
                 self.last_error = None;
-                if let Some((u, p)) = &self.creds {
-                    crate::notify::save(&self.server, u, p);
+                if let Some((u, secret)) = &mut self.creds {
+                    // from now on the token stands in for the password, here and in the saved session
+                    if let Some(t) = token {
+                        *secret = Secret::Token(t);
+                    }
+                    crate::notify::save(&self.server, u, secret);
                 }
                 self.events.push(BackendEvent::LoggedIn { user });
                 // re-open the game we were looking at after a reconnect
@@ -878,7 +891,7 @@ impl Backend for ClientBackend {
                     self.server = server.trim().to_string();
                     crate::save_server(&self.server);
                 }
-                self.creds = Some((user, pass));
+                self.creds = Some((user, Secret::Pass(pass)));
                 self.logged_in = false;
                 self.connect(register);
             }
@@ -892,6 +905,12 @@ impl Backend for ClientBackend {
                 self.retry_delay = 1.0;
             }
             UiAction::Logout => {
+                // revoke this device's session on the server (best effort: offline it just expires)
+                if let (Some(n), Some((_, Secret::Token(t)))) = (&self.net, &self.creds) {
+                    if self.online {
+                        n.send(ClientMsg::Logout { token: t.clone() });
+                    }
+                }
                 crate::notify::clear();
                 self.auto_user = None;
                 self.online = false;

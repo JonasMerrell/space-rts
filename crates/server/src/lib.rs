@@ -31,6 +31,44 @@ struct Account {
     salt: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     hash: String,
+    /// "Stay logged in" sessions: sha256 of each token (the token itself is never stored).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    tokens: Vec<Session>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
+struct Session {
+    sha256: String,
+    /// unix time it was last used to log in
+    last: f64,
+}
+
+/// Sessions per account (the least recently used goes first) and how long an unused one lasts.
+const MAX_SESSIONS: usize = 10;
+const SESSION_TTL: f64 = 90.0 * 86_400.0;
+
+fn token_hash(token: &str) -> String {
+    Sha256::digest(token.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// 256 random bits as hex.
+fn new_token() -> String {
+    (0..4).map(|_| format!("{:016x}", random_u64())).collect()
+}
+
+impl Account {
+    fn prune_sessions(&mut self, now: f64) {
+        self.tokens.retain(|t| now - t.last < SESSION_TTL);
+        self.tokens.sort_by(|a, b| b.last.total_cmp(&a.last));
+        self.tokens.truncate(MAX_SESSIONS);
+    }
+    /// A new session token (returned once; only its hash is kept).
+    fn mint(&mut self, now: f64) -> String {
+        let t = new_token();
+        self.tokens.push(Session { sha256: token_hash(&t), last: now });
+        self.prune_sessions(now);
+        t
+    }
 }
 
 /// Lines queued for a slow client before we give up on it (a State is sent every 20 s at most).
@@ -302,6 +340,16 @@ impl Server {
             ClientMsg::Ping => {}
             // handled outside the lock by `hello` (password hashing is slow)
             ClientMsg::Hello { .. } => err(self, "already logged in"),
+            ClientMsg::Logout { token } => {
+                let h = token_hash(&token);
+                if let Some(a) = self.accounts.get_mut(&user) {
+                    let n = a.tokens.len();
+                    a.tokens.retain(|t| t.sha256 != h);
+                    if a.tokens.len() != n {
+                        self.save_accounts();
+                    }
+                }
+            }
             ClientMsg::ListGames => {
                 let u = user.clone();
                 let mut list: Vec<GameSummary> = self.games.values().filter_map(|g| self.summary(g, &u)).collect();
@@ -575,16 +623,39 @@ impl Server {
     }
 }
 
-/// Log in or register. The slow part (argon2) runs without the server lock.
-#[allow(clippy::too_many_arguments)]
-fn hello(server: &Mutex<Server>, guard: &Guard, id: u64, ip: IpAddr, user: String, pass: String, register: bool, invite: Option<String>) {
+/// Log in (password or session token) or register. The slow part (argon2) runs without the server lock.
+fn hello(server: &Mutex<Server>, guard: &Guard, id: u64, ip: IpAddr, h: Hello) {
+    let Hello { user, pass, register, invite, token, stay } = h;
     let err = |m: &str| lock(server).send(id, &ServerMsg::Error { msg: m.into() });
     let user = user.trim().to_string();
-    if !ok_username(&user) || pass.is_empty() {
+    if !ok_username(&user) || (pass.is_empty() && token.is_none()) {
         return err("enter a username (max 24 chars) and password");
     }
     if let Err(e) = guard.may_login(ip, &user) {
         return err(&e);
+    }
+    let now = unix_now();
+    if let Some(t) = token.filter(|_| !register) {
+        // a saved session: no password, no new token
+        let h = token_hash(&t);
+        let mut s = lock(server);
+        let ok = s.accounts.get_mut(&user).is_some_and(|a| {
+            a.prune_sessions(now);
+            match a.tokens.iter_mut().find(|x| x.sha256 == h) {
+                Some(x) => {
+                    x.last = now;
+                    true
+                }
+                None => false,
+            }
+        });
+        if !ok {
+            drop(s);
+            guard.login_failed(ip, Some(&user));
+            return err("your saved login has expired: log in again");
+        }
+        s.save_accounts();
+        return welcome(&mut s, id, user, None);
     }
     let acct = lock(server).accounts.get(&user).cloned();
     match acct {
@@ -593,12 +664,18 @@ fn hello(server: &Mutex<Server>, guard: &Guard, id: u64, ip: IpAddr, user: Strin
                 guard.login_failed(ip, Some(&user));
                 return err("wrong password");
             }
-            if a.phc.is_none() {
-                if let Some(phc) = guard.hashing(|| argon2_hash(&pass)) {
-                    let mut s = lock(server);
-                    s.accounts.insert(user.clone(), Account { phc: Some(phc), ..Account::default() });
-                    s.save_accounts();
+            let phc = if a.phc.is_none() { guard.hashing(|| argon2_hash(&pass)) } else { None };
+            if phc.is_some() || stay {
+                let mut s = lock(server);
+                let mut token = None;
+                if let Some(a) = s.accounts.get_mut(&user) {
+                    if let Some(phc) = phc {
+                        *a = Account { phc: Some(phc), tokens: std::mem::take(&mut a.tokens), ..Account::default() };
+                    }
+                    token = stay.then(|| a.mint(now));
                 }
+                s.save_accounts();
+                return welcome(&mut s, id, user, token);
             }
         }
         None if register => {
@@ -619,20 +696,36 @@ fn hello(server: &Mutex<Server>, guard: &Guard, id: u64, ip: IpAddr, user: Strin
                 guard.login_failed(ip, None);
                 return err(e);
             }
-            s.accounts.insert(user.clone(), Account { phc: Some(phc), ..Account::default() });
+            let mut a = Account { phc: Some(phc), ..Account::default() };
+            let token = stay.then(|| a.mint(now));
+            s.accounts.insert(user.clone(), a);
             s.save_accounts();
             guard.registered(ip);
+            return welcome(&mut s, id, user, token);
         }
         None => {
             guard.login_failed(ip, None);
             return err("no such account (tap Register to create it)");
         }
     }
-    let mut s = lock(server);
+    welcome(&mut lock(server), id, user, None);
+}
+
+/// The fields of `ClientMsg::Hello`.
+struct Hello {
+    user: String,
+    pass: String,
+    register: bool,
+    invite: Option<String>,
+    token: Option<String>,
+    stay: bool,
+}
+
+fn welcome(s: &mut Server, id: u64, user: String, token: Option<String>) {
     if let Some(c) = s.conns.get_mut(&id) {
         c.user = Some(user.clone());
     }
-    s.send(id, &ServerMsg::Welcome { user });
+    s.send(id, &ServerMsg::Welcome { user, token });
     s.handle(id, ClientMsg::ListGames);
 }
 
@@ -747,11 +840,11 @@ fn client_thread(server: Arc<Mutex<Server>>, guard: Arc<Guard>, cfg: Arc<Config>
             continue;
         }
         match msg {
-            Ok(ClientMsg::Hello { user, pass, register, invite }) => {
+            Ok(ClientMsg::Hello { user, pass, register, invite, token, stay }) => {
                 let logged_in = lock(&server).conns.get(&id).is_some_and(|c| c.user.is_some());
                 if logged_in {
                     lock(&server).send(id, &ServerMsg::Error { msg: "already logged in".into() });
-                } else if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| hello(&server, &guard, id, ip, user, pass, register, invite))).is_err() {
+                } else if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| hello(&server, &guard, id, ip, Hello { user, pass, register, invite, token, stay }))).is_err() {
                     lock(&server).send(id, &ServerMsg::Error { msg: "internal error logging in".into() });
                 }
             }
