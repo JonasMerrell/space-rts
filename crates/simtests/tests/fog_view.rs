@@ -43,7 +43,6 @@ fn a_player_always_sees_all_of_their_own_stuff() {
 }
 
 #[test]
-#[ignore = "fog merge: view_for uses tick-time vision (stacking/flares); test recomputes sensors now — fog + tests threads to reconcile"]
 fn hidden_things_stay_hidden() {
     let g = game4(2);
     for p in 0..4 {

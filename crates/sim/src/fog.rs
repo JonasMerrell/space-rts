@@ -121,14 +121,44 @@ pub fn sees_point(sensors: &[Sensor], pos: V2) -> bool {
 }
 
 impl Game {
-    /// Does this sensor set see ship `s` right now?
+    /// Does this sensor set see ship `s` right now? (Same rule as the per-tick vision.)
     pub fn sees_ship(&self, sensors: &[Sensor], s: &Ship) -> bool {
-        detects(sensors, self.ship_pos(s, self.t), signature(s, self.t)).0
+        let sig = match self.ships.iter().position(|x| x.id == s.id) {
+            Some(i) => self.signatures()[i],
+            None => signature(s, self.t),
+        };
+        detects(sensors, self.ship_pos(s, self.t), sig).0
     }
 
     /// Can this sensor set make out what is on body `b` right now?
     pub fn sees_body(&self, sensors: &[Sensor], b: BodyId) -> bool {
         sees_point(sensors, self.system.pos(b, self.t))
+    }
+
+    /// Effective signature of every ship now (index = `self.ships`): class signature, engine
+    /// flare, the owner's signature research, and parked fleets glowing together.
+    pub fn signatures(&self) -> Vec<f64> {
+        let t = self.t;
+        // parked ships of one owner at one body glow together: each is seen at its own
+        // signature × sqrt(group size), so a fleet is easier to spot but its scouts still less so
+        let mut groups: Vec<(BodyId, PlayerId, f64)> = vec![];
+        for s in &self.ships {
+            if let Some(b) = s.parked_at() {
+                match groups.iter_mut().find(|g| g.0 == b && g.1 == s.owner) {
+                    Some(g) => g.2 += 1.0,
+                    None => groups.push((b, s.owner, 1.0)),
+                }
+            }
+        }
+        let sig_mod: Vec<f64> = (0..self.players.len()).map(|p| self.mods(p as PlayerId).signature).collect();
+        self
+            .ships
+            .iter()
+            .map(|s| {
+                let n = s.parked_at().and_then(|b| groups.iter().find(|g| g.0 == b && g.1 == s.owner)).map(|g| g.2).unwrap_or(1.0);
+                signature(s, t) * n.sqrt() * sig_mod[s.owner as usize]
+            })
+            .collect()
     }
 
     /// Every sensor player `p` has at the current time, with relay boosts applied.
@@ -189,26 +219,7 @@ impl Game {
     pub(crate) fn update_intel(&mut self) {
         let pos = self.ship_positions();
         let t = self.t;
-        // parked ships of one owner at one body glow together: each is seen at its own
-        // signature × sqrt(group size), so a fleet is easier to spot but its scouts still less so
-        let mut groups: Vec<(BodyId, PlayerId, f64)> = vec![];
-        for s in &self.ships {
-            if let Some(b) = s.parked_at() {
-                match groups.iter_mut().find(|g| g.0 == b && g.1 == s.owner) {
-                    Some(g) => g.2 += 1.0,
-                    None => groups.push((b, s.owner, 1.0)),
-                }
-            }
-        }
-        let sig_mod: Vec<f64> = (0..self.players.len()).map(|p| self.mods(p as PlayerId).signature).collect();
-        let sig: Vec<f64> = self
-            .ships
-            .iter()
-            .map(|s| {
-                let n = s.parked_at().and_then(|b| groups.iter().find(|g| g.0 == b && g.1 == s.owner)).map(|g| g.2).unwrap_or(1.0);
-                signature(s, t) * n.sqrt() * sig_mod[s.owner as usize]
-            })
-            .collect();
+        let sig = self.signatures();
         for p in 0..self.players.len() {
             let me = p as PlayerId;
             let sensors = self.sensors_with(me, &pos);
