@@ -110,10 +110,13 @@ impl Login {
         col.gap(14.0);
         let r = col.row(52.0);
         go |= widgets::text_field(inp, r, &mut self.pass, "secret");
-        text("SERVER", col.x + 4.0 * s(), col.y, 18.0, MUTED, FontKind::Title, Align::Left);
-        col.gap(14.0);
-        let r = col.row(44.0);
-        go |= widgets::text_field(inp, r, &mut self.server, "host:port");
+        // The browser build always talks to the server that served the page.
+        if !cfg!(target_arch = "wasm32") {
+            text("SERVER", col.x + 4.0 * s(), col.y, 18.0, MUTED, FontKind::Title, Align::Left);
+            col.gap(14.0);
+            let r = col.row(44.0);
+            go |= widgets::text_field(inp, r, &mut self.server, "host:port");
+        }
         text("INVITE CODE (NEW PILOTS)", col.x + 4.0 * s(), col.y, 18.0, MUTED, FontKind::Title, Align::Left);
         col.gap(14.0);
         let r = col.row(44.0);

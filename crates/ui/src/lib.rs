@@ -66,6 +66,7 @@ impl Ui {
                 self.offline_banner(&st, be);
             }
         }
+        self.input.draw_debug();
         // Screen changes driven directly by our own actions.
         if let Screen::Game(_) = self.screen {
             if be.view().is_none() {
