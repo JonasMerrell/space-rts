@@ -357,6 +357,7 @@ fn ship_cost(c: ShipClass) -> Cost {
         ShipClass::Bomber => (160.0, 70.0, 80.0),
         ShipClass::Dreadnought => (480.0, 220.0, 240.0),
         ShipClass::Tanker => (100.0, 30.0, 60.0),
+        ShipClass::Constructor => (100.0, 50.0, 30.0),
     };
     Cost { matter: m, energy: e, seconds: min * 60.0 }
 }

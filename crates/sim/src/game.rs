@@ -22,6 +22,8 @@ pub enum ShipClass {
     Bomber,
     Dreadnought,
     Tanker,
+    /// builds space stations where it is parked; more of them build faster
+    Constructor,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,8 +57,15 @@ pub struct ClassStats {
 }
 
 impl ShipClass {
-    pub const ALL: [ShipClass; 6] =
-        [ShipClass::Scout, ShipClass::Interceptor, ShipClass::Gunship, ShipClass::Bomber, ShipClass::Dreadnought, ShipClass::Tanker];
+    pub const ALL: [ShipClass; 7] = [
+        ShipClass::Scout,
+        ShipClass::Interceptor,
+        ShipClass::Gunship,
+        ShipClass::Bomber,
+        ShipClass::Dreadnought,
+        ShipClass::Tanker,
+        ShipClass::Constructor,
+    ];
 
     pub fn stats(self) -> ClassStats {
         use ShipClass::*;
@@ -81,6 +90,7 @@ impl ShipClass {
             Bomber => s("Bomber", 80.0, 40.0, Weapon::Kinetic, 50.0, 130.0, 130.0, 90.0, 40.0, 1.0, 1),
             Dreadnought => s("Dreadnought", 500.0, 90.0, Weapon::Energy, 300.0, 700.0, 600.0, 300.0, 180.0, 4.0, 2),
             Tanker => s("Tanker", 60.0, 0.0, Weapon::None, 40.0, 600.0, 80.0, 30.0, 20.0, 1.5, 1),
+            Constructor => s("Constructor", 50.0, 0.0, Weapon::None, 30.0, 120.0, 100.0, 50.0, 30.0, 0.8, 1),
         }
     }
 
@@ -96,7 +106,7 @@ impl ShipClass {
             (Bomber, Interceptor) => 0.5,
             (Dreadnought, Interceptor) => 0.75,
             (Dreadnought, Gunship) | (Dreadnought, Bomber) => 1.25,
-            (_, Tanker) => 1.5,
+            (_, Tanker) | (_, Constructor) => 1.5,
             _ => 1.0,
         }
     }

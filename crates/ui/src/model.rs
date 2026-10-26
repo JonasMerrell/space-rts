@@ -51,11 +51,20 @@ pub enum ShipClass {
     Bomber,
     Dreadnought,
     Tanker,
+    /// Builds space stations where it's parked; more of them build faster.
+    Constructor,
 }
 
 impl ShipClass {
-    pub const ALL: [ShipClass; 6] =
-        [ShipClass::Scout, ShipClass::Interceptor, ShipClass::Gunship, ShipClass::Bomber, ShipClass::Dreadnought, ShipClass::Tanker];
+    pub const ALL: [ShipClass; 7] = [
+        ShipClass::Scout,
+        ShipClass::Interceptor,
+        ShipClass::Gunship,
+        ShipClass::Bomber,
+        ShipClass::Dreadnought,
+        ShipClass::Tanker,
+        ShipClass::Constructor,
+    ];
     pub fn label(self) -> &'static str {
         match self {
             ShipClass::Scout => "Scout",
@@ -64,6 +73,7 @@ impl ShipClass {
             ShipClass::Bomber => "Bomber",
             ShipClass::Dreadnought => "Dreadnought",
             ShipClass::Tanker => "Tanker",
+            ShipClass::Constructor => "Constructor",
         }
     }
 }

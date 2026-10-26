@@ -392,6 +392,8 @@ pub(crate) mod tests {
         g.start();
         g.advance_to(2.0 * 86_400.0);
         assert!(!g.players[1].techs.is_empty() || !g.players[1].research.is_empty(), "bot never started research");
+        assert!(g.ships.iter().any(|s| s.owner == 1 && s.class == crate::game::ShipClass::Constructor), "bot built no constructor");
+        assert!(g.stations.iter().any(|s| s.owner == 1), "bot built no station");
     }
 
     #[test]

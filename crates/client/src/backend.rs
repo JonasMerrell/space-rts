@@ -304,6 +304,7 @@ fn ship_class(c: g::ShipClass) -> m::ShipClass {
         g::ShipClass::Bomber => m::ShipClass::Bomber,
         g::ShipClass::Dreadnought => m::ShipClass::Dreadnought,
         g::ShipClass::Tanker => m::ShipClass::Tanker,
+        g::ShipClass::Constructor => m::ShipClass::Constructor,
     }
 }
 
@@ -315,6 +316,7 @@ fn sim_class(c: m::ShipClass) -> g::ShipClass {
         m::ShipClass::Bomber => g::ShipClass::Bomber,
         m::ShipClass::Dreadnought => g::ShipClass::Dreadnought,
         m::ShipClass::Tanker => g::ShipClass::Tanker,
+        m::ShipClass::Constructor => g::ShipClass::Constructor,
     }
 }
 
