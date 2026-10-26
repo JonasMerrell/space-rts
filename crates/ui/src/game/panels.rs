@@ -922,25 +922,45 @@ fn ship_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship, t
 }
 
 fn plan_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView, p: &TransferPlan) {
-    let r = sheet_rect(178.0);
+    // course options (cheapest … fastest) get a chip row under the title
+    let oy = if p.options.len() > 1 { 46.0 * s() } else { 0.0 };
+    let r = sheet_rect(if p.options.len() > 1 { 224.0 } else { 178.0 });
     inp.block(r);
     cel::panel(r, PANEL);
     let target = view.body(p.target).map(|b| b.name.to_uppercase()).unwrap_or_default();
-    inked(&format!("COURSE TO {target}"), r.x + 16.0 * s(), r.y + 24.0 * s(), 24.0, ACCENT, Align::Left);
+    let via: Vec<String> = p.via.iter().filter_map(|&b| view.body(b)).map(|b| b.name.to_uppercase()).collect();
+    let title = if via.is_empty() { format!("COURSE TO {target}") } else { format!("COURSE TO {target} VIA {}", via.join(", ")) };
+    inked(&title, r.x + 16.0 * s(), r.y + 24.0 * s(), 24.0, ACCENT, Align::Left);
+    if p.options.len() > 1 {
+        let n = p.options.len() as f32;
+        let cw = (r.w - 32.0 * s() - (n - 1.0) * 8.0 * s()) / n;
+        for (i, o) in p.options.iter().enumerate() {
+            let cr = Rect::new(r.x + 16.0 * s() + i as f32 * (cw + 8.0 * s()), r.y + 38.0 * s(), cw, 40.0 * s());
+            let on = o.token == p.token && o.depart_t == p.depart_t && o.arrive_t == p.arrive_t;
+            let tapped = widgets::chip(inp, cr, "", on, ACCENT);
+            let c = cr.center();
+            text(&o.label, c.x, c.y - 8.0 * s(), 13.0, if on { ACCENT } else { PAPER }, FontKind::Title, Align::Center);
+            let sub = format!("{:.1} km/s  {}", o.dv_depart + o.dv_mid + o.dv_capture, fmt_dur(o.arrive_t - o.depart_t));
+            text(&sub, c.x, c.y + 9.0 * s(), 12.0, MUTED, FontKind::Title, Align::Center);
+            if tapped && !on {
+                g.mode = Mode::Plan(o.clone());
+            }
+        }
+    }
     let cols = [
         ("DEPART", if p.depart_t - view.now < 60.0 { "NOW".to_string() } else { format!("in {}", fmt_dur(p.depart_t - view.now)) }),
         ("FLIGHT", fmt_dur(p.arrive_t - p.depart_t)),
-        ("DELTA-V", format!("{:.2} km/s", p.dv_depart + p.dv_capture)),
+        ("DELTA-V", format!("{:.2} km/s", p.dv_depart + p.dv_mid + p.dv_capture)),
     ];
     let cw = (r.w - 32.0 * s()) / 3.0;
     for (i, (k, v)) in cols.iter().enumerate() {
         let x = r.x + 16.0 * s() + i as f32 * cw;
-        text(k, x, r.y + 52.0 * s(), 13.0, MUTED, FontKind::Title, Align::Left);
-        inked(v, x, r.y + 74.0 * s(), 19.0, PAPER, Align::Left);
+        text(k, x, r.y + oy + 52.0 * s(), 13.0, MUTED, FontKind::Title, Align::Left);
+        inked(v, x, r.y + oy + 74.0 * s(), 19.0, PAPER, Align::Left);
     }
     let fuel = view.ship(p.ship).map(|s| s.fuel).unwrap_or(0.0);
     let ok = fuel >= p.fuel_needed;
-    let fr = Rect::new(r.x + 16.0 * s(), r.y + 96.0 * s(), r.w - 180.0 * s(), 10.0 * s());
+    let fr = Rect::new(r.x + 16.0 * s(), r.y + oy + 96.0 * s(), r.w - 180.0 * s(), 10.0 * s());
     widgets::bar(fr, p.fuel_needed / fuel.max(1.0), if ok { SUN_SHADE } else { DANGER });
     let fl = if ok { format!("FUEL {:.0} of {:.0}", p.fuel_needed, fuel) } else { format!("NEED {:.0} FUEL, HAVE {:.0}", p.fuel_needed, fuel) };
     text(&fl, fr.x + fr.w + 10.0 * s(), fr.center().y, 13.0, if ok { PAPER } else { DANGER }, FontKind::Title, Align::Left);
@@ -977,6 +997,7 @@ fn poly(cam: &Camera, tr: &Trajectory, from: f64) -> Vec<Vec2> {
 pub fn plan_world(p: &TransferPlan, be: &dyn Backend, view: &GameView, cam: &Camera, t: f64) {
     let pts = poly(cam, &p.path, f64::MIN);
     cel::inked_path(&pts, 4.0 * s(), ACCENT);
+    map::draw_flybys(&p.path, view, cam, f64::MIN, ACCENT);
     // Ghost of the target where it will be on arrival.
     if let Some(b) = view.body(p.target) {
         let c = cam.to_screen(be.body_pos(p.target, p.arrive_t));
@@ -1121,6 +1142,7 @@ pub fn nodes_world(ne: &NodeEdit, outcome: Option<&NodeOutcome>, be: &dyn Backen
     if let Some(tr) = &ne.preview {
         let pts = poly(cam, tr, view.now);
         cel::inked_path(&pts, 4.0 * s(), hex(0x80ed99));
+        map::draw_flybys(tr, view, cam, view.now, hex(0x80ed99));
     }
     if let Some(o) = outcome {
         let col = hex(0x80ed99);

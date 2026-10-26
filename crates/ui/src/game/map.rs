@@ -202,6 +202,7 @@ pub fn draw_trajectories(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64
             cel::dashed_path(&future, 3.0 * s(), 9.0 * s(), alpha(l, 0.85));
         }
         if mine && sel {
+            draw_flybys(tr, view, cam, t, alpha(l, 0.9));
             for n in &sh.nodes {
                 if let Some(p) = tr.sample(n.t) {
                     cel::diamond(cam.to_screen(p), 7.0 * s(), PAPER);
@@ -218,6 +219,19 @@ pub fn draw_trajectories(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64
                 }
             }
         }
+    }
+}
+
+/// Gravity-assist markers along a path: a dashed ring at closest approach and the speed change.
+pub fn draw_flybys(tr: &Trajectory, view: &GameView, cam: &Camera, t: f64, color: Color) {
+    for f in tr.flybys.iter().filter(|f| f.t >= t) {
+        let c = cam.to_screen(f.pos);
+        let r = 9.0 * s();
+        let ring: Vec<Vec2> = (0..=24).map(|i| c + Vec2::from_angle(i as f32 / 24.0 * std::f32::consts::TAU) * r).collect();
+        cel::dashed_path(&ring, 2.0 * s(), 4.0 * s(), color);
+        let name = view.body(f.body).map(|b| b.name.to_uppercase()).unwrap_or_default();
+        let label = if f.gain >= 0.0 { format!("SLINGSHOT {name} +{:.1} km/s", f.gain) } else { format!("FLYBY {name} {:.1} km/s", f.gain) };
+        inked(&label, c.x + r + 6.0 * s(), c.y - r, 13.0, color, Align::Left);
     }
 }
 

@@ -1,8 +1,9 @@
 //! Transfer planner: porkchop search over Lambert solutions for the best windows, then a
 //! patched-conic shooting refinement so the real predicted path is captured at the target.
+use crate::assist;
 use crate::kepler::{circular_speed, Conic, ejection, lambert, oberth_dv};
 use crate::system::{BodyId, System};
-use crate::traj::{predict, End, State, Trajectory};
+use crate::traj::{predict, Burn, End, State, Trajectory};
 use crate::v2::V2;
 use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
@@ -27,11 +28,39 @@ pub struct TransferPlan {
     /// predicted path (ends in Capture at `to` when the plan converged)
     pub traj: Trajectory,
     pub converged: bool,
+    /// mid-course burns (e.g. the correction after a gravity assist), flown as maneuver nodes
+    #[serde(default)]
+    pub burns: Vec<Burn>,
+    /// bodies the path swings past on the way (gravity assists), in order
+    #[serde(default)]
+    pub flybys: Vec<BodyId>,
+    /// what to hand `plan_hinted` (with `depart_t()`) to get exactly this plan again
+    #[serde(default)]
+    pub hint: Option<PlanHint>,
+}
+
+/// Enough to re-plan a chosen course deterministically (the server re-plans every order).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum PlanHint {
+    Direct { tof: f64 },
+    Assist { via: BodyId, flyby_t: f64, arrive_t: f64 },
+}
+
+/// Labels for the course options offered to the player.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Choice {
+    Cheapest,
+    Balanced,
+    Fastest,
 }
 
 impl TransferPlan {
     pub fn total_dv(&self) -> f64 {
-        self.depart_dv + self.capture_dv
+        self.depart_dv + self.mid_dv() + self.capture_dv
+    }
+    /// Δv of the mid-course burns.
+    pub fn mid_dv(&self) -> f64 {
+        self.burns.iter().map(|b| b.dv()).sum()
     }
     pub fn depart_t(&self) -> f64 {
         self.depart.t
@@ -39,7 +68,7 @@ impl TransferPlan {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum Rel {
+pub(crate) enum Rel {
     /// both orbit the same parent; Lambert leg in the parent's frame
     Sibling(BodyId),
     /// `to` orbits `from`
@@ -102,6 +131,11 @@ fn ccw_circ(mu: f64, r: V2) -> V2 {
     r.norm().perp() * circular_speed(mu, r.len())
 }
 
+/// Δv of the departure burn from the standard (counter-clockwise, circular) parking orbit.
+pub(crate) fn park_dv(sys: &System, from: BodyId, st: &State) -> f64 {
+    (st.v - ccw_circ(sys.body(from).mu, st.r)).len()
+}
+
 struct Leg {
     depart: State,
     dep_dv: f64,
@@ -110,7 +144,7 @@ struct Leg {
 }
 
 /// True when the coast from (r, v) passes below `min_r` within `tof` seconds.
-fn dips_below(mu: f64, r: V2, v: V2, tof: f64, min_r: f64) -> bool {
+pub(crate) fn dips_below(mu: f64, r: V2, v: V2, tof: f64, min_r: f64) -> bool {
     let c = Conic::from_state(mu, r, v);
     c.rp < min_r && c.time_to_periapsis(r, v).is_some_and(|tp| tp < tof)
 }
@@ -172,7 +206,7 @@ fn leg(sys: &System, from: BodyId, to: BodyId, rel: Rel, td: f64, tof: f64) -> O
     }
 }
 
-fn hohmann_tof(sys: &System, from: BodyId, to: BodyId, rel: Rel) -> f64 {
+pub(crate) fn hohmann_tof(sys: &System, from: BodyId, to: BodyId, rel: Rel) -> f64 {
     let (frame, r1, r2) = match rel {
         Rel::Sibling(f) => (f, sys.body(from).orbit.unwrap().a, sys.body(to).orbit.unwrap().a),
         Rel::Child => (from, sys.body(from).park_radius(), sys.body(to).orbit.unwrap().a),
@@ -317,6 +351,105 @@ pub fn plan_leg(sys: &System, from: BodyId, to: BodyId, now: f64, depart_t: Opti
     best.map(|b| b.1).ok_or_else(|| "no transfer solution".into())
 }
 
+/// Like `plan_leg`, but also considers swinging past another body on the way (gravity assist) and
+/// takes that route when it saves at least 5% Δv. Assist routes carry one correction burn after
+/// the pass (`TransferPlan::burns`).
+pub fn plan_route(sys: &System, from: BodyId, to: BodyId, now: f64, depart_t: Option<f64>) -> Result<TransferPlan, String> {
+    let direct = plan_leg(sys, from, to, now, depart_t);
+    let bar = direct.as_ref().ok().filter(|p| p.converged).map(|p| p.total_dv()).unwrap_or(f64::INFINITY);
+    let span = search_span(sys, from, to);
+    // the Lambert screen is cheap; only the best one or two survivors are flown for real
+    for c in assist::screen(sys, from, to, now, span, depart_t).iter().take(2) {
+        if c.total() > bar * 0.9 {
+            break;
+        }
+        if let Some(p) = assist::fly(sys, from, to, c, bar * 0.95) {
+            if p.total_dv() < bar * 0.95 {
+                return Ok(p);
+            }
+        }
+    }
+    direct
+}
+
+/// Re-plan a course from its hint: the same departure time and hint give the same plan.
+pub fn plan_hinted(sys: &System, from: BodyId, to: BodyId, depart_t: f64, hint: PlanHint) -> Result<TransferPlan, String> {
+    let fail = || "couldn't find that course any more, plan again".to_string();
+    match hint {
+        PlanHint::Direct { tof } => {
+            let rel = relation(sys, from, to).ok_or("no direct transfer between these bodies")?;
+            if !(tof.is_finite() && tof > 60.0) {
+                return Err(fail());
+            }
+            let l = leg(sys, from, to, rel, depart_t, tof).ok_or_else(fail)?;
+            let plan = shoot(sys, from, to, &l, tof, 1.0);
+            if plan.converged {
+                return Ok(plan);
+            }
+            let fine = shoot(sys, from, to, &l, tof, 0.25);
+            if fine.converged {
+                Ok(fine)
+            } else {
+                Err(fail())
+            }
+        }
+        PlanHint::Assist { via, flyby_t, arrive_t } => {
+            if !assist::assist_bodies(sys, from, to).contains(&via) {
+                return Err(fail());
+            }
+            let c = assist::estimate(sys, from, to, via, depart_t, flyby_t, arrive_t).ok_or_else(fail)?;
+            assist::fly(sys, from, to, &c, f64::INFINITY).ok_or_else(fail)
+        }
+    }
+}
+
+/// Course options from cheapest to fastest: the cheapest plan (gravity assists included), and
+/// direct courses that leave sooner / fly shorter for more Δv, up to `max_dv` (the ship's budget).
+/// At most three, each a different arrival time, sorted by Δv.
+pub fn options(sys: &System, from: BodyId, to: BodyId, now: f64, depart_t: Option<f64>, max_dv: f64) -> Vec<(Choice, TransferPlan)> {
+    let mut out = vec![];
+    let Ok(cheap) = plan_route(sys, from, to, now, depart_t) else { return out };
+    if !cheap.converged {
+        return out;
+    }
+    let Some(rel) = relation(sys, from, to) else { return vec![(Choice::Cheapest, cheap)] };
+    let h = hohmann_tof(sys, from, to, rel);
+    let base = cheap.total_dv();
+    // leave as soon as possible (or at the chosen time) and shorten the flight
+    let td = depart_t.unwrap_or(now + 60.0).max(now + 30.0);
+    let est: Vec<(f64, f64)> = (0..24)
+        .map(|i| h * (0.2 + 0.05 * i as f64))
+        .filter_map(|tof| leg(sys, from, to, rel, td, tof).map(|l| (tof, l.dep_dv + l.cap_dv)))
+        .collect();
+    let mut tried: Vec<f64> = vec![];
+    for (choice, cap) in [(Choice::Fastest, (max_dv * 0.9).min(base * 3.0)), (Choice::Balanced, base * 1.4)] {
+        // shortest flight whose estimate fits the budget; one retry a little longer if it misses
+        let fits: Vec<f64> = est.iter().filter(|e| e.1 <= cap).map(|e| e.0).collect();
+        for &tof in fits.iter().take(2) {
+            if tried.contains(&tof) {
+                break;
+            }
+            tried.push(tof);
+            if let Ok(p) = plan_hinted(sys, from, to, td, PlanHint::Direct { tof }) {
+                if p.total_dv() <= cap.max(base) * 1.1 && p.arrive_t < cheap.arrive_t - 600.0 {
+                    out.push((choice, p));
+                }
+                break;
+            }
+        }
+    }
+    out.push((Choice::Cheapest, cheap));
+    // drop options that arrive within the same hour as a cheaper one
+    out.sort_by(|a, b| a.1.total_dv().total_cmp(&b.1.total_dv()));
+    let mut kept: Vec<(Choice, TransferPlan)> = vec![];
+    for o in out {
+        if !kept.iter().any(|k| (k.1.arrive_t - o.1.arrive_t).abs() < 3600.0 || k.1.arrive_t <= o.1.arrive_t) {
+            kept.push(o);
+        }
+    }
+    kept
+}
+
 /// Correct the Lambert estimate against the real patched-conic path with a Nelder–Mead search over
 /// (rotation of the departure point, speed scale, radial kick).
 fn shoot(sys: &System, from: BodyId, to: BodyId, l: &Leg, tof: f64, scale: f64) -> TransferPlan {
@@ -398,7 +531,7 @@ fn shoot(sys: &System, from: BodyId, to: BodyId, l: &Leg, tof: f64, scale: f64) 
         End::Capture { body, t, rp, vp } if body == to && err < 0.08 => (true, vp - circular_speed(bt.mu, rp), t),
         _ => (false, l.cap_dv, l.arrive_t),
     };
-    TransferPlan { from, to, depart, depart_dv, capture_dv, arrive_t, traj, converged }
+    TransferPlan { from, to, depart, depart_dv, capture_dv, arrive_t, traj, converged, burns: vec![], flybys: vec![], hint: Some(PlanHint::Direct { tof }) }
 }
 
 #[cfg(test)]

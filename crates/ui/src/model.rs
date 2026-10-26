@@ -135,6 +135,21 @@ impl ManeuverNode {
 #[derive(Clone, Debug, Default)]
 pub struct Trajectory {
     pub points: Vec<(f64, [f64; 2])>,
+    /// Gravity assists along the path.
+    pub flybys: Vec<FlybyMark>,
+}
+
+/// A pass close by a body that bends the path (slingshot).
+#[derive(Clone, Debug, Default)]
+pub struct FlybyMark {
+    pub body: BodyId,
+    /// time and absolute position of closest approach
+    pub t: f64,
+    pub pos: [f64; 2],
+    /// km above the body's centre at closest approach
+    pub rp: f64,
+    /// change of speed relative to the body's parent, km/s (+ = boost)
+    pub gain: f64,
 }
 
 impl Trajectory {
@@ -308,9 +323,19 @@ pub struct TransferPlan {
     pub depart_t: f64,
     pub arrive_t: f64,
     pub dv_depart: f64,
+    /// Mid-course correction burns (after a gravity assist).
+    pub dv_mid: f64,
     pub dv_capture: f64,
     pub fuel_needed: f32,
     pub path: Trajectory,
+    /// Bodies the course swings past (gravity assists), in order.
+    pub via: Vec<BodyId>,
+    /// Short name of this option ("CHEAPEST", "BALANCED", "FASTEST"); empty for a lone plan.
+    pub label: String,
+    /// All course options for this ship and target, cheapest first (this plan is one of them).
+    pub options: Vec<TransferPlan>,
+    /// Backend-defined handle that re-creates exactly this course when scheduled.
+    pub token: String,
     /// Upcoming good departure times (seconds), best first is not required.
     pub windows: Vec<f64>,
 }

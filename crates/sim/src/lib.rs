@@ -1,5 +1,6 @@
 //! Shared simulation for the space RTS: orbital mechanics, game rules and the transfer planner.
 //! Runs identically on the server (authoritative) and the client (prediction / planning UI).
+pub mod assist;
 pub mod asteroid;
 pub mod bot;
 pub mod combat;

@@ -300,8 +300,9 @@ impl DemoBackend {
                         (t, [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k])
                     })
                     .collect(),
+                ..Default::default()
             };
-            return Some(TransferPlan { ship: s.id, target, depart_t, arrive_t, dv_depart: 0.4, dv_capture: 0.2, fuel_needed: 12.0, path, windows: vec![depart_t] });
+            return Some(TransferPlan { ship: s.id, target, depart_t, arrive_t, dv_depart: 0.4, dv_mid: 0.0, dv_capture: 0.2, fuel_needed: 12.0, path, via: vec![], label: String::new(), options: vec![], token: String::new(), windows: vec![depart_t] });
         }
         let at = (r1 + r2) / 2.0;
         let tof = PI * (at.powi(3) / MU).sqrt();
@@ -362,9 +363,14 @@ impl DemoBackend {
             depart_t,
             arrive_t: depart_t + tof,
             dv_depart: dv1,
+            dv_mid: 0.0,
             dv_capture: dv2,
             fuel_needed: ((dv1 + dv2) * 2.0) as f32 * s.count as f32,
-            path: Trajectory { points },
+            path: Trajectory { points, ..Default::default() },
+            via: vec![],
+            label: String::new(),
+            options: vec![],
+            token: String::new(),
             windows,
         })
     }
@@ -861,7 +867,35 @@ impl Backend for DemoBackend {
 
     fn plan_transfer(&self, ship: ShipId, target: BodyId, after: f64) -> Option<TransferPlan> {
         let s = self.view.as_ref()?.ship(ship)?;
-        self.plan_for(s, target, after)
+        let mut cheap = self.plan_for(s, target, after)?;
+        // fake course options: a slingshot marker on the cheapest path and two pricier, quicker ones
+        if let Some(&(t, pos)) = cheap.path.points.get(cheap.path.points.len() / 2) {
+            let body = self.view.as_ref()?.bodies.iter().find(|b| b.kind == BodyKind::Planet && b.id != target)?.id;
+            cheap.path.flybys.push(FlybyMark { body, t, pos, rp: 2000.0, gain: 3.4 });
+            cheap.via = vec![body];
+        }
+        let mut opts = vec![];
+        for (label, k) in [("CHEAPEST", 1.0), ("BALANCED", 1.45), ("FASTEST", 2.6)] {
+            let mut o = cheap.clone();
+            o.label = label.into();
+            o.token = label.into();
+            if k > 1.0 {
+                o.via.clear();
+                o.path.flybys.clear();
+                o.dv_depart *= k;
+                o.dv_capture *= k;
+                o.arrive_t = o.depart_t + (o.arrive_t - o.depart_t) / k;
+            }
+            opts.push(o);
+        }
+        for o in opts.iter_mut() {
+            o.options = vec![];
+        }
+        let list = opts.clone();
+        for o in opts.iter_mut() {
+            o.options = list.clone();
+        }
+        opts.into_iter().next()
     }
 
     fn preview_nodes(&self, ship: ShipId, nodes: &[ManeuverNode]) -> Option<Trajectory> {
@@ -907,7 +941,7 @@ impl Backend for DemoBackend {
                 t = end;
             }
         }
-        Some(Trajectory { points: out })
+        Some(Trajectory { points: out, ..Default::default() })
     }
 }
 
