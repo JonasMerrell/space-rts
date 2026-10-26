@@ -29,6 +29,7 @@ fn put_ship(g: &mut Game, owner: PlayerId, class: ShipClass, at: BodyId) -> Ship
         order: StandingOrder::Hold,
         route: vec![],
         state: ShipState::Parked { body: at, departure: None },
+        tech: Default::default(),
         last_burn_t: no_burn(),
     });
     id
@@ -301,4 +302,79 @@ fn vision_is_not_saved_or_sent() {
     assert!(!g.players[0].vision.ships.is_empty());
     let js = serde_json::to_string(&g).unwrap();
     assert!(!js.contains("\"vision\""));
+}
+
+fn put_station(g: &mut Game, owner: PlayerId, kind: sim::station::StationKind, body: BodyId) {
+    let id = sim::station::StationId(g.stations.len() as u32 + 1000);
+    g.stations.push(sim::station::Station { id, owner, kind, body, hp: kind.max_hp(), fuel: 0.0, done_t: 0.0 });
+}
+
+/// An unowned body with an enemy fleet out of player 0's sight, for station tests.
+fn hidden_enemy_at(g: &mut Game) -> (BodyId, ShipId) {
+    let home = g.players[0].home.unwrap();
+    let t = g.last_tick + TICK;
+    let far = g
+        .system
+        .bodies
+        .iter()
+        .filter(|b| matches!(b.kind, BodyKind::Planet | BodyKind::Moon) && g.bodies[b.id.0 as usize].owner.is_none())
+        .max_by(|a, b| g.system.pos(a.id, t).dist(g.system.pos(home, t)).total_cmp(&g.system.pos(b.id, t).dist(g.system.pos(home, t))))
+        .unwrap()
+        .id;
+    let id = put_ship(g, 1, ShipClass::Interceptor, far);
+    (far, id)
+}
+
+#[test]
+fn telescope_stations_extend_sight_and_scanners_reveal_plans() {
+    use sim::station::StationKind;
+    let mut g = game4(11);
+    let (far, id) = hidden_enemy_at(&mut g);
+    put_station(&mut g, 1, StationKind::Defense, far);
+    tick(&mut g);
+    let v = g.view_for(0);
+    assert!(v.ships.iter().all(|s| s.id != id), "enemy at {far:?} is out of sight");
+    assert!(v.stations.iter().all(|s| s.owner == 0), "enemy station at an unseen body leaked");
+    // a telescope station of ours at the same body sees the interceptor and the station
+    put_station(&mut g, 0, StationKind::Telescope, far);
+    // give the enemy a departure plan to check plan stripping
+    let target = g.players[0].home.unwrap();
+    let _ = g.apply(1, Command::Transfer { ships: vec![id], to: target, depart_t: None });
+    tick(&mut g);
+    let v = g.view_for(0);
+    let s = v.ships.iter().find(|s| s.id == id).expect("telescope station sees the interceptor");
+    assert!(matches!(s.state, ShipState::Parked { departure: None, .. }), "telescope alone doesn't reveal plans");
+    assert!(v.stations.iter().any(|s| s.owner == 1 && s.kind == StationKind::Defense));
+    // a scanner reveals the departure plan
+    put_station(&mut g, 0, StationKind::Scanner, far);
+    tick(&mut g);
+    let v = g.view_for(0);
+    let s = v.ships.iter().find(|s| s.id == id).unwrap();
+    if g.ship(id).is_some_and(|s| matches!(s.state, ShipState::Parked { departure: Some(_), .. })) {
+        assert!(matches!(s.state, ShipState::Parked { departure: Some(_), .. }), "scanner should reveal the departure");
+    }
+    assert!(g.players[0].vision.scanned_bodies.binary_search(&far).is_ok());
+}
+
+#[test]
+fn relays_boost_nearby_sensors() {
+    use sim::station::StationKind;
+    let mut g = game4(12);
+    tick(&mut g);
+    let home = g.players[0].home.unwrap();
+    let before = g.sensors(0);
+    put_station(&mut g, 0, StationKind::Relay, home);
+    let after = g.sensors(0);
+    let tel = |v: &[Sensor]| v.iter().filter(|s| s.kind == SensorKind::Passive).map(|s| s.range).fold(0.0, f64::max);
+    assert!((tel(&after) / tel(&before) - fog::RELAY_BOOST).abs() < 1e-9);
+}
+
+#[test]
+fn other_players_research_is_hidden() {
+    let mut g = game4(13);
+    g.players[1].techs.push(sim::tech::Tech::BetterOptics);
+    tick(&mut g);
+    let v = g.view_for(0);
+    assert!(v.players[1].techs.is_empty() && v.players[1].research.is_empty());
+    assert_eq!(g.view_for(1).players[1].techs.len(), 1);
 }

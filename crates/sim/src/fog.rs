@@ -7,6 +7,7 @@
 //! Visibility is evaluated once per tick (`update_intel`) and cached per player, so the server
 //! can cut `Game::view_for(p)` cheaply for every State it sends.
 use crate::game::{BodyState, Game, PlayerId, Ship, ShipClass, ShipId, ShipState, Upgrade};
+use crate::station::StationKind;
 use crate::system::BodyId;
 use crate::v2::V2;
 use serde::{Deserialize, Serialize};
@@ -80,6 +81,16 @@ pub fn ship_sensor(c: ShipClass) -> f64 {
     }
 }
 
+/// Sensor a station provides (before research mods), if any.
+pub fn station_sensor(kind: StationKind) -> Option<(f64, SensorKind)> {
+    match kind {
+        StationKind::Telescope => Some((500_000.0, SensorKind::Passive)),
+        StationKind::Scanner => Some((150_000.0, SensorKind::Scanner)),
+        StationKind::Relay => Some((400_000.0, SensorKind::Relay)),
+        _ => None,
+    }
+}
+
 /// Signature of a ship at time t, including the engine flare after a burn.
 pub fn signature(s: &Ship, t: f64) -> f64 {
     let mut k = s.class.stats().signature;
@@ -126,6 +137,15 @@ impl Game {
                 out.push(Sensor { pos, range: ship_sensor(s.class), kind: SensorKind::Passive });
             }
         }
+        for st in self.stations.iter().filter(|st| st.owner == p && st.active(t)) {
+            if let Some((range, kind)) = station_sensor(st.kind) {
+                out.push(Sensor { pos: self.system.pos(st.body, t), range, kind });
+            }
+        }
+        let k = self.mods(p).sensor;
+        for s in out.iter_mut() {
+            s.range *= k;
+        }
         let relays: Vec<Sensor> = out.iter().filter(|s| s.kind == SensorKind::Relay).copied().collect();
         for s in out.iter_mut().filter(|s| s.kind != SensorKind::Relay) {
             if relays.iter().any(|r| r.pos.dist(s.pos) <= r.range) {
@@ -170,12 +190,13 @@ impl Game {
                 }
             }
         }
+        let sig_mod: Vec<f64> = (0..self.players.len()).map(|p| self.mods(p as PlayerId).signature).collect();
         let sig: Vec<f64> = self
             .ships
             .iter()
             .map(|s| {
                 let n = s.parked_at().and_then(|b| groups.iter().find(|g| g.0 == b && g.1 == s.owner)).map(|g| g.2).unwrap_or(1.0);
-                signature(s, t) * n.sqrt()
+                signature(s, t) * n.sqrt() * sig_mod[s.owner as usize]
             })
             .collect();
         for p in 0..self.players.len() {
@@ -279,6 +300,7 @@ impl Game {
             // not a player (spectator): only the map
             let mut g = self.clone();
             g.ships.clear();
+            g.stations.clear();
             g.bodies = vec![BodyState::default(); g.bodies.len()];
             for pl in g.players.iter_mut() {
                 blank_player(pl);
@@ -295,6 +317,11 @@ impl Game {
             .map(|s| if s.owner == p { s.clone() } else { self.redact(s, v.scanned.binary_search(&s.id).is_ok()) })
             .collect();
         g.next_ship = g.ships.iter().map(|s| s.id.0 + 1).max().unwrap_or(0);
+        // stations are big: seen whenever their body is
+        g.stations.retain(|st| st.owner == p || v.bodies.binary_search(&st.body).is_ok());
+        for st in g.stations.iter_mut().filter(|st| st.owner != p) {
+            st.fuel = 0.0;
+        }
         g.bodies = (0..self.bodies.len())
             .map(|i| {
                 let mut b = if self.bodies[i].owner == Some(p) {
@@ -327,6 +354,8 @@ fn blank_player(pl: &mut crate::game::Player) {
     pl.home = None;
     pl.intel.clear();
     pl.contacts.clear();
+    pl.research.clear();
+    pl.techs.clear();
     pl.vision = Vision::default();
     pl.bot_avoid.clear();
 }
