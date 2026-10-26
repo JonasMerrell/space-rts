@@ -358,7 +358,7 @@ mod tests {
         let ast = asteroid(&g);
         let home = g.players[0].home.unwrap();
         let i = park(&mut g, 0, ShipClass::Constructor, ast);
-        let later = crate::game::Departure { to: home, state: crate::traj::State { parent: ast, t: g.t + 9.0 * 3600.0, r: crate::v2::v2(100.0, 0.0), v: crate::v2::v2(0.0, 1.0) }, dv: 1.0 };
+        let later = crate::game::Departure { to: home, state: crate::traj::State { parent: ast, t: g.t + 9.0 * 3600.0, r: crate::v2::v2(100.0, 0.0), v: crate::v2::v2(0.0, 1.0) }, dv: 1.0, burns: vec![] };
         g.ships[i].state = ShipState::Parked { body: ast, departure: Some(later) };
         assert_eq!(g.workers(0, ast), 1);
         g.apply(0, Command::BuildStation { body: ast, kind: StationKind::FuelDepot }).unwrap();
@@ -372,7 +372,7 @@ mod tests {
         let err = |g: &mut Game| g.apply(0, Command::BuildStation { body: ast, kind: StationKind::FuelDepot }).unwrap_err();
         assert!(err(&mut g).contains("build one at a shipyard"), "{}", err(&mut g));
         let i = park(&mut g, 0, ShipClass::Constructor, home);
-        let dep = crate::game::Departure { to: ast, state: crate::traj::State { parent: home, t: g.t + 3.0 * 3600.0, r: crate::v2::v2(1000.0, 0.0), v: crate::v2::v2(0.0, 5.0) }, dv: 2.0 };
+        let dep = crate::game::Departure { to: ast, state: crate::traj::State { parent: home, t: g.t + 3.0 * 3600.0, r: crate::v2::v2(1000.0, 0.0), v: crate::v2::v2(0.0, 5.0) }, dv: 2.0, burns: vec![] };
         g.ships[i].state = ShipState::Parked { body: home, departure: Some(dep) };
         let e = err(&mut g);
         assert!(e.contains("still at") && e.contains("leaves for") && e.contains("3h 00m"), "{e}");
