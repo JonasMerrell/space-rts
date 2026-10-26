@@ -73,7 +73,10 @@ public class NotifyJob extends JobService {
             while ((line = in.readLine()) != null) {
                 JSONObject m = new JSONObject(line);
                 if (m.has("Error")) {
-                    Log.w(TAG, "server: " + m.getJSONObject("Error").optString("msg"));
+                    String msg = m.getJSONObject("Error").optString("msg");
+                    Log.w(TAG, "server: " + msg);
+                    // a revoked or expired session won't come back: stop polling until the next login
+                    if (login.has("token") && msg.contains("expired")) f.delete();
                     return;
                 }
                 if (m.has("Events")) {

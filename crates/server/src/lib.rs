@@ -32,6 +32,7 @@ struct Account {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     hash: String,
     /// "Stay logged in" sessions: sha256 of each token (the token itself is never stored).
+    /// A password change (not a feature yet) must clear these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     tokens: Vec<Session>,
 }
@@ -639,22 +640,25 @@ fn hello(server: &Mutex<Server>, guard: &Guard, id: u64, ip: IpAddr, h: Hello) {
         // a saved session: no password, no new token
         let h = token_hash(&t);
         let mut s = lock(server);
-        let ok = s.accounts.get_mut(&user).is_some_and(|a| {
+        // Some(stamp moved) when the token is good; the file is only rewritten once an hour per session
+        let found = s.accounts.get_mut(&user).and_then(|a| {
+            let n = a.tokens.len();
             a.prune_sessions(now);
-            match a.tokens.iter_mut().find(|x| x.sha256 == h) {
-                Some(x) => {
-                    x.last = now;
-                    true
-                }
-                None => false,
+            let x = a.tokens.iter_mut().find(|x| x.sha256 == h)?;
+            let stale = now - x.last > 3600.0;
+            if stale {
+                x.last = now;
             }
+            Some(stale || a.tokens.len() != n)
         });
-        if !ok {
+        let Some(changed) = found else {
             drop(s);
             guard.login_failed(ip, Some(&user));
             return err("your saved login has expired: log in again");
+        };
+        if changed {
+            s.save_accounts();
         }
-        s.save_accounts();
         return welcome(&mut s, id, user, None);
     }
     let acct = lock(server).accounts.get(&user).cloned();

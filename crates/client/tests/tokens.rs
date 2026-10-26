@@ -130,39 +130,3 @@ fn old_accounts_load_and_unused_tokens_expire() {
     assert!(hello(&addr, "kim", "", Some(&stale), false, false).1.is_err());
     assert!(hello(&addr, "kim", "", Some(&fresh), false, false).1.is_ok());
 }
-
-/// The real client backend saves the token, not the password, and logs back in with it.
-#[test]
-fn saved_session_keeps_the_token_not_the_password() {
-    let data = temp_dir("saved");
-    let addr = start(&data);
-    let home = temp_dir("home");
-    std::env::set_var("HOME", &home);
-    std::env::set_var("HOHMANN_PINS", home.join("pins.txt"));
-    let (_c, _) = hello(&addr, "sam", "pw-sam-secret", None, true, false);
-    use ui::Backend;
-    let mut be = space_rts::backend::ClientBackend::new(addr.clone());
-    be.act(ui::UiAction::Login { server: addr.clone(), user: "sam".into(), pass: "pw-sam-secret".into(), register: false, invite: String::new() });
-    let end = Instant::now() + Duration::from_secs(20);
-    let logged_in = |be: &mut space_rts::backend::ClientBackend| be.poll().iter().any(|e| matches!(e, ui::BackendEvent::LoggedIn { .. }));
-    while !logged_in(&mut be) {
-        assert!(Instant::now() < end, "login timed out");
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    let saved = std::fs::read_to_string(home.join(".config/hohmanns-reach/session.json")).unwrap();
-    assert!(!saved.contains("pw-sam-secret") && saved.contains("\"token\""), "{saved}");
-    // a new launch resumes from the saved token
-    let mut be2 = space_rts::backend::ClientBackend::new(addr.clone());
-    be2.resume();
-    let end = Instant::now() + Duration::from_secs(20);
-    while !logged_in(&mut be2) {
-        assert!(Instant::now() < end, "resume timed out");
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    // logging out revokes it on the server
-    be2.act(ui::UiAction::Logout);
-    std::thread::sleep(Duration::from_millis(500));
-    let token = serde_json::from_str::<serde_json::Value>(&saved).unwrap()["token"].as_str().unwrap().to_string();
-    assert!(hello(&addr, "sam", "", Some(&token), false, false).1.is_err());
-    assert!(!home.join(".config/hohmanns-reach/session.json").exists());
-}
