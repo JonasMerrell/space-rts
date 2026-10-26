@@ -208,6 +208,10 @@ impl Server {
                 let code = code.trim().to_uppercase();
                 let Some(g) = self.games.get_mut(&code) else { return err(self, "no game with that code") };
                 if g.player_by_name(user.as_ref().unwrap()).is_none() {
+                    // joining is open only while the game waits for its host to press start
+                    if g.status != Status::Lobby {
+                        return err(self, "that game has already started, joining is closed");
+                    }
                     if let Err(e) = g.add_player(user.as_ref().unwrap(), None) {
                         return err(self, &e);
                     }
@@ -222,8 +226,22 @@ impl Server {
                 if g.player_by_name(user.as_ref().unwrap()).map(|p| p.id) != Some(g.host) {
                     return err(self, "only the host can add bots");
                 }
-                let n = g.players.iter().filter(|p| p.bot.is_some()).count() + 1;
+                let n = (1..).find(|n| !g.players.iter().any(|p| p.name.starts_with(&format!("Bot {n} ")))).unwrap_or(1);
                 if let Err(e) = g.add_player(&format!("Bot {n} ({difficulty})"), Some(difficulty)) {
+                    return err(self, &e);
+                }
+                self.dirty.insert(code.clone());
+                self.changed.insert(code);
+            }
+            ClientMsg::RemoveBot { code, player } => {
+                let Some(g) = self.games.get_mut(&code) else { return err(self, "no such game") };
+                if g.player_by_name(user.as_ref().unwrap()).map(|p| p.id) != Some(g.host) {
+                    return err(self, "only the host can remove bots");
+                }
+                if g.players.get(player as usize).is_none_or(|p| p.bot.is_none()) {
+                    return err(self, "that pilot isn't a bot");
+                }
+                if let Err(e) = g.remove_player(player) {
                     return err(self, &e);
                 }
                 self.dirty.insert(code.clone());
@@ -244,6 +262,9 @@ impl Server {
                 let Some(g) = self.games.get_mut(&code) else { return err(self, "no such game") };
                 if g.player_by_name(user.as_ref().unwrap()).map(|p| p.id) != Some(g.host) {
                     return err(self, "only the host can start the game");
+                }
+                if g.status != Status::Lobby {
+                    return err(self, "the game is already running");
                 }
                 g.start();
                 g.started_real = unix_now();

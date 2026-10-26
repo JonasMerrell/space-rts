@@ -248,3 +248,54 @@ fn bad_ids_in_commands_dont_take_the_server_down() {
     assert!(c.ping(), "server stopped answering after bad ids");
     assert!(c.login("pw", true).is_ok());
 }
+
+#[test]
+fn waiting_period_lets_players_and_bots_join_until_the_host_starts() {
+    let addr = start(temp_dir("lobby"));
+    let mut ann = Client::connect(addr, "ann");
+    let mut bob = Client::connect(addr, "bob");
+    let mut cat = Client::connect(addr, "cat");
+    for c in [&mut ann, &mut bob, &mut cat] {
+        c.login("pw", true).unwrap();
+    }
+    let code = create(&mut ann, 4);
+    // the system exists and everybody already knows their own (preview) home, but the clock is stopped
+    ann.send(&ClientMsg::AddBot { code: code.clone(), difficulty: "easy".into() });
+    ann.send(&ClientMsg::AddBot { code: code.clone(), difficulty: "easy".into() });
+    ann.state(5.0, |g, _| g.players.len() == 3);
+    bob.send(&ClientMsg::JoinGame { code: code.clone() });
+    let (g, me) = bob.state(5.0, |g, _| g.players.len() == 4);
+    assert_eq!(g.status, Status::Lobby);
+    assert!(!g.system.bodies.is_empty());
+    assert!(g.players[me as usize].home.is_some(), "joiner sees their home before the start");
+    assert!(g.ships.is_empty());
+    // bots go again; only the host may remove them, and only bots
+    bob.send(&ClientMsg::RemoveBot { code: code.clone(), player: 1 });
+    assert!(bob.error().contains("host"));
+    ann.send(&ClientMsg::RemoveBot { code: code.clone(), player: 3 });
+    assert!(ann.error().contains("bot"));
+    ann.send(&ClientMsg::RemoveBot { code: code.clone(), player: 1 });
+    let (g, _) = ann.state(5.0, |g, _| g.players.len() == 3);
+    assert_eq!(g.players.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["ann", "Bot 2 (easy)", "bob"]);
+    // re-adding fills the free bot number instead of colliding with "Bot 2"
+    ann.send(&ClientMsg::AddBot { code: code.clone(), difficulty: "easy".into() });
+    let (g, _) = ann.state(5.0, |g, _| g.players.len() == 4);
+    assert!(g.players.iter().any(|p| p.name == "Bot 1 (easy)"));
+    // time doesn't run while waiting
+    std::thread::sleep(Duration::from_millis(1500));
+    ann.send(&ClientMsg::Open { code: code.clone() });
+    let (g, _) = ann.state(5.0, |_, _| true);
+    assert_eq!(g.t, 0.0);
+    ann.send(&ClientMsg::RemoveBot { code: code.clone(), player: 3 });
+    ann.state(5.0, |g, _| g.players.len() == 3);
+    ann.send(&ClientMsg::StartGame { code: code.clone() });
+    let (g, me) = bob.state(30.0, |g, _| g.status == Status::Running);
+    assert_eq!(g.players[me as usize].name, "bob");
+    // starting twice doesn't reset the clock, and joining is closed now
+    ann.send(&ClientMsg::StartGame { code: code.clone() });
+    assert!(ann.error().contains("already"));
+    cat.send(&ClientMsg::JoinGame { code: code.clone() });
+    assert!(cat.error().contains("already started"));
+    ann.send(&ClientMsg::AddBot { code: code.clone(), difficulty: "easy".into() });
+    assert!(ann.error().contains("started"));
+}
