@@ -36,6 +36,8 @@ pub struct Vision {
     /// enemy ships inside a scanning station's range: their burns and routes are visible too
     pub scanned: Vec<ShipId>,
     pub bodies: Vec<BodyId>,
+    /// bodies inside a scanning station's range (plans made there, e.g. asteroid drives, are visible)
+    pub scanned_bodies: Vec<BodyId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,8 +197,12 @@ impl Game {
             }
             for i in 0..self.bodies.len() {
                 let b = BodyId(i as u32);
-                if self.bodies[i].owner == Some(me) || sees_point(&sensors, self.system.pos(b, t)) {
+                let pos = self.system.pos(b, t);
+                if self.bodies[i].owner == Some(me) || sees_point(&sensors, pos) {
                     v.bodies.push(b);
+                }
+                if sensors.iter().any(|s| s.kind == SensorKind::Scanner && s.pos.dist(pos) <= s.range) {
+                    v.scanned_bodies.push(b);
                 }
             }
             v.ships.sort();
