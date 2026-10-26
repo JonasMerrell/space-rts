@@ -191,3 +191,44 @@ pub fn bar(r: Rect, frac: f32, fill: Color) {
         cel::round_rect(Rect::new(r.x, r.y, (r.w * f).max(r.h), r.h), r.h / 2.0, fill);
     }
 }
+
+/// Log-scale slider for a multiplier in `lo..=hi` that snaps to `snaps` (and to whole numbers in
+/// between). Returns the new value and whether the finger was lifted this frame (commit point).
+/// `labels` draws the snap values under their ticks.
+pub fn log_slider(inp: &mut Input, r: Rect, v: f64, lo: f64, hi: f64, snaps: &[f64], labels: bool) -> (f64, bool) {
+    inp.block(r);
+    let track = Rect::new(r.x + 12.0 * s(), r.y + 14.0 * s(), r.w - 24.0 * s(), 6.0 * s());
+    let frac_of = |x: f64| ((x / lo).ln() / (hi / lo).ln()).clamp(0.0, 1.0) as f32;
+    let mut v = v.clamp(lo, hi);
+    let mut released = false;
+    if let Some(p) = inp.held {
+        if inp.gesture_on_ui() && r.contains(p) {
+            let f = ((p.x - track.x) / track.w).clamp(0.0, 1.0);
+            let raw = lo * (hi / lo).powf(f as f64);
+            let near = snaps.iter().copied().min_by(|a, b| ((frac_of(*a) - f).abs()).total_cmp(&(frac_of(*b) - f).abs()));
+            let new = match near {
+                Some(n) if (frac_of(n) - f).abs() * track.w < 12.0 * s() => n,
+                _ => raw.round().clamp(lo, hi),
+            };
+            if new != v {
+                crate::art::sfx("slider_tick");
+            }
+            v = new;
+        }
+    }
+    if inp.released.is_some_and(|p| r.contains(p)) {
+        released = true;
+    }
+    bar(track, frac_of(v), ACCENT);
+    for &k in snaps {
+        let x = track.x + track.w * frac_of(k);
+        draw_line(x, track.y + track.h + 3.0 * s(), x, track.y + track.h + 8.0 * s(), 1.5 * s(), MUTED);
+        if labels {
+            text(&format!("{k}×"), x, track.y + track.h + 18.0 * s(), 11.0, MUTED, FontKind::Title, Align::Center);
+        }
+    }
+    let kc = vec2(track.x + track.w * frac_of(v), track.y + track.h / 2.0);
+    draw_circle(kc.x, kc.y, 12.0 * s(), alpha(ACCENT, 0.35));
+    draw_circle(kc.x, kc.y, 8.0 * s(), PAPER);
+    (v, released)
+}

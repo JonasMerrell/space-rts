@@ -147,8 +147,8 @@ pub struct Menu {
     pub creating: bool,
     pub new_name: TextField,
     pub length_days: u32,
-    /// index into `SPEEDS`
-    pub speed: usize,
+    /// game seconds per real second
+    pub speed: f64,
     pub bots: Vec<usize>,
     pub error: Option<String>,
     pub user: String,
@@ -159,7 +159,7 @@ impl Menu {
     pub fn new(user: String) -> Self {
         let mut new_name = TextField::new(false);
         new_name.text = format!("{}'s war", user);
-        Menu { join: TextField::code(), creating: false, new_name, length_days: 7, speed: 0, bots: vec![], error: None, user, scroll: 0.0 }
+        Menu { join: TextField::code(), creating: false, new_name, length_days: 7, speed: 1.0, bots: vec![], error: None, user, scroll: 0.0 }
     }
 
     pub fn draw(&mut self, inp: &mut Input, be: &mut dyn Backend) {
@@ -255,19 +255,12 @@ impl Menu {
         let r = col.row(52.0);
         self.length_days = widgets::stepper(inp, r, &format!("{} DAYS", self.length_days), self.length_days, 2, 30);
         text("GAME SPEED", col.x + 4.0 * s(), col.y, 18.0, MUTED, FontKind::Title, Align::Left);
-        col.gap(14.0);
+        text(&format!("{}×", self.speed), col.x + col.w - 4.0 * s(), col.y, 18.0, ACCENT, FontKind::Title, Align::Right);
+        col.gap(10.0);
         let r = col.row(44.0);
-        let gap = 8.0 * s();
-        let cw = (r.w - gap * (SPEEDS.len() - 1) as f32) / SPEEDS.len() as f32;
-        for (i, &k) in SPEEDS.iter().enumerate() {
-            let cr = Rect::new(r.x + i as f32 * (cw + gap), r.y, cw, r.h);
-            if widgets::chip(inp, cr, &format!("{k}×"), self.speed == i, ACCENT) {
-                art::sfx("toggle_on");
-                self.speed = i;
-            }
-        }
-        let real_h = self.length_days as f64 * 24.0 / SPEEDS[self.speed];
-        let note = if SPEEDS[self.speed] == 1.0 { "real time".to_string() } else { format!("{} days of game time in {}", self.length_days, real_len(real_h)) };
+        self.speed = widgets::log_slider(inp, r, self.speed, SPEEDS[0], SPEEDS[SPEEDS.len() - 1], &SPEEDS, true).0;
+        let real_h = self.length_days as f64 * 24.0 / self.speed;
+        let note = if self.speed == 1.0 { "real time".to_string() } else { format!("{} days of game time in {}", self.length_days, real_len(real_h)) };
         text(&note, col.x + 4.0 * s(), col.y, 14.0, MUTED, FontKind::Body, Align::Left);
         col.gap(26.0);
         text("BOTS (fill empty seats)", col.x + 4.0 * s(), col.y, 18.0, MUTED, FontKind::Title, Align::Left);
@@ -294,7 +287,7 @@ impl Menu {
             be.act(UiAction::CreateGame {
                 name: self.new_name.text.trim().to_string(),
                 length_days: self.length_days,
-                speed: SPEEDS[self.speed],
+                speed: self.speed,
                 bots: self.bots.iter().map(|&b| BOT_LEVELS[b].to_lowercase()).collect(),
             });
             self.creating = false;
@@ -315,7 +308,7 @@ pub fn safe_bottom() -> f32 {
     if cfg!(target_os = "android") { 20.0 * s() } else { 0.0 }
 }
 
-/// Game-speed choices on the create screen (game seconds per real second).
+/// Snap points of the game-speed slider (game seconds per real second).
 pub const SPEEDS: [f64; 7] = [1.0, 2.0, 4.0, 8.0, 24.0, 72.0, 168.0];
 
 /// "42 h" / "3.5 days" for a real-time duration in hours.
