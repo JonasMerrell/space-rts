@@ -246,6 +246,11 @@ impl Server {
                 reply(self, ServerMsg::Games(list));
             }
             ClientMsg::CreateGame { name, size, length_days, speed, max_players, bots } => {
+                let max = self.guard.as_ref().map_or(usize::MAX, |g| g.limits.max_hosted);
+                let hosted = self.games.values().filter(|g| g.status != Status::Ended && g.player_by_name(&user).is_some_and(|p| p.id == g.host)).count();
+                if hosted >= max {
+                    return err(self, "you're hosting too many games already; finish one first");
+                }
                 let code = self.new_code();
                 let settings = Settings {
                     name: if name.trim().is_empty() { format!("{}'s game", &user) } else { name.trim().chars().take(40).collect() },
@@ -359,6 +364,11 @@ impl Server {
                     g.advance_to(t);
                 }
                 let res = g.apply(me, cmd);
+                // chat is the one thing a player can grow without limit; keep the recent part
+                if g.chat.len() > 400 {
+                    let n = g.chat.len() - 300;
+                    g.chat.drain(..n);
+                }
                 self.dirty.insert(code.clone());
                 self.changed.insert(code);
                 let (ok, msg) = match res {
@@ -611,7 +621,8 @@ fn client_thread(server: Arc<Mutex<Server>>, guard: Arc<Guard>, cfg: Arc<Config>
             }
         }
     });
-    let mut bucket = Bucket::new(l);
+    let mut bucket = Bucket::new(l.msg_burst);
+    let mut heavy = Bucket::new(l.heavy_burst);
     loop {
         let line = match wire::read_line(&mut reader, wire::MAX_CLIENT_LINE) {
             Ok(Some(line)) => line,
@@ -626,11 +637,20 @@ fn client_thread(server: Arc<Mutex<Server>>, guard: Arc<Guard>, cfg: Arc<Config>
         if line.trim().is_empty() {
             continue;
         }
-        if !bucket.take(l) {
+        if !bucket.take(l.msg_rate, l.msg_burst) {
             lock(&server).send(id, &ServerMsg::Error { msg: "too many messages, slow down".into() });
             break;
         }
         let msg = decode::<ClientMsg>(&line).and_then(|m| m.check().map(|_| m).map_err(String::from));
+        let is_heavy = matches!(
+            &msg,
+            Ok(ClientMsg::Open { .. } | ClientMsg::JoinGame { .. } | ClientMsg::CreateGame { .. } | ClientMsg::ListGames | ClientMsg::Events { .. })
+                | Ok(ClientMsg::Cmd { cmd: sim::game::Command::Chat { .. }, .. })
+        );
+        if is_heavy && !heavy.take(l.heavy_rate, l.heavy_burst) {
+            lock(&server).send(id, &ServerMsg::Error { msg: "too many requests, wait a moment".into() });
+            continue;
+        }
         match msg {
             Ok(ClientMsg::Hello { user, pass, register, invite }) => {
                 let logged_in = lock(&server).conns.get(&id).is_some_and(|c| c.user.is_some());

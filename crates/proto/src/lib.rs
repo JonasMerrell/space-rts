@@ -94,7 +94,8 @@ pub enum ServerMsg {
 }
 
 pub fn encode<T: Serialize>(m: &T) -> String {
-    let mut s = serde_json::to_string(m).expect("serialize");
+    // only maps with non-string keys can fail, and the protocol has none
+    let mut s = serde_json::to_string(m).unwrap_or_else(|_| "\"Ping\"".into());
     s.push('\n');
     s
 }

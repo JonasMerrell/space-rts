@@ -23,6 +23,12 @@ pub struct Limits {
     /// Token bucket per connection: sustained messages per second and burst.
     pub msg_rate: f64,
     pub msg_burst: f64,
+    /// Separate, slower bucket for messages that make the server serialize a whole game or
+    /// grow saved state (Open, JoinGame, CreateGame, ListGames, Events, Chat). Over it → refused.
+    pub heavy_rate: f64,
+    pub heavy_burst: f64,
+    /// Games one player may host that haven't ended.
+    pub max_hosted: usize,
     pub max_hashing: usize,
 }
 
@@ -39,6 +45,9 @@ impl Default for Limits {
             write_timeout: Duration::from_secs(30),
             msg_rate: 20.0,
             msg_burst: 100.0,
+            heavy_rate: 0.5,
+            heavy_burst: 15.0,
+            max_hosted: 10,
             max_hashing: 2,
         }
     }
@@ -204,12 +213,12 @@ pub struct Bucket {
 }
 
 impl Bucket {
-    pub fn new(l: &Limits) -> Bucket {
-        Bucket { tokens: l.msg_burst, last: Instant::now() }
+    pub fn new(burst: f64) -> Bucket {
+        Bucket { tokens: burst, last: Instant::now() }
     }
-    pub fn take(&mut self, l: &Limits) -> bool {
+    pub fn take(&mut self, rate: f64, burst: f64) -> bool {
         let now = Instant::now();
-        self.tokens = (self.tokens + now.duration_since(self.last).as_secs_f64() * l.msg_rate).min(l.msg_burst);
+        self.tokens = (self.tokens + now.duration_since(self.last).as_secs_f64() * rate).min(burst);
         self.last = now;
         if self.tokens >= 1.0 {
             self.tokens -= 1.0;
@@ -264,7 +273,7 @@ mod tests {
     #[test]
     fn bucket() {
         let l = Limits { msg_rate: 0.0, msg_burst: 5.0, ..Limits::default() };
-        let mut b = Bucket::new(&l);
-        assert_eq!((0..8).filter(|_| b.take(&l)).count(), 5);
+        let mut b = Bucket::new(l.msg_burst);
+        assert_eq!((0..8).filter(|_| b.take(l.msg_rate, l.msg_burst)).count(), 5);
     }
 }
