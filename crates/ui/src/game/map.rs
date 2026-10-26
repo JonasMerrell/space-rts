@@ -159,7 +159,7 @@ pub fn draw_labels(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64) {
             inked(&name, lx, c.y - r - 14.0 * s(), size, PAPER, Align::Center);
             if let Some(i) = &b.intel {
                 if b.kind == BodyKind::Planet {
-                    text(&format!("PWR {:.0}", i.power), c.x, c.y + r + 14.0 * s(), 13.0, MUTED, FontKind::Title, Align::Center);
+                    text(&format!("PWR {:.0}", i.power.max(0.0)), c.x, c.y + r + 14.0 * s(), 13.0, MUTED, FontKind::Title, Align::Center);
                 }
             } else if b.kind == BodyKind::Planet {
                 text("???", c.x, c.y + r + 14.0 * s(), 13.0, MUTED, FontKind::Title, Align::Center);
@@ -215,10 +215,12 @@ pub fn draw_ships(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64, selec
         let (l, _) = team(view.color_of(Some(sh.owner)));
         // Manifest `size` per class, so the RPS classes read differently at a glance.
         let size = match sh.class {
+            ShipClass::Scout => 6.5,
             ShipClass::Interceptor => 8.0,
-            ShipClass::Gunship => 10.5,
-            ShipClass::Bomber => 11.5,
-            ShipClass::Tanker => 12.0,
+            ShipClass::Gunship => 10.0,
+            ShipClass::Bomber => 11.0,
+            ShipClass::Dreadnought => 14.0,
+            ShipClass::Tanker => 11.0,
         } * s();
         if selected == Some(Focus::Ship(sh.id)) {
             let pulse = 1.0 + 0.1 * (time * 6.0).sin();
@@ -227,7 +229,7 @@ pub fn draw_ships(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64, selec
         let player = view.player(sh.owner);
         let skin = player.map(|p| art::skin_of(&p.faction)).unwrap_or("vanguard");
         if let Some(t) = art::ship_tex(sh.class, skin, player.map(|p| p.color)) {
-            let px = size * 3.4;
+            let px = size * 2.8;
             art::draw_centered(&t, p, vec2(px, px), dir.y.atan2(dir.x), WHITE);
         } else {
             let fill = if sh.owner == view.me { PAPER } else { l };

@@ -1,6 +1,6 @@
 //! Offline UI demo on the fake backend.
 //!   cargo run -p ui --example demo
-//! Screenshot mode: UI_SCENE=<login|menu|create|lobby|map|body|target|plan|nodes|scrub|chat|toast> UI_SHOT=out.png
+//! Screenshot mode: UI_SCENE=<login|menu|create|lobby|map|body|owned|yard|ship|gmenu|target|plan|nodes|scrub|chat|toast> UI_SHOT=out.png
 //! sets the scene up, renders a few frames, saves the PNG and exits.
 
 use macroquad::prelude::*;
@@ -19,7 +19,7 @@ fn conf() -> Conf {
 fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
     ui.user = "Jonas".into();
     let game = |ui: &mut Ui, be: &mut DemoBackend| {
-        be.act(UiAction::Login { user: "Jonas".into(), pass: "x".into(), register: false });
+        be.act(UiAction::Login { server: String::new(), user: "Jonas".into(), pass: "x".into(), register: false });
         be.start_game();
         be.speed = 0.0;
         let _ = be.poll();
@@ -40,7 +40,7 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
             ui.screen = Screen::Menu(m);
         }
         "lobby" => {
-            be.act(UiAction::Login { user: "Jonas".into(), pass: "x".into(), register: false });
+            be.act(UiAction::Login { server: String::new(), user: "Jonas".into(), pass: "x".into(), register: false });
             be.act(UiAction::CreateGame { name: "Friday Night War".into(), length_days: 7, bots: vec!["hard".into()] });
             let mut info = None;
             for ev in be.poll() {
@@ -58,7 +58,14 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
             let Screen::Game(g) = &mut ui.screen else { unreachable!() };
             let v = be.view().unwrap().clone();
             match scene {
-                "body" => g.selected = Some(Focus::Body(2)),
+                "body" => g.selected = Some(Focus::Body(1)),
+                "owned" => g.selected = Some(Focus::Body(2)),
+                "yard" => {
+                    g.selected = Some(Focus::Body(2));
+                    g.body_tab = 1;
+                }
+                "gmenu" => g.menu_open = true,
+                "ship" => g.selected = Some(Focus::Ship(1)),
                 "target" => {
                     g.selected = Some(Focus::Ship(1));
                     g.mode = Mode::Target(1);
@@ -74,7 +81,7 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                 "nodes" => {
                     let s = v.ship(4).unwrap();
                     let t = s.trajectory.as_ref().unwrap().end().unwrap() * 0.5 + v.now * 0.5;
-                    let nodes = vec![ManeuverNode { t, prograde: 1400.0, radial: -600.0 }];
+                    let nodes = vec![ManeuverNode { t, prograde: 1.4, radial: -0.6 }];
                     let preview = be.preview_nodes(4, &nodes);
                     g.selected = Some(Focus::Ship(4));
                     g.mode = Mode::Nodes(NodeEdit { ship: 4, nodes, sel: 0, preview, dirty: false, drag: None });

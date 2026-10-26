@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 pub const SKINS: [&str; 4] = ["vanguard", "hive", "prism", "junker"];
 const TEAM_NAMES: [&str; 4] = ["blue", "red", "green", "yellow"];
-const CLASSES: [&str; 4] = ["interceptor", "gunship", "bomber", "tanker"];
+const CLASSES: [&str; 5] = ["scout", "interceptor", "gunship", "bomber", "tanker"];
 const PLANETS: [&str; 11] = [
     "planet_terran", "planet_ocean", "planet_desert", "planet_ice", "planet_lava", "planet_barren", "planet_toxic",
     "planet_jungle", "planet_gas_orange", "planet_gas_blue", "planet_gas_ringed",
@@ -102,9 +102,12 @@ pub fn draw_centered(t: &Texture2D, c: Vec2, size: Vec2, rot: f32, tint: Color) 
 
 pub fn ship_tex(class: ShipClass, skin: &str, team: Option<usize>) -> Option<Texture2D> {
     let class = match class {
+        ShipClass::Scout => "scout",
         ShipClass::Interceptor => "interceptor",
         ShipClass::Gunship => "gunship",
         ShipClass::Bomber => "bomber",
+        // No dreadnought sprite yet: a big gunship hull (drawn larger by the map).
+        ShipClass::Dreadnought => "gunship",
         ShipClass::Tanker => "tanker",
     };
     let team = team.map(|t| TEAM_NAMES[t % 4]).unwrap_or("neutral");

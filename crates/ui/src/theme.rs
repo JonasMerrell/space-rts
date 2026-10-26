@@ -4,7 +4,7 @@
 use macroquad::prelude::*;
 use std::cell::Cell;
 
-pub const GAME_TITLE: &str = "KEPLER CLASH";
+pub const GAME_TITLE: &str = "HAHMANN'S REACH";
 
 pub const BG: Color = hex(0x1b1340);
 pub const INK: Color = hex(0x000000);
@@ -15,7 +15,7 @@ pub const ACCENT: Color = hex(0xffd23f);
 pub const DANGER: Color = hex(0xe63946);
 pub const GOOD: Color = hex(0x52b788);
 pub const MUTED: Color = Color::new(1.0, 1.0, 1.0, 0.55);
-pub const PANEL: Color = Color::new(0.06, 0.05, 0.15, 0.88);
+pub const PANEL: Color = Color::new(0.06, 0.05, 0.15, 0.94);
 pub const PANEL_HI: Color = Color::new(0.14, 0.12, 0.30, 0.92);
 pub const BORDER: Color = Color::new(1.0, 1.0, 1.0, 0.16);
 pub const FIELD: Color = Color::new(0.03, 0.02, 0.09, 0.9);

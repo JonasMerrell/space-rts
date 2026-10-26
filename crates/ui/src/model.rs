@@ -1,5 +1,5 @@
 //! Plain view-models the UI draws from. The client crate fills these from `sim`/`proto`;
-//! positions are absolute (star-centred) in Gm, times are seconds since game start.
+//! positions are absolute (star-centred) in km, speeds/Δv in km/s, times are seconds since game start.
 
 pub type BodyId = u32;
 pub type ShipId = u32;
@@ -19,9 +19,9 @@ pub struct Body {
     pub name: String,
     pub kind: BodyKind,
     pub parent: Option<BodyId>,
-    /// Physical radius in Gm (drawn with a minimum on-screen size).
+    /// Physical radius in km (drawn with a minimum on-screen size).
     pub radius: f64,
-    /// Sphere of influence radius in Gm (0 for the star).
+    /// Sphere of influence radius in km (0 for the star).
     pub soi: f64,
     /// Owner = whoever has the most power in orbit; `None` = neutral/unknown.
     pub owner: Option<PlayerId>,
@@ -44,21 +44,65 @@ pub struct Intel {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShipClass {
+    Scout,
     Interceptor,
     Gunship,
     Bomber,
+    Dreadnought,
     Tanker,
 }
 
 impl ShipClass {
+    pub const ALL: [ShipClass; 6] =
+        [ShipClass::Scout, ShipClass::Interceptor, ShipClass::Gunship, ShipClass::Bomber, ShipClass::Dreadnought, ShipClass::Tanker];
     pub fn label(self) -> &'static str {
         match self {
+            ShipClass::Scout => "Scout",
             ShipClass::Interceptor => "Interceptor",
             ShipClass::Gunship => "Gunship",
             ShipClass::Bomber => "Bomber",
+            ShipClass::Dreadnought => "Dreadnought",
             ShipClass::Tanker => "Tanker",
         }
     }
+}
+
+/// Planet upgrade names, in the order the body panel lists them (= sim `Upgrade::ALL`).
+pub const UPGRADES: [&str; 8] = ["Mining", "Solar", "Reactor", "Refinery", "Shipyard", "Defense", "Telescope", "Research"];
+
+#[derive(Clone, Debug, Default)]
+pub struct Cost {
+    pub matter: f64,
+    pub energy: f64,
+    /// Build time in seconds.
+    pub seconds: f64,
+}
+
+#[derive(Clone, Debug)]
+pub struct UpgradeInfo {
+    /// One of `UPGRADES`.
+    pub name: String,
+    pub level: u8,
+    pub max: u8,
+    /// Cost of the next level, None when maxed.
+    pub next: Option<Cost>,
+}
+
+/// Owner-side detail for the body panel (`Backend::body_info`).
+#[derive(Clone, Debug, Default)]
+pub struct BodyInfo {
+    pub upgrades: Vec<UpgradeInfo>,
+    /// Ship classes this body's shipyard can build now, with costs.
+    pub buildable: Vec<(ShipClass, Cost)>,
+    /// (label, finishes at t).
+    pub queue: Vec<(String, f64)>,
+    pub fuel: f64,
+    /// Military power in orbit per player.
+    pub power: Vec<(PlayerId, f64)>,
+    /// Per hour.
+    pub matter_rate: f64,
+    pub energy_rate: f64,
+    pub fuel_rate: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -118,6 +162,8 @@ pub struct Ship {
     pub nodes: Vec<ManeuverNode>,
     /// Where the scheduled flight ends up.
     pub destination: Option<BodyId>,
+    /// Standing order while the player is away: retreat when outgunned (else hold and fight).
+    pub retreat: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -211,6 +257,7 @@ pub struct GameSummary {
 #[derive(Clone, Debug, Default)]
 pub struct GameView {
     pub me: PlayerId,
+    pub host: PlayerId,
     pub now: f64,
     pub ends_at: f64,
     pub bodies: Vec<Body>,

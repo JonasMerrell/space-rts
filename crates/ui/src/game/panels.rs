@@ -92,13 +92,43 @@ pub fn hud(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
         g.chat_seen = view.chat.len();
     }
     if widgets::round_button(inp, vec2(bx, top + ch / 2.0), 21.0 * s(), "@menu", ACCENT, 0) {
-        g.emit(UiAction::BackToMenu);
+        g.menu_open = !g.menu_open;
+        art::sfx(if g.menu_open { "menu_open" } else { "menu_close" });
+    }
+    if g.menu_open {
+        game_menu(g, inp, view, Rect::new(w - margin() - 220.0 * s(), top + ch + 30.0 * s(), 220.0 * s(), 0.0));
     }
     // Clock line.
     let y = top + ch + 16.0 * s();
     inked(&fmt_clock(view.now), margin(), y, 17.0, PAPER, Align::Left);
     let left = view.ends_at - view.now;
     text(&format!("WAR ENDS IN {}", fmt_dur(left)), w - margin(), y, 14.0, MUTED, FontKind::Title, Align::Right);
+}
+
+fn game_menu(g: &mut GameScreen, inp: &mut Input, view: &GameView, at: Rect) {
+    let host = view.host == view.me;
+    let items = if host { 3 } else { 2 };
+    let bh = 44.0 * s();
+    let pad = 10.0 * s();
+    let r = Rect::new(at.x, at.y, at.w, pad + items as f32 * (bh + pad));
+    inp.block(r);
+    cel::panel(r, alpha(PANEL, 0.97));
+    let row = |i: usize| Rect::new(r.x + pad, r.y + pad + i as f32 * (bh + pad), r.w - 2.0 * pad, bh);
+    if widgets::button(inp, row(0), if art::muted() { "SOUND: OFF" } else { "SOUND: ON" }, Style::Secondary) {
+        art::set_muted(!art::muted());
+    }
+    if host && widgets::button(inp, row(1), "EXTEND WAR +1 DAY", Style::Secondary) {
+        g.emit(UiAction::ExtendGame { days: 1 });
+        g.menu_open = false;
+    }
+    if widgets::button(inp, row(items - 1), "LEAVE TO MENU", Style::Ghost) {
+        g.menu_open = false;
+        g.emit(UiAction::BackToMenu);
+    }
+    // Tap elsewhere closes it.
+    if inp.tap.is_some_and(|p| !r.contains(p)) {
+        g.menu_open = false;
+    }
 }
 
 // ---------------------------------------------------------------- Scrubber
@@ -212,12 +242,129 @@ pub fn sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameV
             }
             Some(Focus::Body(id)) => {
                 if let Some(b) = view.body(id) {
-                    body_sheet(g, inp, view, b);
+                    match be.body_info(id).filter(|_| b.owner == Some(view.me)) {
+                        Some(info) => owned_body_sheet(g, inp, view, b, &info),
+                        None => body_sheet(g, inp, view, b),
+                    }
                 }
             }
             None => {}
         },
     }
+}
+
+fn affordable(view: &GameView, c: &Cost) -> bool {
+    view.resources.matter >= c.matter && view.resources.energy >= c.energy
+}
+
+fn cost_line(c: &Cost) -> String {
+    format!("{}M  {}E  {}", fmt_amount(c.matter), fmt_amount(c.energy), fmt_dur(c.seconds))
+}
+
+/// Our own planet/moon: upgrades and shipyard tabs, build queue, power in orbit.
+fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Body, info: &BodyInfo) {
+    let r = sheet_rect(332.0);
+    inp.block(r);
+    cel::panel(r, PANEL);
+    let c = vec2(r.x + 30.0 * s(), r.y + 30.0 * s());
+    map::draw_body(b, c, 14.0 * s(), c + vec2(-100.0, -60.0), view.color_of(b.owner), get_time() as f32);
+    inked(&b.name.to_uppercase(), r.x + 56.0 * s(), r.y + 22.0 * s(), 22.0, PAPER, Align::Left);
+    let mine: f64 = info.power.iter().filter(|p| p.0 == view.me).map(|p| p.1).sum();
+    let enemy: f64 = info.power.iter().filter(|p| p.0 != view.me).map(|p| p.1).sum();
+    let mut sub = format!("YOURS · power {:.0}", mine);
+    if enemy > 0.0 {
+        sub += &format!(" vs {:.0} hostile", enemy);
+    }
+    text(&sub, r.x + 56.0 * s(), r.y + 44.0 * s(), 13.0, if enemy > mine { DANGER } else { MUTED }, FontKind::Title, Align::Left);
+    let rates = format!("+{}M +{}E +{}F /h · fuel {}", fmt_amount(info.matter_rate), fmt_amount(info.energy_rate), fmt_amount(info.fuel_rate), fmt_amount(info.fuel));
+    text(&rates, r.x + 16.0 * s(), r.y + 66.0 * s(), 13.0, PAPER, FontKind::Body, Align::Left);
+    if close_x(inp, r) {
+        g.selected = None;
+        return;
+    }
+
+    // Tabs.
+    let ty = r.y + 82.0 * s();
+    let tw = 116.0 * s();
+    for (i, label) in ["UPGRADES", "SHIPYARD"].iter().enumerate() {
+        let tr = Rect::new(r.x + 16.0 * s() + i as f32 * (tw + 10.0 * s()), ty, tw, 30.0 * s());
+        if widgets::chip(inp, tr, label, g.body_tab == i, ACCENT) && g.body_tab != i {
+            g.body_tab = i;
+            art::sfx("menu_tab");
+        }
+    }
+    let grid = Rect::new(r.x + 12.0 * s(), ty + 42.0 * s(), r.w - 24.0 * s(), r.h - 42.0 * s() - 82.0 * s() - 34.0 * s());
+    let cols = 2;
+    let gap = 8.0 * s();
+    let cw = (grid.w - gap) / cols as f32;
+    let cell = |i: usize, rows: usize| {
+        let ch = (grid.h - gap * (rows as f32 - 1.0)) / rows as f32;
+        Rect::new(grid.x + (i % cols) as f32 * (cw + gap), grid.y + (i / cols) as f32 * (ch + gap), cw, ch)
+    };
+    if g.body_tab == 0 {
+        let rows = info.upgrades.len().div_ceil(cols).max(1);
+        for (i, u) in info.upgrades.iter().enumerate() {
+            let cr = cell(i, rows);
+            cel::round_rect(cr, 6.0 * s(), Color::new(1.0, 1.0, 1.0, 0.05));
+            text(&u.name.to_uppercase(), cr.x + 10.0 * s(), cr.y + cr.h * 0.32, 14.0, PAPER, FontKind::Title, Align::Left);
+            for k in 0..u.max {
+                let pc = vec2(cr.x + 14.0 * s() + k as f32 * 12.0 * s(), cr.y + cr.h * 0.7);
+                draw_circle(pc.x, pc.y, 4.0 * s(), if k < u.level { ACCENT } else { Color::new(1.0, 1.0, 1.0, 0.18) });
+            }
+            if let Some(cost) = &u.next {
+                let ok = affordable(view, cost);
+                let br = Rect::new(cr.x + cr.w - 44.0 * s(), cr.y + (cr.h - 32.0 * s()) / 2.0, 36.0 * s(), 32.0 * s());
+                let cx = cr.x + 14.0 * s() + u.max as f32 * 12.0 * s();
+                text(&cost_line(cost), cx, cr.y + cr.h * 0.7, 11.0, if ok { MUTED } else { DANGER }, FontKind::Body, Align::Left);
+                if widgets::button(inp, br, "+", if ok { Style::Primary } else { Style::Ghost }) {
+                    if ok {
+                        art::sfx("purchase");
+                        g.emit(UiAction::Upgrade { body: b.id, upgrade: u.name.clone() });
+                    } else {
+                        art::sfx("ui_error");
+                    }
+                }
+            } else {
+                text("MAX", cr.x + cr.w - 12.0 * s(), cr.center().y, 13.0, GOOD, FontKind::Title, Align::Right);
+            }
+        }
+    } else if info.buildable.is_empty() {
+        text("No shipyard here yet. Upgrade Shipyard to build ships.", grid.x + 4.0 * s(), grid.y + 16.0 * s(), 14.0, MUTED, FontKind::Body, Align::Left);
+    } else {
+        let rows = info.buildable.len().div_ceil(cols).max(1);
+        let player = view.player(view.me);
+        let skin = player.map(|p| art::skin_of(&p.faction)).unwrap_or("vanguard");
+        for (i, (class, cost)) in info.buildable.iter().enumerate() {
+            let cr = cell(i, rows);
+            cel::round_rect(cr, 6.0 * s(), Color::new(1.0, 1.0, 1.0, 0.05));
+            let ic = vec2(cr.x + 22.0 * s(), cr.center().y);
+            match art::ship_tex(*class, skin, player.map(|p| p.color)) {
+                Some(t) => art::draw_centered(&t, ic, vec2(34.0, 34.0) * s(), -0.5, WHITE),
+                None => cel::ship(ic, vec2(1.0, -0.5), 10.0 * s(), PAPER),
+            }
+            let ok = affordable(view, cost);
+            text(&class.label().to_uppercase(), cr.x + 44.0 * s(), cr.y + cr.h * 0.34, 14.0, PAPER, FontKind::Title, Align::Left);
+            text(&cost_line(cost), cr.x + 44.0 * s(), cr.y + cr.h * 0.7, 11.0, if ok { MUTED } else { DANGER }, FontKind::Body, Align::Left);
+            let br = Rect::new(cr.x + cr.w - 44.0 * s(), cr.y + (cr.h - 32.0 * s()) / 2.0, 36.0 * s(), 32.0 * s());
+            if widgets::button(inp, br, "+", if ok { Style::Primary } else { Style::Ghost }) {
+                if ok {
+                    art::sfx("purchase");
+                    g.emit(UiAction::Build { body: b.id, class: *class });
+                } else {
+                    art::sfx("ui_error");
+                }
+            }
+        }
+    }
+    // Build queue.
+    let qy = r.y + r.h - 22.0 * s();
+    let q = if info.queue.is_empty() {
+        "Queue empty".to_string()
+    } else {
+        let items: Vec<String> = info.queue.iter().take(3).map(|(l, t)| format!("{l} {}", fmt_dur(t - view.now))).collect();
+        format!("Queue: {}", items.join(" · "))
+    };
+    text(&q, r.x + 16.0 * s(), qy, 13.0, if info.queue.is_empty() { MUTED } else { PAPER }, FontKind::Body, Align::Left);
 }
 
 fn body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Body) {
@@ -265,7 +412,7 @@ fn body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Body) {
 
 fn ship_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship, targeting: bool) {
     let mine = sh.owner == view.me;
-    let r = sheet_rect(if mine { 160.0 } else { 110.0 });
+    let r = sheet_rect(if mine { 200.0 } else { 110.0 });
     inp.block(r);
     cel::panel(r, PANEL);
     let (l, _) = team(view.color_of(Some(sh.owner)));
@@ -290,6 +437,17 @@ fn ship_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship, t
         let fr = Rect::new(r.x + 64.0 * s(), r.y + 64.0 * s(), r.w - 150.0 * s(), 10.0 * s());
         widgets::bar(fr, sh.fuel / sh.fuel_max.max(1.0), SUN_SHADE);
         text(&format!("FUEL {:.0}/{:.0}", sh.fuel, sh.fuel_max), fr.x + fr.w + 10.0 * s(), fr.center().y, 13.0, PAPER, FontKind::Title, Align::Left);
+        // Standing order while we're offline.
+        let oy = r.y + 86.0 * s();
+        text("IF ATTACKED", r.x + 16.0 * s(), oy + 15.0 * s(), 13.0, MUTED, FontKind::Title, Align::Left);
+        let ow = 96.0 * s();
+        for (i, (label, retreat)) in [("HOLD", false), ("RETREAT", true)].iter().enumerate() {
+            let cr = Rect::new(r.x + 110.0 * s() + i as f32 * (ow + 10.0 * s()), oy, ow, 30.0 * s());
+            if widgets::chip(inp, cr, label, sh.retreat == *retreat, if *retreat { TEAMS[0].0 } else { ACCENT }) && sh.retreat != *retreat {
+                art::sfx(if *retreat { "toggle_on" } else { "toggle_off" });
+                g.emit(UiAction::SetOrder { ship: sh.id, retreat: *retreat });
+            }
+        }
         let by = r.y + r.h - 58.0 * s();
         let bw = (r.w - 4.0 * 12.0 * s()) / 3.0;
         let b = |i: usize| Rect::new(r.x + 12.0 * s() + i as f32 * (bw + 12.0 * s()), by, bw, 46.0 * s());
@@ -436,7 +594,7 @@ fn node_frame(ne: &NodeEdit, be: &dyn Backend, cam: &Camera) -> Option<NodeFrame
     if rad.dot(pos - cam.to_screen([0.0, 0.0])) < 0.0 {
         rad = -rad;
     }
-    let speed = ((p[0] - q[0]).hypot(p[1] - q[1]) / 120.0) * 1e6;
+    let speed = (p[0] - q[0]).hypot(p[1] - q[1]) / 120.0;
     Some(NodeFrame { pos, pro, rad, k: (speed * 0.002).max(0.001) })
 }
 

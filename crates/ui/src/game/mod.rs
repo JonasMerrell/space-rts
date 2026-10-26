@@ -58,6 +58,10 @@ pub struct GameScreen {
     pub chat_field: crate::widgets::TextField,
     pub toasts: Vec<Toast>,
     pub hint: Option<(String, f64)>,
+    /// Owned-body sheet tab: 0 upgrades, 1 shipyard.
+    pub body_tab: usize,
+    /// In-game menu popover open.
+    pub menu_open: bool,
     /// For sound cues: chat length and bodies we owned last frame.
     seen_chat: usize,
     owned: Vec<BodyId>,
@@ -83,6 +87,8 @@ impl GameScreen {
             chat_field: crate::widgets::TextField::new(false),
             toasts: vec![],
             hint: None,
+            body_tab: 0,
+            menu_open: false,
             seen_chat: usize::MAX,
             owned: vec![],
             last_selected: None,
@@ -113,6 +119,11 @@ impl GameScreen {
                 // Start zoomed on the inner system; pinch out for the whole map.
                 let mut cam = Camera::fit(view);
                 cam.zoom *= 1.8;
+                // ...centred on our home world when we have one.
+                if let Some(home) = view.bodies.iter().find(|b| b.owner == Some(view.me) && b.kind == BodyKind::Planet) {
+                    let p = be_ref.body_pos(home.id, view.now);
+                    cam.center = [p[0] * 0.5, p[1] * 0.5];
+                }
                 self.cam = Some(cam);
             }
             let t = view.now + self.scrub;

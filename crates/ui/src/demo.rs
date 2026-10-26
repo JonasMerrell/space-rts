@@ -6,8 +6,10 @@ use crate::backend::{Backend, BackendEvent, UiAction};
 use crate::model::*;
 use std::f64::consts::{PI, TAU};
 
-/// Star GM in Gm³/s², chosen so a planet at 150 Gm has a 1-day year.
-const MU: f64 = 4.0 * PI * PI * 150.0 * 150.0 * 150.0 / (86400.0 * 86400.0);
+/// Demo distances are authored in "units" and scaled to km by K.
+const K: f64 = 6000.0;
+/// Star GM in km³/s², chosen so a planet at 150 units (900,000 km) has a 1-day year.
+const MU: f64 = 4.0 * PI * PI * (150.0 * K) * (150.0 * K) * (150.0 * K) / (86400.0 * 86400.0);
 
 #[derive(Clone, Copy)]
 struct Kep {
@@ -44,6 +46,9 @@ pub struct DemoBackend {
     pub speed: f64,
     pub start_t: f64,
     lobby: Option<LobbyInfo>,
+    /// Upgrade levels per body (index = model::UPGRADES).
+    levels: std::collections::HashMap<BodyId, [u8; 8]>,
+    queue: Vec<(BodyId, String, f64, ShipClass)>,
     user: String,
     games: Vec<GameSummary>,
 }
@@ -64,6 +69,8 @@ impl DemoBackend {
             speed: 60.0,
             start_t: 2.0 * 86400.0 + 14.0 * 3600.0,
             lobby: None,
+            levels: std::collections::HashMap::new(),
+            queue: vec![],
             user: String::new(),
             games: vec![
                 GameSummary { code: "K7QX".into(), name: "Friday Night War".into(), day: 3, length_days: 7, players: 4, unread: 3 },
@@ -114,6 +121,7 @@ impl DemoBackend {
                 Some(_) => MU * 3e-4,
                 None => MU,
             };
+            let (a, radius) = (a * K, radius * K);
             let k = Kep { parent, a, e, w, m0, mu };
             let orbit_path = if parent.is_some() {
                 let per = k.period();
@@ -168,6 +176,7 @@ impl DemoBackend {
             trajectory: None,
             nodes: vec![],
             destination: None,
+            retreat: false,
         };
         let mut ships = vec![
             ship(1, "Red Fang", ShipClass::Gunship, 1, 3, Some(2)),
@@ -180,6 +189,7 @@ impl DemoBackend {
         ];
         self.view = Some(GameView {
             me: 1,
+            host: 1,
             now,
             ends_at: 7.0 * 86400.0,
             bodies,
@@ -223,7 +233,7 @@ impl DemoBackend {
         let from = s.parked_at?;
         let r1 = self.sun_radius(from, after);
         let r2 = self.sun_radius(target, after);
-        if (r1 - r2).abs() < 1.0 {
+        if (r1 - r2).abs() < K {
             // Same planet system (planet ↔ its moon): short hop.
             let depart_t = after + 300.0;
             let arrive_t = depart_t + 3.0 * 3600.0;
@@ -290,8 +300,8 @@ impl DemoBackend {
         let v2 = (MU / r2).sqrt();
         let vp = (MU * (2.0 / r1 - 1.0 / at)).sqrt();
         let va = (MU * (2.0 / r2 - 1.0 / at)).sqrt();
-        let dv1 = (vp - v1).abs() * 1e6;
-        let dv2 = (v2 - va).abs() * 1e6;
+        let dv1 = (vp - v1).abs();
+        let dv2 = (v2 - va).abs();
         Some(TransferPlan {
             ship: s.id,
             target,
@@ -299,7 +309,7 @@ impl DemoBackend {
             arrive_t: depart_t + tof,
             dv_depart: dv1,
             dv_capture: dv2,
-            fuel_needed: ((dv1 + dv2) * 0.02) as f32 * s.count as f32,
+            fuel_needed: ((dv1 + dv2) * 2.0) as f32 * s.count as f32,
             path: Trajectory { points },
             windows,
         })
@@ -310,7 +320,7 @@ impl DemoBackend {
         let dt = (t1 - t0) / steps as f64;
         let acc = |p: [f64; 2]| {
             let r2 = p[0] * p[0] + p[1] * p[1];
-            let r = r2.sqrt().max(3.0);
+            let r = r2.sqrt().max(3.0 * K);
             [-MU * p[0] / (r * r * r), -MU * p[1] / (r * r * r)]
         };
         for i in 0..steps {
@@ -328,6 +338,23 @@ impl DemoBackend {
     }
 }
 
+fn ship_cost(c: ShipClass) -> Cost {
+    let (m, e, min) = match c {
+        ShipClass::Scout => (40.0, 20.0, 20.0),
+        ShipClass::Interceptor => (80.0, 30.0, 40.0),
+        ShipClass::Gunship => (140.0, 60.0, 70.0),
+        ShipClass::Bomber => (160.0, 70.0, 80.0),
+        ShipClass::Dreadnought => (480.0, 220.0, 240.0),
+        ShipClass::Tanker => (100.0, 30.0, 60.0),
+    };
+    Cost { matter: m, energy: e, seconds: min * 60.0 }
+}
+
+fn upgrade_cost(level: u8) -> Cost {
+    let k = level as f64;
+    Cost { matter: 120.0 * k, energy: 50.0 * k, seconds: 1800.0 * k }
+}
+
 impl Backend for DemoBackend {
     fn poll(&mut self) -> Vec<BackendEvent> {
         let now = self.now();
@@ -343,6 +370,15 @@ impl Backend for DemoBackend {
                         s.nodes.clear();
                     }
                 }
+            }
+        }
+        let (done, rest): (Vec<_>, Vec<_>) = self.queue.drain(..).partition(|q| q.2 <= now);
+        self.queue = rest;
+        if let Some(v) = self.view.as_mut() {
+            for (body, label, _, class) in done {
+                let id = v.ships.iter().map(|s| s.id).max().unwrap_or(0) + 1;
+                v.ships.push(Ship { id, name: format!("New {label}"), class, owner: v.me, count: 1, fuel: 200.0, fuel_max: 400.0, parked_at: Some(body), trajectory: None, nodes: vec![], destination: None, retreat: false });
+                self.events.push(BackendEvent::Notice(Notice { kind: NoticeKind::Good, title: format!("{label} ready"), body: "Fresh from the shipyard".into(), focus: Some(Focus::Ship(id)) }));
             }
         }
         std::mem::take(&mut self.events)
@@ -462,7 +498,76 @@ impl Backend for DemoBackend {
                 }
             }
             UiAction::BackToMenu => self.view = None,
+            UiAction::Build { body, class } => {
+                let now = self.now();
+                let cost = ship_cost(class);
+                if let Some(v) = self.view.as_mut() {
+                    v.resources.matter -= cost.matter;
+                    v.resources.energy -= cost.energy;
+                }
+                let done = self.queue.iter().filter(|q| q.0 == body).map(|q| q.2).fold(now, f64::max) + cost.seconds;
+                self.queue.push((body, class.label().to_string(), done, class));
+            }
+            UiAction::Upgrade { body, upgrade } => {
+                if let Some(i) = UPGRADES.iter().position(|u| *u == upgrade) {
+                    let lv = self.levels.entry(body).or_insert([1, 1, 0, 1, 1, 0, 0, 0]);
+                    let c = upgrade_cost(lv[i] + 1);
+                    if lv[i] < 3 {
+                        lv[i] += 1;
+                        if let Some(v) = self.view.as_mut() {
+                            v.resources.matter -= c.matter;
+                            v.resources.energy -= c.energy;
+                        }
+                    }
+                }
+            }
+            UiAction::SetOrder { ship, retreat } => {
+                if let Some(s) = self.view.as_mut().and_then(|v| v.ships.iter_mut().find(|s| s.id == ship)) {
+                    s.retreat = retreat;
+                }
+            }
+            UiAction::ExtendGame { days } => {
+                if let Some(v) = self.view.as_mut() {
+                    v.ends_at += days as f64 * 86400.0;
+                }
+            }
         }
+    }
+
+    fn body_info(&self, id: BodyId) -> Option<BodyInfo> {
+        let v = self.view.as_ref()?;
+        if v.body(id)?.owner != Some(v.me) {
+            return None;
+        }
+        let lv = self.levels.get(&id).copied().unwrap_or([1, 1, 0, 1, 1, 0, 0, 0]);
+        let upgrades = UPGRADES
+            .iter()
+            .zip(lv)
+            .map(|(n, l)| UpgradeInfo { name: n.to_string(), level: l, max: 3, next: (l < 3).then(|| upgrade_cost(l + 1)) })
+            .collect();
+        let yard = lv[4];
+        let buildable = ShipClass::ALL.iter().filter(|c| yard >= 1 && (**c != ShipClass::Dreadnought || yard >= 3)).map(|&c| (c, ship_cost(c))).collect();
+        let mut power: Vec<(PlayerId, f64)> = vec![];
+        for s in v.ships.iter().filter(|s| s.parked_at == Some(id) && s.trajectory.is_none()) {
+            match power.iter_mut().find(|p| p.0 == s.owner) {
+                Some(p) => p.1 += 20.0 * s.count as f64,
+                None => power.push((s.owner, 20.0 * s.count as f64)),
+            }
+        }
+        Some(BodyInfo {
+            upgrades,
+            buildable,
+            queue: self.queue.iter().filter(|q| q.0 == id).map(|q| (q.1.clone(), q.2)).collect(),
+            fuel: 420.0,
+            power,
+            matter_rate: 60.0 * (1.0 + lv[0] as f64),
+            energy_rate: 20.0 + 60.0 * (lv[1] + lv[2]) as f64,
+            fuel_rate: 120.0 * lv[3] as f64,
+        })
+    }
+
+    fn default_server(&self) -> String {
+        "demo (offline)".into()
     }
 
     fn my_games(&self) -> Vec<GameSummary> {
@@ -520,8 +625,8 @@ impl Backend for DemoBackend {
                 rad = [-rad[0], -rad[1]];
             }
             // km/s → Gm/s.
-            vel[0] += (pro[0] * n.prograde + rad[0] * n.radial) * 1e-6;
-            vel[1] += (pro[1] * n.prograde + rad[1] * n.radial) * 1e-6;
+            vel[0] += pro[0] * n.prograde + rad[0] * n.radial;
+            vel[1] += pro[1] * n.prograde + rad[1] * n.radial;
             let end = nodes.get(i + 1).map(|n| n.t).unwrap_or(t + 86400.0);
             if i + 1 == nodes.len() {
                 let (p2, v2) = self.integrate(pos, vel, t, end, &mut out);

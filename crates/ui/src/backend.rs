@@ -18,7 +18,7 @@ pub enum BackendEvent {
 /// Commands from the UI. Fire-and-forget; results arrive as `BackendEvent`s or a changed view.
 #[derive(Clone, Debug)]
 pub enum UiAction {
-    Login { user: String, pass: String, register: bool },
+    Login { server: String, user: String, pass: String, register: bool },
     Logout,
     CreateGame { name: String, length_days: u32, bots: Vec<String> },
     JoinGame { code: String },
@@ -32,6 +32,12 @@ pub enum UiAction {
     CancelFlight { ship: ShipId },
     Chat(String),
     BackToMenu,
+    Build { body: BodyId, class: ShipClass },
+    /// `upgrade` is one of `model::UPGRADES`.
+    Upgrade { body: BodyId, upgrade: String },
+    SetOrder { ship: ShipId, retreat: bool },
+    /// Host only.
+    ExtendGame { days: u32 },
 }
 
 pub trait Backend {
@@ -53,4 +59,13 @@ pub trait Backend {
     fn plan_transfer(&self, ship: ShipId, target: BodyId, after: f64) -> Option<TransferPlan>;
     /// Trajectory the ship would fly with these manual nodes (for the node editor preview).
     fn preview_nodes(&self, ship: ShipId, nodes: &[ManeuverNode]) -> Option<Trajectory>;
+
+    /// Owner-side detail (upgrades, shipyard, queue) for a body; None if not ours / unknown.
+    fn body_info(&self, _id: BodyId) -> Option<BodyInfo> {
+        None
+    }
+    /// Server address shown on the login screen.
+    fn default_server(&self) -> String {
+        String::new()
+    }
 }

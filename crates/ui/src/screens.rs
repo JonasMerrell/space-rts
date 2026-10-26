@@ -64,19 +64,23 @@ pub fn logo(c: Vec2, size_dp: f32) {
 pub struct Login {
     pub user: TextField,
     pub pass: TextField,
+    pub server: TextField,
     pub error: Option<String>,
     pub busy: bool,
 }
 
 impl Login {
     pub fn new() -> Self {
-        Login { user: TextField::new(false), pass: TextField::new(true), ..Default::default() }
+        Login { user: TextField::new(false), pass: TextField::new(true), server: TextField::new(false), ..Default::default() }
     }
 
     pub fn draw(&mut self, inp: &mut Input, be: &mut dyn Backend) {
         let h = screen_height();
-        logo(vec2(screen_width() / 2.0, h * 0.24), 44.0);
-        let mut col = Column::new(h * 0.38);
+        if self.server.text.is_empty() && !self.server.focused {
+            self.server.text = be.default_server();
+        }
+        logo(vec2(screen_width() / 2.0, h * 0.2), 44.0);
+        let mut col = Column::new(h * 0.32);
         text("PILOT NAME", col.x + 4.0 * s(), col.y, 18.0, MUTED, FontKind::Title, Align::Left);
         col.gap(14.0);
         let r = col.row(52.0);
@@ -85,6 +89,10 @@ impl Login {
         col.gap(14.0);
         let r = col.row(52.0);
         go |= widgets::text_field(inp, r, &mut self.pass, "secret");
+        text("SERVER", col.x + 4.0 * s(), col.y, 18.0, MUTED, FontKind::Title, Align::Left);
+        col.gap(14.0);
+        let r = col.row(44.0);
+        go |= widgets::text_field(inp, r, &mut self.server, "host:port");
         col.gap(6.0);
         let r = col.row(60.0);
         go |= widgets::button(inp, r, if self.busy { "LAUNCHING..." } else { "LOG IN" }, Style::Primary);
@@ -92,11 +100,16 @@ impl Login {
         let reg = widgets::button(inp, r, "NEW PILOT? REGISTER", Style::Secondary);
         if (go || reg) && !self.busy {
             if self.user.text.trim().is_empty() || self.pass.text.is_empty() {
-                self.error = Some("Need a name and a password!".into());
+                self.error = Some("Enter a name and a password".into());
             } else {
                 self.busy = true;
                 self.error = None;
-                be.act(UiAction::Login { user: self.user.text.trim().to_string(), pass: self.pass.text.clone(), register: reg });
+                be.act(UiAction::Login {
+                    server: self.server.text.trim().to_string(),
+                    user: self.user.text.trim().to_string(),
+                    pass: self.pass.text.clone(),
+                    register: reg,
+                });
             }
         }
         if let Some(e) = &self.error {
