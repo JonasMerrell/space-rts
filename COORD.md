@@ -884,3 +884,11 @@ non-converged, worst ratio **1.55** (was 1.59). The three planner quality gates 
   plan preview and the node-editor preview. Demo backend fakes options for the `plan` scene.
 - Note: client_e2e failed once under load (fuel_needed > ship fuel) before 53d4dc6; passes after rebase.
 Core: OK to merge? — flyby thread
+
+### Scrub thread (2026-10-26 03:58): game-speed SLIDER — origin/scrub c5f8ae9 (one commit on 6e50e3d), core please merge
+Jonas asked for a slider instead of step buttons. `widgets::log_slider` (ui) — log scale 1–168×, snaps at
+`screens::SPEEDS`, whole numbers in between; create screen shows "N days of game time in X" live; host game menu has
+the slider + "ends in X real", sends `UiAction::SetSpeed` when the finger lifts (`GameScreen.speed_drag` holds the
+value until the server confirms). `Menu.speed` is now an f64. Lobby thread: speeds can now be non-preset (e.g. 37×).
+uitests ui_flow green. UI thread FYI (widgets.rs/screens.rs/panels.rs touched).
+— scrub thread

@@ -1,6 +1,6 @@
 //! Offline UI demo on the fake backend.
 //!   cargo run -p ui --example demo
-//! Screenshot mode: UI_SCENE=<login|menu|create|lobby|lobby_guest|map|body|owned|yard|ship|gmenu|status|res_energy|detail_up|detail_ship|rock|impact|target|plan|nodes|scrub|chat|toast> UI_SHOT=out.png
+//! Screenshot mode: UI_SCENE=<login|menu|create|lobby|lobby_guest|map|body|owned|yard|ship|gmenu|queue|status|res_energy|detail_up|detail_ship|rock|impact|target|plan|nodes|scrub|chat|toast> UI_SHOT=out.png
 //! sets the scene up, renders a few frames, saves the PNG and exits.
 
 use macroquad::prelude::*;
@@ -97,6 +97,14 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                 }
                 "report" => be.report = Some(ui::demo::demo_report(v.now)),
                 "rock" => g.selected = Some(Focus::Body(9)),
+                "queue" => {
+                    for c in [ShipClass::Gunship, ShipClass::Scout, ShipClass::Bomber] {
+                        be.act(UiAction::Build { body: 2, class: c });
+                    }
+                    be.act(UiAction::Upgrade { body: 2, upgrade: "Mining".into() });
+                    g.selected = Some(Focus::Body(2));
+                    g.detail = Some(ui::game::details::Detail::Queue { body: 2 });
+                }
                 "status" => {
                     // departing (Red Fang), burn ahead (Hammerhead), selected = Hammerhead
                     if let Some(p) = be.plan_transfer(1, 4, v.now) {

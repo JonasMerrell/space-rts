@@ -16,6 +16,8 @@ use macroquad::prelude::*;
 pub enum Detail {
     Upgrade { body: BodyId, name: String },
     Ship { body: BodyId, class: ShipClass },
+    /// The body's build queue.
+    Queue { body: BodyId },
 }
 
 /// (what it does, effect at `level`) for a planet upgrade.
@@ -96,6 +98,56 @@ pub fn draw(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameVi
     let cost_s = |c: &Cost| format!("{} matter · {} energy · {}", fmt_amount(c.matter), fmt_amount(c.energy), fmt_dur(c.seconds));
     let mut action: Option<(String, bool, UiAction)> = None;
     match &d {
+        Detail::Queue { body } => {
+            inked("BUILD QUEUE", x, y, 22.0, PAPER, Align::Left);
+            let total = info.queue.last().map(|q| q.1 - view.now).unwrap_or(0.0);
+            text(&format!("{} item(s) · all done in {}", info.queue.len(), fmt_dur(total.max(0.0))), x + w, y, 13.0, MUTED, FontKind::Title, Align::Right);
+            y += 26.0 * s();
+            if info.queue.is_empty() {
+                paragraph("Nothing queued. Tap + on the Shipyard or Upgrades tab to build.", x, &mut y, w, 14.0, MUTED);
+            }
+            let player = view.player(view.me);
+            let skin = player.map(|p| art::skin_of(&p.faction)).unwrap_or("vanguard");
+            let row_h = 46.0 * s();
+            let max_rows = (((r.y + r.h - 64.0 * s()) - y) / row_h).floor().max(1.0) as usize;
+            let mut start = view.now;
+            for (i, (label, done)) in info.queue.iter().enumerate().take(max_rows) {
+                let class = ShipClass::ALL.iter().copied().find(|c| c.label() == label.as_str());
+                // Job i runs after job i-1; the first has been running for (its build time - remaining).
+                let dur = class
+                    .and_then(|c| info.buildable.iter().find(|b| b.0 == c))
+                    .map(|b| b.1.seconds)
+                    .unwrap_or((done - start).max(1.0));
+                let begin = if i == 0 { done - dur } else { start };
+                let frac = ((view.now - begin) / (done - begin).max(1.0)).clamp(0.0, 1.0) as f32;
+                start = *done;
+                let rr = Rect::new(x - 6.0 * s(), y, w + 12.0 * s(), row_h - 6.0 * s());
+                cel::round_rect(rr, 6.0 * s(), Color::new(1.0, 1.0, 1.0, if i == 0 { 0.08 } else { 0.04 }));
+                let ic = vec2(rr.x + 20.0 * s(), rr.center().y);
+                match class.and_then(|c| art::ship_tex(c, skin, player.map(|p| p.color))) {
+                    Some(t) => art::draw_centered(&t, ic, vec2(30.0, 30.0) * s(), -0.5, WHITE),
+                    None => {
+                        if let Some(t) = art::tex("sprites/icons/upgrades.png") {
+                            art::draw_centered(&t, ic, vec2(24.0, 24.0) * s(), 0.0, WHITE);
+                        }
+                    }
+                }
+                text(&format!("{}. {}", i + 1, label.to_uppercase()), rr.x + 40.0 * s(), rr.y + 13.0 * s(), 13.0, PAPER, FontKind::Title, Align::Left);
+                let eta = if i == 0 { format!("{} left", fmt_dur(done - view.now)) } else { format!("ready in {}", fmt_dur(done - view.now)) };
+                text(&eta, rr.x + rr.w - 46.0 * s(), rr.y + 13.0 * s(), 12.0, MUTED, FontKind::Body, Align::Right);
+                widgets::bar(Rect::new(rr.x + 40.0 * s(), rr.y + 26.0 * s(), rr.w - 90.0 * s(), 6.0 * s()), frac, if i == 0 { ACCENT } else { Color::new(1.0, 1.0, 1.0, 0.25) });
+                let xr = vec2(rr.x + rr.w - 20.0 * s(), rr.center().y);
+                if widgets::round_button(inp, xr, 11.0 * s(), "X", PAPER, 0) {
+                    art::sfx("menu_close");
+                    g.emit(UiAction::CancelJob { body: *body, index: i });
+                }
+                y += row_h;
+            }
+            if info.queue.len() > max_rows {
+                text(&format!("+{} more", info.queue.len() - max_rows), x, y + 8.0 * s(), 13.0, MUTED, FontKind::Body, Align::Left);
+            }
+            text("Cancelling refunds the cost.", x, r.y + r.h - 70.0 * s(), 12.0, MUTED, FontKind::Body, Align::Left);
+        }
         Detail::Upgrade { body, name } => {
             let Some(u) = info.upgrades.iter().find(|u| &u.name == name) else { return false };
             let (what, now) = upgrade_text(name, u.level);

@@ -144,6 +144,14 @@ pub fn draw_labels(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64) {
     for b in &view.bodies {
         let c = cam.to_screen(be.body_pos(b.id, t));
         let r = body_radius_px(b, cam);
+        // Something in the build queue: grey "+" badge with the count at the body's upper right.
+        if b.owner == Some(view.me) && b.kind != BodyKind::Star {
+            if let Some(n) = be.body_info(b.id).map(|i| i.queue.len()).filter(|&n| n > 0) {
+                let bc = c + vec2(r * 0.8 + 6.0 * s(), -r * 0.8 - 6.0 * s());
+                status_badge(bc, ShipStatus::Queued);
+                text(&n.to_string(), bc.x + 11.0 * s(), bc.y, 12.0, PAPER, FontKind::Title, Align::Left);
+            }
+        }
         let show_label = match b.kind {
             BodyKind::Star => false,
             BodyKind::Planet => true,

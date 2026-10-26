@@ -685,7 +685,18 @@ fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view:
         let items: Vec<String> = info.queue.iter().take(3).map(|(l, t)| format!("{l} {}", fmt_dur(t - view.now))).collect();
         format!("Queue: {}", items.join(" · "))
     };
+    let qr = Rect::new(r.x + 8.0 * s(), qy - 12.0 * s(), r.w - 170.0 * s(), 24.0 * s());
+    if !info.queue.is_empty() {
+        cel::round_rect(qr, 6.0 * s(), Color::new(1.0, 1.0, 1.0, if inp.holding(qr) { 0.12 } else { 0.05 }));
+    }
+    let q = if info.queue.is_empty() { q } else { format!("{q} ›") };
+    let q = wrap(&q, FontKind::Body, 13.0, qr.w - 12.0 * s()).into_iter().next().unwrap_or_default();
     text(&q, r.x + 16.0 * s(), qy, 13.0, if info.queue.is_empty() { MUTED } else { PAPER }, FontKind::Body, Align::Left);
+    if !info.queue.is_empty() && inp.tapped(qr) {
+        inp.consume_tap();
+        art::sfx("menu_open");
+        g.detail = Some(Detail::Queue { body: b.id });
+    }
     ships_here_button(g, inp, view, b, Rect::new(r.x + r.w - 150.0 * s(), qy - 10.0 * s(), 138.0 * s(), 22.0 * s()));
 }
 

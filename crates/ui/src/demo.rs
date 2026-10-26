@@ -568,6 +568,21 @@ impl Backend for DemoBackend {
             }
             UiAction::BackToMenu => self.view = None,
             UiAction::Reconnect => {}
+            UiAction::CancelJob { body, index } => {
+                let ids: Vec<usize> = (0..self.queue.len()).filter(|&i| self.queue[i].0 == body).collect();
+                if let Some(&qi) = ids.get(index) {
+                    let (_, _, done, class) = self.queue.remove(qi);
+                    let c = ship_cost(class);
+                    if let Some(v) = self.view.as_mut() {
+                        v.resources.matter += c.matter;
+                        v.resources.energy += c.energy;
+                    }
+                    // later items on this yard move up
+                    for q in self.queue.iter_mut().filter(|q| q.0 == body && q.2 > done) {
+                        q.2 -= c.seconds;
+                    }
+                }
+            }
             UiAction::AimAsteroid { body, target } => {
                 let name = |id| self.view.as_ref().and_then(|v| v.body(id)).map(|b| b.name.clone()).unwrap_or_default();
                 let (a, t) = (name(body), name(target));

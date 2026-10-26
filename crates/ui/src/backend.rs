@@ -47,6 +47,8 @@ pub enum UiAction {
     SetSpeed { speed: f64 },
     /// Retry the server connection now instead of waiting for the backoff.
     Reconnect,
+    /// Remove item `index` (0 = building now) from a body's build queue, refunding its cost.
+    CancelJob { body: BodyId, index: usize },
     /// Start `tech` (a `TechInfo::id`) at a lab body.
     Research { body: BodyId, tech: String },
     /// `kind` is one of `model::STATION_KINDS`.
