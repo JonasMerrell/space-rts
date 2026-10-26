@@ -233,25 +233,61 @@ impl GameScreen {
                 panels::prediction_banner(self.scrub, simulating);
             }
 
-            panels::hud(self, inp, view);
-            panels::sheet(self, inp, be_ref, view);
-            panels::scrubber(self, inp, be_ref, view);
-            // Toasts sit over the chat panel's corner; hold them while chatting.
-            if !self.chat_open {
-                panels::toasts(self, inp, be_ref, view);
+            // Full-screen overlays (away report, research) cover everything and must get the input
+            // first, so the HUD/sheets underneath aren't drawn or tapped while they're open. Before this,
+            // the HUD menu button under the research X ate the tap and the screen wouldn't close.
+            if be_ref.away_report().is_some() {
+                report::away_report(self, inp, be_ref, view);
+            } else if self.research_open {
+                if inp.take_back() {
+                    self.research_open = false;
+                    crate::art::sfx("menu_close");
+                } else {
+                    research::research_screen(self, inp, be_ref, view);
+                }
+            } else {
+                self.handle_back(inp);
+                panels::hud(self, inp, view);
+                panels::sheet(self, inp, be_ref, view);
+                panels::scrubber(self, inp, be_ref, view);
+                // Toasts sit over the chat panel's corner; hold them while chatting.
+                if !self.chat_open {
+                    panels::toasts(self, inp, be_ref, view);
+                }
+                panels::hint(self);
+                if self.chat_open {
+                    panels::chat(self, inp, view);
+                }
             }
-            panels::hint(self);
-            if self.chat_open {
-                panels::chat(self, inp, view);
-            }
-            if self.research_open {
-                research::research_screen(self, inp, be_ref, view);
-            }
-            report::away_report(self, inp, be_ref, view);
             }
         }
         for a in self.out.drain(..) {
             be.act(a);
+        }
+    }
+
+    /// Back key closes the topmost open thing: chat, menu, detail/breakdown sheets, the current
+    /// mode, then the selection.
+    fn handle_back(&mut self, inp: &mut Input) {
+        if !inp.take_back() {
+            return;
+        }
+        crate::art::sfx("menu_close");
+        if self.chat_open {
+            self.chat_open = false;
+            macroquad::miniquad::window::show_keyboard(false);
+        } else if self.menu_open {
+            self.menu_open = false;
+        } else if self.detail.is_some() {
+            self.detail = None;
+        } else if self.res_open.is_some() {
+            self.res_open = None;
+        } else if self.stations_for.is_some() {
+            self.stations_for = None;
+        } else if !matches!(self.mode, Mode::Idle) {
+            self.mode = Mode::Idle;
+        } else {
+            self.selected = None;
         }
     }
 
@@ -269,7 +305,7 @@ impl GameScreen {
     fn handle_map_input(&mut self, inp: &mut Input, be: &dyn Backend, view: &GameView, t: f64) {
         let mut cam = self.cam.unwrap();
         let fit = Camera::fit(view);
-        let on_map = inp.for_map() && !self.chat_open;
+        let on_map = inp.for_map() && !self.chat_open && !self.research_open && be.away_report().is_none();
 
         // Node handles get first dibs on drags.
         let node_dragging = if let Mode::Nodes(ne) = &mut self.mode {

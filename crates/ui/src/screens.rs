@@ -168,6 +168,10 @@ impl Menu {
         inked(GAME_TITLE, w / 2.0, top + 22.0 * s(), 30.0, ACCENT, Align::Center);
         text(&format!("pilot: {}", self.user), w / 2.0, top + 52.0 * s(), 16.0, MUTED, FontKind::Body, Align::Center);
         if self.creating {
+            if inp.take_back() {
+                self.creating = false;
+                return;
+            }
             return self.draw_create(inp, be, top + 80.0 * s());
         }
         let mut col = Column::new(top + 80.0 * s());

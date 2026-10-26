@@ -287,11 +287,11 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        Log.w("SAPP", "onBackPressed");
-
-        // TODO: here is the place to handle request_quit/order_quit/cancel_quit
-
-        super.onBackPressed();
+        // Gesture-navigation "back" arrives here, not as a key event: hand it to the game as
+        // KEYCODE_BACK so the UI closes its topmost sheet (research, chat, ...). Never finish the
+        // activity from back, so a stray swipe can't drop you out of a game; Home still leaves.
+        QuadNative.surfaceOnKeyDown(KeyEvent.KEYCODE_BACK);
+        QuadNative.surfaceOnKeyUp(KeyEvent.KEYCODE_BACK);
     }
 
     @Override

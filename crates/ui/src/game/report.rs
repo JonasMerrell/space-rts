@@ -53,6 +53,7 @@ pub fn away_report(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: 
     let bh = 50.0 * s();
     let br = Rect::new(r.x + 16.0 * s(), r.y + r.h - bh - 14.0 * s(), r.w - 32.0 * s(), bh);
     close |= widgets::button(inp, br, "TO THE MAP", Style::Ghost);
+    close |= inp.take_back();
 
     // list, scrolled by dragging inside it
     let list = Rect::new(r.x + 10.0 * s(), r.y + 66.0 * s(), r.w - 20.0 * s(), br.y - r.y - 76.0 * s());

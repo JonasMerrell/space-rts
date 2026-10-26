@@ -43,11 +43,14 @@ pub struct Input {
     pub chars: Vec<char>,
     pub backspace: bool,
     pub enter: bool,
+    /// Android back key (Escape on desktop) this frame; whoever handles it calls `take_back`.
+    pub back: bool,
 
     /// Scripted input for tests: per-frame pointer states (None = up) and queued text.
     script: std::collections::VecDeque<Option<(Vec2, f64)>>,
     script_text: String,
     script_enter: bool,
+    script_back: bool,
     /// Frozen clock for scripted long-presses (seconds added to get_time()).
     script_clock: f64,
 }
@@ -179,8 +182,19 @@ impl Input {
             }
         }
         self.chars.extend(self.script_text.drain(..));
+        self.back = is_key_pressed(KeyCode::Back) || is_key_pressed(KeyCode::Escape) || std::mem::take(&mut self.script_back);
         self.backspace = is_key_pressed(KeyCode::Backspace);
         self.enter = is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter) || std::mem::take(&mut self.script_enter);
+    }
+
+    /// Consume the back key: true once per press, for the topmost thing that closes.
+    pub fn take_back(&mut self) -> bool {
+        std::mem::take(&mut self.back)
+    }
+
+    /// Test hook: back key on the next frame.
+    pub fn inject_back(&mut self) {
+        self.script_back = true;
     }
 
     /// Test hook: a tap at `p` (down next frame, up the frame after).
