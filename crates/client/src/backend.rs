@@ -505,6 +505,8 @@ impl Backend for ClientBackend {
                 self.logged_in = false;
                 self.connect(register);
             }
+            // impact planning + command arrive with the combat branch
+            UiAction::AimAsteroid { .. } => {}
             UiAction::Reconnect => {
                 self.reconnect_at = 0.0;
                 self.retry_delay = 1.0;
