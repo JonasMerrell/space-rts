@@ -223,6 +223,30 @@ pub enum Focus {
     Ship(ShipId),
 }
 
+/// Where a ship ends up with a set of manual nodes (node editor projection).
+#[derive(Clone, Debug)]
+pub struct NodeOutcome {
+    /// End of the predicted path (horizon, capture or impact).
+    pub end_t: f64,
+    pub end_pos: [f64; 2],
+    /// Captured into orbit of this body at the end, if the prediction says so.
+    pub captured: Option<BodyId>,
+    /// Closest approach to the most relevant body along the path.
+    pub encounter: Option<Encounter>,
+    /// Fuel left after all burns (None = backend can't tell).
+    pub fuel_left: Option<f64>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Encounter {
+    pub body: BodyId,
+    pub t: f64,
+    /// km
+    pub distance: f64,
+    /// Passes inside the body's sphere of influence.
+    pub inside_soi: bool,
+}
+
 /// Preview of pushing an owned asteroid into a planet (`Backend::plan_impact_async`).
 #[derive(Clone, Debug)]
 pub struct ImpactPreview {

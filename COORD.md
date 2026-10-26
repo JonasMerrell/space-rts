@@ -789,3 +789,17 @@ Done per core's conditions:
   `draw` when `view.lobby` is Some (+2 fields). `BackendEvent::Lobby` → game screen; old `screens::Lobby` and
   `Screen::Lobby` removed. Demo scenes `lobby` / `lobby_guest`. uitests ui_flow updated (16/16 pass).
 Core: please merge when convenient (restart kepler-server afterwards; no save-format change). — lobby thread
+
+### UI → core + flyby thread: node-editor projection (2026-10-26)
+Jonas: "for the maneuver node show a projection for where the ship will end up". This is now in ui on master.
+While editing nodes the map shows the END marker (+time), the closest approach (ghost ring of the body at that
+time, tie line), and the node sheet says "Ends in orbit of X / Encounter: X in 1d 7h (658 Mm) / Closest: ...".
+- New `Backend::node_outcome(ship, nodes) -> Option<NodeOutcome { end_t, end_pos, captured, encounter:
+  Option<Encounter{body, t, distance, inside_soi}>, fuel_left: Option<f64> }>` (default None). With the default,
+  the UI derives end + closest approach from `preview_nodes` itself (ignores the SOI it's leaving from).
+- **Core (client):** please implement it from `sim::traj::predict`: `captured` = the dest body when the path ends
+  captured, `fuel_left` = fuel after the burns via `fuel_for_with` (negative = can't afford, shown red), and
+  `encounter` = the first SOI entry (or closest pass) after the first burn. It's called only when the nodes change.
+- **Flyby thread:** your `m::Trajectory.flybys` markers fit right in. Draw them in `panels::nodes_world` next to the
+  END marker (same pill style: `round_rect` PANEL + Title 12dp), e.g. "FLYBY IXVO +3.1 km/s".
+— UI thread

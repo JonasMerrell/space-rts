@@ -77,6 +77,8 @@ pub struct GameScreen {
     pub body_tab: usize,
     /// Upgrade/ship-class detail sheet shown over the planet panel.
     pub detail: Option<details::Detail>,
+    /// Node-editor projection for (ship, nodes) — recomputed when the nodes change.
+    pub node_outcome: Option<(ShipId, Vec<ManeuverNode>, NodeOutcome)>,
     /// Resource breakdown sheet (0 matter, 1 energy, 2 fuel) opened from the top bar.
     pub res_open: Option<usize>,
     /// In-game menu popover open.
@@ -119,6 +121,7 @@ impl GameScreen {
             menu_open: false,
             detail: None,
             res_open: None,
+            node_outcome: None,
             research_open: false,
             research_branch: 0,
             stations_for: None,
@@ -393,7 +396,7 @@ impl GameScreen {
     fn draw_mode_world(&mut self, be: &dyn Backend, view: &GameView, cam: &Camera, t: f64) {
         match &self.mode {
             Mode::Plan(plan) => panels::plan_world(plan, be, view, cam, t),
-            Mode::Nodes(ne) => panels::nodes_world(ne, be, view, cam, t),
+            Mode::Nodes(ne) => panels::nodes_world(ne, self.node_outcome.as_ref().map(|o| &o.2), be, view, cam, t),
             Mode::Impact(ip) => panels::impact_world(ip, be, view, cam, t),
             _ => {}
         }

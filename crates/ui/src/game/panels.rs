@@ -1000,10 +1000,93 @@ const HANDLES: [(Handle, Color, &str); 4] = [
     (Handle::RadialIn, hex(0x4cc9f0), "IN"),
 ];
 
-pub fn nodes_world(ne: &NodeEdit, be: &dyn Backend, view: &GameView, cam: &Camera, _t: f64) {
+/// UI-side projection from the preview path: end point, plus the closest approach to any body
+/// (scored by distance / SOI so a near pass of a moon beats a far pass of a giant).
+/// Only the path after `after` (the first burn) counts, and a body we're still inside the SOI of at
+/// that point (where we're leaving from) only counts once we've left it.
+pub fn derive_outcome(be: &dyn Backend, view: &GameView, tr: &Trajectory, after: f64) -> Option<NodeOutcome> {
+    let &(end_t, end_pos) = tr.points.last()?;
+    let mut best: Option<(f64, Encounter)> = None;
+    for b in view.bodies.iter().filter(|b| b.kind != BodyKind::Star) {
+        let soi = b.soi.max(b.radius * 3.0).max(1.0);
+        let mut leaving = true;
+        for &(t, p) in tr.points.iter().filter(|q| q.0 >= after) {
+            let c = be.body_pos(b.id, t);
+            let d = (p[0] - c[0]).hypot(p[1] - c[1]);
+            if leaving {
+                if d <= soi {
+                    continue;
+                }
+                leaving = false;
+            }
+            let score = d / soi;
+            if best.as_ref().is_none_or(|(s, _)| score < *s) {
+                best = Some((score, Encounter { body: b.id, t, distance: d, inside_soi: d <= soi }));
+            }
+        }
+    }
+    // Only worth mentioning if it comes reasonably close.
+    let encounter = best.filter(|(s, _)| *s < 6.0).map(|b| b.1);
+    let captured = encounter.filter(|e| e.inside_soi && (end_t - e.t).abs() < 1.0).map(|e| e.body);
+    Some(NodeOutcome { end_t, end_pos, captured, encounter, fuel_left: None })
+}
+
+fn fmt_km(km: f64) -> String {
+    if km >= 1.0e6 {
+        format!("{:.1} Gm", km / 1.0e6)
+    } else if km >= 1000.0 {
+        format!("{:.0} Mm", km / 1000.0)
+    } else {
+        format!("{km:.0} km")
+    }
+}
+
+/// One-line summary for the node sheet.
+fn outcome_line(o: &NodeOutcome, view: &GameView) -> (String, Color) {
+    let name = |id: BodyId| view.body(id).map(|b| b.name.clone()).unwrap_or_default();
+    let mut s = match (o.captured, o.encounter) {
+        (Some(b), _) => (format!("Ends in orbit of {} in {}", name(b), fmt_dur(o.end_t - view.now)), GOOD),
+        (None, Some(e)) if e.inside_soi => (format!("Encounter: {} in {} ({})", name(e.body), fmt_dur(e.t - view.now), fmt_km(e.distance)), GOOD),
+        (None, Some(e)) => (format!("Closest: {} {} in {}", name(e.body), fmt_km(e.distance), fmt_dur(e.t - view.now)), ACCENT),
+        (None, None) => (format!("No encounters · path ends in {}", fmt_dur(o.end_t - view.now)), MUTED),
+    };
+    if let Some(f) = o.fuel_left {
+        s.0 += &format!(" · fuel left {f:.0}");
+        if f < 0.0 {
+            s.1 = DANGER;
+        }
+    }
+    s
+}
+
+pub fn nodes_world(ne: &NodeEdit, outcome: Option<&NodeOutcome>, be: &dyn Backend, view: &GameView, cam: &Camera, _t: f64) {
     if let Some(tr) = &ne.preview {
         let pts = poly(cam, tr, view.now);
         cel::inked_path(&pts, 4.0 * s(), hex(0x80ed99));
+    }
+    if let Some(o) = outcome {
+        let col = hex(0x80ed99);
+        // Closest approach: the body where it will be then, and a tie line to the ship.
+        if let Some(e) = o.encounter {
+            if let (Some(b), Some(p)) = (view.body(e.body), ne.preview.as_ref().and_then(|tr| tr.sample(e.t))) {
+                let bc = cam.to_screen(be.body_pos(e.body, e.t));
+                let sp = cam.to_screen(p);
+                let rr = map::body_radius_px(b, cam) + 6.0 * s();
+                let ring: Vec<Vec2> = (0..=40).map(|i| bc + Vec2::from_angle(i as f32 / 40.0 * std::f32::consts::TAU) * rr).collect();
+                cel::dashed_path(&ring, 2.0 * s(), 5.0 * s(), if e.inside_soi { col } else { ACCENT });
+                cel::dashed_path(&[sp, bc], 1.5 * s(), 4.0 * s(), alpha(PAPER, 0.6));
+                draw_circle(sp.x, sp.y, 4.0 * s(), if e.inside_soi { col } else { ACCENT });
+            }
+        }
+        // Where it ends up.
+        let end = cam.to_screen(o.end_pos);
+        let q = ne.preview.as_ref().and_then(|tr| tr.sample(o.end_t - 300.0)).map(|p| cam.to_screen(p)).unwrap_or(end);
+        cel::ship(end, end - q, 9.0 * s(), alpha(PAPER, 0.75));
+        let label = format!("END +{}", fmt_dur(o.end_t - view.now));
+        let w = measure(&label, FontKind::Title, 12.0).x + 14.0 * s();
+        let r = Rect::new(end.x + 10.0 * s(), end.y - 22.0 * s(), w, 20.0 * s());
+        cel::round_rect(r, r.h / 2.0, alpha(PANEL, 0.9));
+        text(&label, r.center().x, r.center().y + s(), 12.0, PAPER, FontKind::Title, Align::Center);
     }
     for (i, n) in ne.nodes.iter().enumerate() {
         let p = ne.preview.as_ref().and_then(|tr| tr.sample(n.t)).or_else(|| be.ship_pos(ne.ship, n.t));
@@ -1103,7 +1186,15 @@ fn node_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
         ne.preview = be.preview_nodes(ne.ship, &ne.nodes);
         ne.dirty = false;
     }
-    let r = sheet_rect(196.0);
+    // Projection follows the nodes live while dragging.
+    if g.node_outcome.as_ref().is_none_or(|(s, n, _)| *s != ne.ship || *n != ne.nodes) {
+        let o = be.node_outcome(ne.ship, &ne.nodes).or_else(|| {
+            let after = ne.nodes.iter().map(|n| n.t).fold(f64::MAX, f64::min).max(view.now);
+            ne.preview.as_ref().and_then(|tr| derive_outcome(be, view, tr, after))
+        });
+        g.node_outcome = o.map(|o| (ne.ship, ne.nodes.clone(), o));
+    }
+    let r = sheet_rect(222.0);
     inp.block(r);
     cel::panel(r, PANEL);
     let Some(n) = ne.nodes.get(ne.sel).copied() else {
@@ -1116,6 +1207,10 @@ fn node_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
     text(&format!("TOTAL DV {:.2} km/s", total), r.x + r.w - 16.0 * s(), r.y + 25.0 * s(), 14.0, PAPER, FontKind::Title, Align::Right);
 
     let k = node_frame(&ne, be, g.cam.as_ref().unwrap()).map(|f| f.k * 10.0).unwrap_or(0.1);
+    if let Some((_, _, o)) = &g.node_outcome {
+        let (line, col) = outcome_line(o, view);
+        text(&line, r.x + 16.0 * s(), r.y + 146.0 * s(), 13.0, col, FontKind::Body, Align::Left);
+    }
     let rows = [("PROGRADE", n.prograde, hex(0x80ed99)), ("RADIAL", n.radial, hex(0x4cc9f0))];
     for (i, (label, v, col)) in rows.iter().enumerate() {
         let y = r.y + 46.0 * s() + i as f32 * 46.0 * s();

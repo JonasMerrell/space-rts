@@ -91,6 +91,11 @@ pub trait Backend {
     fn plan_impact_async(&self, _asteroid: BodyId, _target: BodyId) -> ImpactPoll {
         ImpactPoll::Done(None)
     }
+    /// Summary of where the ship ends up with these nodes (capture, closest approach, fuel left).
+    /// Default None: the UI derives end point + closest approach from `preview_nodes` itself.
+    fn node_outcome(&self, _ship: ShipId, _nodes: &[ManeuverNode]) -> Option<NodeOutcome> {
+        None
+    }
     /// Trajectory the ship would fly with these manual nodes (for the node editor preview).
     fn preview_nodes(&self, ship: ShipId, nodes: &[ManeuverNode]) -> Option<Trajectory>;
 
