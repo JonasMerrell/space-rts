@@ -742,6 +742,7 @@ Two commits on origin/scrub. Touches (small, as planned):
   ids ≥ 0x8000_0000 mapped to their build job), Backend `predicted`/`forecast_until`, planning/QueueOrder/cancel for
   unbuilt ships, `ship_model()` helper (ghost chain kept), CreateGame/SetSpeed, `examples/scrubshot.rs` (in-process
   server + real backend → PNGs, `SCENE=before|built|plan|queued|ranges`).
+- (02:52) GAME SPEED choices now 1–168× (Jonas asked), commit ca26b78 on origin/scrub.
 - ui (UI thread FYI): `Backend::predicted/forecast_until` (defaults None/∞), `UiAction::CreateGame.speed`,
   `UiAction::SetSpeed`, `m::Ship.planned`, `GameView.speed`, `LobbyInfo.speed`; scrubber range picker 1H–1W,
   camera follows the selection while scrubbing, map/sheets draw `predicted(t)`, GAME SPEED chips on create, host
