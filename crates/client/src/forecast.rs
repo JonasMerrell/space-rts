@@ -1,4 +1,5 @@
-//! Time-scrubber forecast: the real sim run forward on a worker thread from the player's own
+//! Time-scrubber forecast: the real sim run forward on a worker thread (in the browser: a few ms
+//! of every frame) from the player's own
 //! (fog-filtered) view, without bots, recording a keyframe whenever something changes: a ship is
 //! built, departs, burns, arrives or dies, or a body changes hands. Positions between keyframes
 //! come from the recorded trajectories, so a frame stays valid until the next one.
@@ -93,11 +94,19 @@ impl Shared {
 pub struct Forecaster {
     pub shared: Arc<Mutex<Shared>>,
     gen: Arc<AtomicU64>,
+    /// the run in progress (browser build: stepped by `pump` each frame)
+    #[cfg(target_arch = "wasm32")]
+    work: std::cell::RefCell<Option<Work>>,
 }
 
 impl Default for Forecaster {
     fn default() -> Self {
-        Forecaster { shared: Arc::new(Mutex::new(Shared::default())), gen: Arc::new(AtomicU64::new(0)) }
+        Forecaster {
+            shared: Arc::new(Mutex::new(Shared::default())),
+            gen: Arc::new(AtomicU64::new(0)),
+            #[cfg(target_arch = "wasm32")]
+            work: Default::default(),
+        }
     }
 }
 
@@ -116,8 +125,32 @@ impl Forecaster {
         if game.status != Status::Running {
             return;
         }
-        let (game, shared, cur_gen) = (game.clone(), self.shared.clone(), self.gen.clone());
-        std::thread::spawn(move || run(game, me, now, gen, &cur_gen, &shared));
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let (game, shared, cur_gen) = (game.clone(), self.shared.clone(), self.gen.clone());
+            std::thread::spawn(move || {
+                let mut w = Work::new(game, me, now, gen);
+                while w.step(&cur_gen, &shared) {}
+            });
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            *self.work.borrow_mut() = Some(Work::new(game.clone(), me, now, gen));
+        }
+    }
+
+    /// Browser build: advance the forecast for up to `budget` seconds of this frame.
+    #[cfg(target_arch = "wasm32")]
+    pub fn pump(&self, budget: f64) {
+        let mut slot = self.work.borrow_mut();
+        let Some(w) = slot.as_mut() else { return };
+        let t0 = macroquad::miniquad::date::now();
+        while macroquad::miniquad::date::now() - t0 < budget {
+            if !w.step(&self.gen, &self.shared) {
+                *slot = None;
+                return;
+            }
+        }
     }
 
     pub fn clear(&self) {
@@ -126,33 +159,53 @@ impl Forecaster {
     }
 }
 
-fn run(mut game: Game, me: g::PlayerId, now: f64, gen: u64, cur_gen: &AtomicU64, shared: &Mutex<Shared>) {
-    let end = (now + HORIZON).min(game.end_t);
-    game.next_ship = game.next_ship.max(PLANNED_BASE);
-    game.forecast_to(now);
-    let mut paths: HashMap<(u32, u64, usize), Arc<m::Trajectory>> = HashMap::new();
-    let mut jobs: HashMap<u32, (u32, f64)> = HashMap::new();
-    let mut batch = vec![frame(&mut game, me, &mut paths, &jobs)];
-    let mut sig = signature(&game);
-    let mut last_t = game.t;
-    let mut flushed = game.t;
-    loop {
-        let alive = cur_gen.load(Ordering::Relaxed) == gen;
+/// One forecast run, advanced a tick at a time so the browser build (no threads) can spread it
+/// over frames; natively a worker thread just steps it to the end.
+struct Work {
+    game: Game,
+    me: g::PlayerId,
+    gen: u64,
+    end: f64,
+    paths: HashMap<(u32, u64, usize), Arc<m::Trajectory>>,
+    jobs: HashMap<u32, (u32, f64)>,
+    batch: Vec<Arc<Frame>>,
+    sig: u64,
+    last_t: f64,
+    flushed: f64,
+}
+
+impl Work {
+    fn new(mut game: Game, me: g::PlayerId, now: f64, gen: u64) -> Work {
+        let end = (now + HORIZON).min(game.end_t);
+        game.next_ship = game.next_ship.max(PLANNED_BASE);
+        game.forecast_to(now);
+        let mut paths = HashMap::new();
+        let jobs = HashMap::new();
+        let batch = vec![frame(&mut game, me, &mut paths, &jobs)];
+        let sig = signature(&game);
+        let t = game.t;
+        Work { game, me, gen, end, paths, jobs, batch, sig, last_t: t, flushed: t }
+    }
+
+    /// Simulate one tick; false once the run is finished or superseded.
+    fn step(&mut self, cur_gen: &AtomicU64, shared: &Mutex<Shared>) -> bool {
+        let (game, end) = (&mut self.game, self.end);
+        let alive = cur_gen.load(Ordering::Relaxed) == self.gen;
         let finished = game.t >= end || game.status != Status::Running;
         if !alive {
-            return;
+            return false;
         }
-        if finished || game.t - flushed > 6.0 * 3600.0 {
+        if finished || game.t - self.flushed > 6.0 * 3600.0 {
             let mut sh = shared.lock().unwrap();
-            if sh.cur.gen != gen {
-                return;
+            if sh.cur.gen != self.gen {
+                return false;
             }
-            sh.cur.frames.append(&mut batch);
+            sh.cur.frames.append(&mut self.batch);
             sh.cur.until = if finished { f64::INFINITY } else { game.t };
             sh.cur.done = finished;
-            flushed = game.t;
+            self.flushed = game.t;
             if finished {
-                return;
+                return false;
             }
         }
         // build jobs that finish this tick, so the new ships can be traced back to them
@@ -170,17 +223,19 @@ fn run(mut game: Game, me: g::PlayerId, now: f64, gen: u64, cur_gen: &AtomicU64,
             .collect();
         let before = game.next_ship;
         game.forecast_to(next);
+        let jobs = &mut self.jobs;
         for s in game.ships.iter().filter(|s| s.id.0 >= before) {
             if let Some(&(b, t, ..)) = due.iter().find(|d| d.2 == s.class && d.3 == s.owner && !jobs.values().any(|j| *j == (d.0, d.1))) {
                 jobs.insert(s.id.0, (b, t));
             }
         }
-        let s2 = signature(&game);
-        if s2 != sig || game.t - last_t >= MAX_GAP {
-            sig = s2;
-            last_t = game.t;
-            batch.push(frame(&mut game, me, &mut paths, &jobs));
+        let s2 = signature(game);
+        if s2 != self.sig || game.t - self.last_t >= MAX_GAP {
+            self.sig = s2;
+            self.last_t = game.t;
+            self.batch.push(frame(game, self.me, &mut self.paths, &self.jobs));
         }
+        true
     }
 }
 

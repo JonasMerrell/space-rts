@@ -1,0 +1,9 @@
+{
+  "name": "Hohmann's Reach",
+  "short_name": "Hohmann's Reach",
+  "start_url": "./",
+  "display": "fullscreen",
+  "background_color": "#0d0a20",
+  "theme_color": "#1b1340",
+  "icons": [{ "src": "icon.png", "sizes": "512x512", "type": "image/png" }]
+}
