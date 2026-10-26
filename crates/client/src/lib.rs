@@ -8,10 +8,17 @@ pub mod tls;
 use macroquad::prelude::*;
 
 /// Default server: netdash on the home LAN. Override with SPACE_RTS_SERVER (desktop).
-pub const DEFAULT_SERVER: &str = "192.168.0.105:7777";
+pub const DEFAULT_SERVER: &str = "hohmannsreach.tplinkdns.com:7777";
+/// The same server on the home LAN (tried when the public name can't be reached from inside).
+pub const LAN_SERVER: &str = "192.168.0.105:7777";
+
+/// LAN address to try after `addr` fails, if `addr` is the public game server.
+pub fn lan_fallback(addr: &str) -> Option<&'static str> {
+    (addr.trim() == DEFAULT_SERVER).then_some(LAN_SERVER)
+}
 
 /// Servers the game used to live on; a remembered one is moved to `DEFAULT_SERVER`.
-const OLD_SERVERS: &[&str] = &["192.168.0.247:7777", "192.168.0.247"];
+const OLD_SERVERS: &[&str] = &["192.168.0.247:7777", "192.168.0.247", "192.168.0.105:7777"];
 
 /// Point a remembered address that is a retired server at the current default.
 pub fn migrate_server(addr: String) -> String {

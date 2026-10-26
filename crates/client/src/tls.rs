@@ -17,6 +17,7 @@ pub type FirstSeen = Arc<Mutex<Option<String>>>;
 /// `HOHMANN_PIN="host:port=sha256hex"` at build time adds one more.
 const BUILT_IN: &[(&str, &str)] = &[
     // hohmann-reach-server VM (LAN), self-signed cert generated 2026-10-26
+    ("hohmannsreach.tplinkdns.com:7777", "7f0e1c3f878beb14c583ea19a6c4cb595a81a9de49662325e1a66f7fc22892ad"),
     ("192.168.0.105:7777", "7f0e1c3f878beb14c583ea19a6c4cb595a81a9de49662325e1a66f7fc22892ad"),
 ];
 

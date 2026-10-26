@@ -54,14 +54,27 @@ fn run(addr: String, hello: ClientMsg, out_rx: Receiver<ClientMsg>, in_tx: Sende
     let fail = |m: String| {
         let _ = in_tx.send(NetEvent::Failed(m));
     };
-    let sock = match addr.to_socket_addrs().ok().and_then(|mut a| a.next()) {
-        Some(a) => a,
-        None => return fail(format!("can't resolve {addr}")),
-    };
-    let stream = match TcpStream::connect_timeout(&sock, Duration::from_secs(6)) {
-        Ok(s) => s,
-        Err(e) => return fail(format!("can't reach {addr}: {e}")),
-    };
+    // the public name first; on home Wi-Fi the router may not loop it back, so fall back to the LAN address
+    let mut candidates = vec![addr.clone()];
+    if let Some(lan) = crate::lan_fallback(&addr) {
+        candidates.push(lan.to_string());
+    }
+    let mut last_err = String::new();
+    let mut found = None;
+    for cand in &candidates {
+        let Some(sock) = cand.to_socket_addrs().ok().and_then(|mut a| a.next()) else {
+            last_err = format!("can't resolve {cand}");
+            continue;
+        };
+        match TcpStream::connect_timeout(&sock, Duration::from_secs(5)) {
+            Ok(s) => {
+                found = Some((cand.clone(), s));
+                break;
+            }
+            Err(e) => last_err = format!("can't reach {cand}: {e}"),
+        }
+    }
+    let Some((addr, stream)) = found else { return fail(last_err) };
     let _ = stream.set_nodelay(true);
     let (cfg, first_seen) = match tls::config(&addr, pin) {
         Ok(c) => c,
