@@ -639,6 +639,7 @@ fn client_thread(server: Arc<Mutex<Server>>, guard: Arc<Guard>, cfg: Arc<Config>
             continue;
         }
         if !bucket.take(l.msg_rate, l.msg_burst) {
+            guard::log_limited(ip);
             lock(&server).send(id, &ServerMsg::Error { msg: "too many messages, slow down".into() });
             break;
         }
@@ -649,6 +650,7 @@ fn client_thread(server: Arc<Mutex<Server>>, guard: Arc<Guard>, cfg: Arc<Config>
                 | Ok(ClientMsg::Cmd { cmd: sim::game::Command::Chat { .. }, .. })
         );
         if is_heavy && !heavy.take(l.heavy_rate, l.heavy_burst) {
+            guard::log_limited(ip);
             lock(&server).send(id, &ServerMsg::Error { msg: "too many requests, wait a moment".into() });
             continue;
         }

@@ -104,6 +104,15 @@ fn wait_msg(q: &VecDeque<Instant>, window: Duration, now: Instant) -> String {
     format!("try again in {m} min")
 }
 
+/// One stable stderr line per auth failure / limit hit, for fail2ban. Only the IP, never names.
+pub fn log_fail(ip: IpAddr) {
+    eprintln!("auth fail from {ip}");
+}
+
+pub fn log_limited(ip: IpAddr) {
+    eprintln!("rate limited from {ip}");
+}
+
 impl Guard {
     pub fn new(limits: Limits) -> Arc<Guard> {
         Arc::new(Guard { limits, st: Mutex::new(State::default()), hash_free: Condvar::new() })
@@ -117,10 +126,12 @@ impl Guard {
     pub fn admit(self: &Arc<Guard>, ip: IpAddr) -> Option<Ticket> {
         let mut st = self.state();
         if st.total >= self.limits.max_conns {
+            log_limited(ip);
             return None;
         }
         let i = st.ips.entry(ip).or_default();
         if i.conns >= self.limits.max_conns_per_ip {
+            log_limited(ip);
             return None;
         }
         i.conns += 1;
@@ -141,6 +152,7 @@ impl Guard {
         let (n, w) = self.limits.account_fails;
         if let Some(q) = st.accounts.get_mut(user) {
             if recent(q, w, now) >= n {
+                log_limited(ip);
                 return Err(format!("too many wrong passwords for {user}, {}", wait_msg(q, w, now)));
             }
         }
@@ -150,6 +162,7 @@ impl Guard {
         let (n, w) = self.limits.ip_fails;
         if let Some(i) = st.ips.get_mut(&ip) {
             if recent(&mut i.fails, w, now) >= n {
+                log_limited(ip);
                 return Err(format!("too many failed logins, {}", wait_msg(&i.fails, w, now)));
             }
         }
@@ -157,6 +170,7 @@ impl Guard {
     }
 
     pub fn login_failed(&self, ip: IpAddr, user: Option<&str>) {
+        log_fail(ip);
         let now = Instant::now();
         let mut st = self.state();
         if let Some(u) = user {
@@ -180,6 +194,7 @@ impl Guard {
         let mut st = self.state();
         let i = st.ips.entry(ip).or_default();
         if recent(&mut i.registers, w, now) >= n {
+            log_limited(ip);
             return Err(format!("too many new accounts from your network, {}", wait_msg(&i.registers, w, now)));
         }
         Ok(())
