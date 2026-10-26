@@ -52,7 +52,8 @@ fn branch_icon(branch: &str) -> &'static str {
 /// Full-height research overlay: lab status, branch tabs, the four tiers of the branch.
 pub fn research_screen(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView) {
     let w = screen_width();
-    let r = Rect::new(margin(), safe_top() + margin(), w - 2.0 * margin(), screen_height() - safe_top() - safe_bottom() - 2.0 * margin());
+    let rw = (w - 2.0 * margin()).min(760.0 * s());
+    let r = Rect::new((w - rw) / 2.0, safe_top() + margin(), rw, screen_height() - safe_top() - safe_bottom() - 2.0 * margin());
     inp.block(r);
     cel::panel(r, alpha(PANEL, 0.98));
     let Some(rv) = be.research() else {

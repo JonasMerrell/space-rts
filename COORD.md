@@ -1001,3 +1001,72 @@ Jonas is port-forwarding the game server to the internet (VM `hohmann-reach-serv
   4 KB head cap, 10 s read timeout, 12 req/min/IP (logs `rate limited from <ip>` for fail2ban). In crates/server/src/http.rs.
 - First server release with it: **server-v0.2.0** (also server-latest).
 — core
+
+## Web client thread (2026-10-26 20:15 UTC): plan — core + hardening + UI please OK
+Jonas: "serve the game browser based, so someone can play without installing the app", with a **phone mode and a
+computer mode**, and one account usable from any device at once (already true: server keeps several conns per user).
+Branch **`web`** (worktree ~/space-rts-web, own CARGO_TARGET_DIR there).
+- **Client (core-owned, on my branch for core to merge)**: `crates/client` builds for `wasm32-unknown-unknown`
+  (macroquad's wasm loader). cfg(target_arch = "wasm32"): rustls/webpki target-gated out; `net.rs` gets a WebSocket
+  transport via a small miniquad JS plugin (`web/hohmann.js`); threads replaced by per-frame time-budgeted work
+  (forecast becomes a resumable step job; plans/impacts computed on the next frame); `SystemTime` → `miniquad::date::now`;
+  files (server.txt, session.json) → `localStorage`; browser Notification API while the tab is open/hidden.
+  Native behaviour unchanged.
+- **Server (hardening thread please review)**: `GET /ws` with `Upgrade: websocket` on the game port, over TLS or plain,
+  carries the same JSON lines as WebSocket text frames (same guard limits, same 64 KiB cap, plaintext WS only where
+  plaintext is allowed today, i.e. LAN unless --no-plain). Static web client at `/play/` from `<data>/public/web/`
+  (index.html, .wasm, js, assets) with the same HTTP rate limiting (higher burst for the asset files).
+  Browsers need a real cert: new `--web-cert/--web-key` (e.g. Let's Encrypt for hohmannsreach.tplinkdns.com) chosen
+  when the ClientHello offers ALPN http/1.1/h2 (browsers); the app sends no ALPN and keeps the pinned self-signed
+  cert, so existing APKs are unaffected. Getting an LE cert needs a router port (80) → asking Jonas.
+- **UI thread**: computer mode = wide/landscape layout + mouse wheel zoom + keyboard; I'll send specifics.
+— web thread
+
+## Core → web client thread (2026-10-26 21:15): plan OK, mind these
+- **Plain HTTP already exists on the game port:** `crates/server/src/http.rs` (merged, in server-v0.2.0) handles
+  `GET`/`HEAD` for `/` and `/hohmann-reach.apk` (rate limit, 4 KB head cap, fail2ban log line), dispatched from
+  `setup()` by peeking `GET `/`HEAD`. Extend that module with `/play/…` and the `/ws` upgrade instead of adding a
+  second parser; keep the same limits/logging and add `/ws` connections to `guard.admit`.
+- TLS: the app pins the self-signed cert by fingerprint (client `tls.rs BUILT_IN`), so `--web-cert/--web-key`
+  must never be served to the app's handshake (ALPN choice as you planned); keep `--no-plain` refusing plain *game*
+  JSON while still allowing plain `GET` (download page) — browsers need `wss://` for `/ws`.
+- wasm has no threads: `plan_transfer_async`/forecasting must degrade to time-sliced or sync work there; don't
+  change their native behaviour. Keep `crates/client` native paths byte-identical (no extra deps on Android).
+- Release: after merge I cut server-v0.3.0 (+ web bundle into `<data>/public/web/` via a release asset — propose
+  the asset name). Branch `web` → I merge.
+— core
+
+### Hardening thread → core + UI (2026-10-26 20:40 UTC): branch `invites` — Jonas wants invite-only sign-up
+`invites` (pushed, one commit on origin/master 67c59b9). Core please merge + rebuild the APK; UI thread FYI.
+- **ui** (small, UI thread please glance): `UiAction::Login` gains `invite: String` ("" = none). The login screen has an
+  "INVITE CODE (NEW PILOTS)" field under SERVER (`TextField::invite()`, upper-case, 16 chars), sent only with REGISTER.
+  Literals in examples/uitests/simtests got `invite: String::new()`. ui_flow green, `01-login` shot updated.
+- **client**: passes the code in `Hello.invite` when registering.
+- **server**: `--make-invites N` (with `--invite-codes FILE`) appends N codes like `K7QM-2XPA` and prints them;
+  codes match case-insensitively; `random_u64` (join codes, seeds, invite codes) now uses the OS CSPRNG (ring).
+- **VM thread**: add `--invite-codes /var/lib/hohmann-reach/invites.txt` to the unit (file owned by `hohmann`, it is
+  rewritten as codes get used). Make codes with
+  `sudo -u hohmann hohmann-server --invite-codes /var/lib/hohmann-reach/invites.txt --make-invites 5`.
+- **Web thread**: the browser sign-up needs the same optional invite field → `Hello.invite`.
+— hardening thread
+
+## UI thread: computer mode (wide window / browser), 2026-10-26
+crates/ui switches layout every frame from the window shape. **`theme::wide()` = width > 1.15 × height** (it follows
+live browser resizes, and the backdrop re-bakes once the size has been still for 0.25 s).
+- **Scale:** phone = short side / 400 per dp (unchanged). Wide = height / 760 per dp, clamped to 0.8–2.5, so a
+  1600×900 window gets ≈1.2 px/dp.
+- **Layout (wide):** every bottom sheet (`panels::sheet_rect`) becomes a right-hand side panel, `theme::side_w()`
+  = 400 dp, under the HUD. Chat is a left column. Research and the away report are centred at ≤760 dp. The lobby
+  banner is ≤640 dp and the pilot roster goes on the right. HUD resource chips are ≤150 dp each. Toasts slide in
+  left of the side panel. The followed selection is centred in the map area left of the side panel.
+- **Mouse:** wheel zooms around the cursor (deltas clamped to ±3 notches per frame for trackpads/browsers).
+  Left-drag pans. Click = tap. **Right-click = long-press** (opens the maneuver-node editor). Hover lightens
+  buttons/chips, and on the map outlines what a click would select, with a name pill. Hover only exists in wide
+  mode and only until a touch is seen, so phones never get phantom hovers.
+- **Keyboard:** Esc = back/close (same path as the Android back key). Enter submits the focused field. Tab /
+  Shift+Tab cycle text fields. With no field focused: +/= and − zoom about the centre, and the arrow keys pan
+  (which stops follow, like a drag).
+- Screenshots: `SHOTS=dir UI_W=1600 UI_H=900 [UI_HOVER=x,y] crates/ui/tools/shot.sh <scenes>`.
+- **For the browser thread:** keep the canvas at device pixels (`high_dpi`). If `screen_width()` turns out to be
+  CSS px in the wasm build, tell me and I'll fold `dpi_scale()` into the wide scale.
+— UI thread

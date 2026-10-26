@@ -39,6 +39,12 @@ pub struct Input {
     pub released: Option<Vec2>,
     /// Primary pointer position while down.
     pub held: Option<Vec2>,
+    /// Mouse position when there's a mouse (computer mode / browser); None on touch devices.
+    pub hover: Option<Vec2>,
+    /// A touch has ever been seen: then the mouse position is just the last finger, not a hover.
+    touch_seen: bool,
+    /// Test hook: pretend the mouse is here.
+    pub script_hover: Option<Vec2>,
     /// Characters typed this frame and whether backspace/enter were hit.
     pub chars: Vec<char>,
     pub backspace: bool,
@@ -81,6 +87,7 @@ impl Input {
                 self.script_clock += jump;
             }
         } else if !t.is_empty() {
+            self.touch_seen = true;
             self.pointers = t
                 .iter()
                 .filter(|t| !matches!(t.phase, TouchPhase::Ended | TouchPhase::Cancelled))
@@ -170,9 +177,53 @@ impl Input {
             self.focused_field = hit;
         }
 
+        // Mouse: wheel zooms around the cursor (notches are ±1 natively; browsers/trackpads send
+        // bigger or fractional deltas, so clamp to a few notches per frame).
+        // hover only in computer mode: phones (and the browser on a phone) report the last touch as the mouse
+        self.hover = self.script_hover.or_else(|| (crate::theme::wide() && !self.touch_seen && self.script.is_empty()).then(|| mouse_position().into()));
         let (_, wy) = mouse_wheel();
         if wy != 0.0 && touches().is_empty() {
-            self.zoom = Some((mouse_position().into(), if wy > 0.0 { 1.15 } else { 1.0 / 1.15 }));
+            let notches = if wy.abs() > 3.0 { wy.signum() } else { wy };
+            self.zoom = Some((mouse_position().into(), 1.15f32.powf(notches)));
+        }
+        // Right-click = long-press (node editor) for mouse users.
+        if is_mouse_button_pressed(MouseButton::Right) && touches().is_empty() {
+            let p: Vec2 = mouse_position().into();
+            self.owned_by_ui = self.blocked(p);
+            self.long_press = Some(p);
+        }
+
+        // Keyboard (computer mode). Tab / Shift+Tab move between text fields; with no field focused,
+        // +/- zoom about the screen centre and the arrow keys pan.
+        let shift = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
+        if is_key_pressed(KeyCode::Tab) && !self.prev_fields.is_empty() {
+            let n = self.prev_fields.len();
+            let i = self.focused_field.and_then(|f| self.prev_fields.iter().position(|(id, _)| *id == f));
+            let next = match i {
+                Some(i) if shift => (i + n - 1) % n,
+                Some(i) => (i + 1) % n,
+                None => 0,
+            };
+            self.focused_field = Some(self.prev_fields[next].0);
+        }
+        if self.focused_field.is_none() {
+            let centre = vec2(screen_width() / 2.0, screen_height() / 2.0);
+            if is_key_pressed(KeyCode::Equal) || is_key_pressed(KeyCode::KpAdd) {
+                self.zoom = Some((centre, 1.25));
+            }
+            if is_key_pressed(KeyCode::Minus) || is_key_pressed(KeyCode::KpSubtract) {
+                self.zoom = Some((centre, 1.0 / 1.25));
+            }
+            let mut pan = Vec2::ZERO;
+            for (k, d) in [(KeyCode::Left, vec2(1.0, 0.0)), (KeyCode::Right, vec2(-1.0, 0.0)), (KeyCode::Up, vec2(0.0, 1.0)), (KeyCode::Down, vec2(0.0, -1.0))] {
+                if is_key_down(k) {
+                    pan += d;
+                }
+            }
+            if pan != Vec2::ZERO && self.drag.is_none() {
+                self.drag = Some(pan * 9.0 * s());
+                self.owned_by_ui = false;
+            }
         }
 
         self.chars.clear();
@@ -253,6 +304,16 @@ impl Input {
     }
 
     /// The finger is currently down inside `r` (for pressed-button visuals).
+    /// `p` is over a widget drawn last frame (so the map shouldn't react to it).
+    pub fn over_ui(&self, p: Vec2) -> bool {
+        self.blocked(p)
+    }
+
+    /// Mouse is over `r` and no button is held (hover highlight).
+    pub fn hovering(&self, r: Rect) -> bool {
+        self.held.is_none() && self.hover.is_some_and(|p| r.contains(p))
+    }
+
     pub fn holding(&self, r: Rect) -> bool {
         self.held.is_some_and(|p| r.contains(p))
     }

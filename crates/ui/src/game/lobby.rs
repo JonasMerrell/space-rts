@@ -45,7 +45,7 @@ pub fn overlay(g: &mut GameScreen, inp: &mut Input, view: &GameView, info: &Lobb
 
     // -- banner
     let top = safe_top() + margin();
-    let banner = Rect::new(x, top, cw, 112.0 * s());
+    let banner = Rect::new(x, top, if wide() { cw.min(640.0 * s()) } else { cw }, 112.0 * s());
     inp.block(banner);
     cel::panel(banner, PANEL);
     let status = if host { "WAITING TO START" } else { "WAITING FOR HOST" };
@@ -107,7 +107,9 @@ pub fn overlay(g: &mut GameScreen, inp: &mut Input, view: &GameView, info: &Lobb
     let footer = btn_h + gap;
     let header = 40.0 * s();
     let body = if g.lobby_roster { info.max_players as f32 * (row_h + gap) + 26.0 * s() + 36.0 * s() + gap } else { 0.0 };
-    let sheet = Rect::new(x, bottom - footer - body - header - gap, cw, header + body + footer + gap);
+    // computer mode: roster in the right-hand column
+    let (sx, sw) = if wide() { (w - margin() - side_w(), side_w()) } else { (x, cw) };
+    let sheet = Rect::new(sx, bottom - footer - body - header - gap, sw, header + body + footer + gap);
     inp.block(sheet);
     cel::panel(sheet, PANEL);
     let hr = Rect::new(sheet.x, sheet.y, sheet.w, header);
