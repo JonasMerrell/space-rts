@@ -411,6 +411,12 @@ pub struct Player {
     /// projects running at labs (one per lab body)
     #[serde(default)]
     pub research: Vec<Research>,
+    /// game time this player was last connected (the server stamps it; drives the away report)
+    #[serde(default)]
+    pub last_active: f64,
+    /// fog of war: what this player's sensors picked up, for the away report (capped, see fog.rs)
+    #[serde(default)]
+    pub sensor_log: Vec<crate::fog::SensorItem>,
     /// fog of war: last sightings of enemy ships
     #[serde(default)]
     pub contacts: Vec<crate::fog::Contact>,
@@ -432,6 +438,8 @@ pub enum EventKind {
     Good,
     Bad,
     Battle,
+    /// fog of war: what your sensors picked up (the "while you were away" report; not pushed to phones)
+    Sensor,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -585,6 +593,8 @@ impl Game {
             intel: vec![],
             techs: vec![],
             research: vec![],
+            last_active: 0.0,
+            sensor_log: vec![],
             contacts: vec![],
             vision: Default::default(),
         });

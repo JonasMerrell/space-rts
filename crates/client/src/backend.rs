@@ -206,6 +206,7 @@ impl ClientBackend {
                 g::EventKind::Good => m::NoticeKind::Good,
                 g::EventKind::Bad => m::NoticeKind::Bad,
                 g::EventKind::Battle => m::NoticeKind::Battle,
+                g::EventKind::Sensor => m::NoticeKind::Info,
             };
             let focus = e.ship_ref.map(|s| m::Focus::Ship(s.0)).or(e.body_ref.map(|b| m::Focus::Body(b.0)));
             self.notice(kind, &e.title, &e.body, focus);

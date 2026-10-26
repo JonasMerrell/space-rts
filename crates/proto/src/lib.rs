@@ -45,6 +45,9 @@ pub enum ServerMsg {
     State { game: Box<Game>, me: PlayerId, real_time: f64 },
     /// (game code, unix time of the event, event)
     Events(Vec<(String, f64, Event)>),
+    /// "While you were away": sent on `Open` (before the State) with everything for you since you
+    /// were last connected to that game. `since`/`now` are game times.
+    Report { code: String, since: f64, now: f64, events: Vec<Event> },
     /// Result of a `Cmd` (ok or the rule it broke).
     CmdResult { ok: bool, msg: String },
     Pong,
