@@ -38,6 +38,8 @@ pub enum UiAction {
     SetOrder { ship: ShipId, retreat: bool },
     /// Host only.
     ExtendGame { days: u32 },
+    /// Retry the server connection now instead of waiting for the backoff.
+    Reconnect,
 }
 
 /// Result of polling `Backend::plan_transfer_async`.
@@ -74,6 +76,14 @@ pub trait Backend {
 
     /// Owner-side detail (upgrades, shipyard, queue) for a body; None if not ours / unknown.
     fn body_info(&self, _id: BodyId) -> Option<BodyInfo> {
+        None
+    }
+    /// Signing back in from a saved session as this user (login screen shows a splash, not the form).
+    fn auto_login(&self) -> Option<String> {
+        None
+    }
+    /// Some(text) while logged in but not connected ("Reconnecting..."); None when online.
+    fn connection_status(&self) -> Option<String> {
         None
     }
     /// Server address shown on the login screen.

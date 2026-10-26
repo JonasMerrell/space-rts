@@ -63,6 +63,11 @@ impl Ui {
                 g.draw(&mut self.input, be);
             }
         }
+        if !matches!(self.screen, Screen::Login(_)) {
+            if let Some(st) = be.connection_status() {
+                self.offline_banner(&st, be);
+            }
+        }
         // Screen changes driven directly by our own actions.
         if let Screen::Game(_) = self.screen {
             if be.view().is_none() {
@@ -114,6 +119,23 @@ impl Ui {
                     g.push_notice(n);
                 }
             }
+        }
+    }
+
+    /// "Reconnecting..." strip at the bottom of the screen, with a retry button.
+    fn offline_banner(&mut self, status: &str, be: &mut dyn Backend) {
+        use theme::*;
+        let h = 44.0 * s();
+        let y = screen_height() - h - screens::safe_bottom() - 90.0 * s();
+        let r = Rect::new(12.0 * s(), y, screen_width() - 24.0 * s(), h);
+        self.input.block(r);
+        cel::round_rect(r, 8.0 * s(), Color::new(0.35, 0.05, 0.08, 0.95));
+        cel::round_rect_lines(r, 8.0 * s(), 1.2 * s(), DANGER);
+        let dots = ".".repeat((get_time() * 2.0) as usize % 4);
+        text(&format!("{}{}", status.trim_end_matches("..."), if status.ends_with("...") { dots.as_str() } else { "" }), r.x + 12.0 * s(), r.center().y, 14.0, PAPER, FontKind::Body, Align::Left);
+        let br = Rect::new(r.x + r.w - 86.0 * s(), r.y + 6.0 * s(), 80.0 * s(), h - 12.0 * s());
+        if widgets::button(&mut self.input, br, "RETRY", widgets::Style::Secondary) {
+            be.act(UiAction::Reconnect);
         }
     }
 

@@ -79,6 +79,27 @@ impl Login {
         if self.server.text.is_empty() && !self.server.focused {
             self.server.text = be.default_server();
         }
+        if let Some(user) = be.auto_login() {
+            // Staying logged in: no form, just a splash while the saved session reconnects.
+            if self.user.text.is_empty() {
+                self.user.text = user.clone();
+            }
+            logo(vec2(screen_width() / 2.0, h * 0.3), 44.0);
+            let mut col = Column::new(h * 0.48);
+            let r = col.row(56.0);
+            cel::panel(r, PANEL);
+            text(&format!("Signing in as {user}..."), r.center().x, r.center().y, 17.0, PAPER, FontKind::Body, Align::Center);
+            if let Some(st) = be.connection_status() {
+                let r = col.row(24.0);
+                text(&st, r.center().x, r.center().y, 13.0, MUTED, FontKind::Body, Align::Center);
+            }
+            col.gap(10.0);
+            let r = col.row(48.0);
+            if widgets::button(inp, r, "USE ANOTHER ACCOUNT", Style::Ghost) {
+                be.act(UiAction::Logout);
+            }
+            return;
+        }
         logo(vec2(screen_width() / 2.0, h * 0.2), 44.0);
         let mut col = Column::new(h * 0.32);
         text("PILOT NAME", col.x + 4.0 * s(), col.y, 18.0, MUTED, FontKind::Title, Align::Left);
@@ -104,6 +125,8 @@ impl Login {
             } else {
                 self.busy = true;
                 self.error = None;
+                inp.focused_field = None;
+                macroquad::miniquad::window::show_keyboard(false);
                 be.act(UiAction::Login {
                     server: self.server.text.trim().to_string(),
                     user: self.user.text.trim().to_string(),

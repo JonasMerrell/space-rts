@@ -498,6 +498,7 @@ impl Backend for DemoBackend {
                 }
             }
             UiAction::BackToMenu => self.view = None,
+            UiAction::Reconnect => {}
             UiAction::Build { body, class } => {
                 let now = self.now();
                 let cost = ship_cost(class);

@@ -20,6 +20,10 @@ pub struct Input {
     owned_by_ui: bool,
     blockers: Vec<Rect>,
     prev_blockers: Vec<Rect>,
+    /// Text fields drawn this/last frame, and which one has the keyboard (only ever one).
+    fields: Vec<(u32, Rect)>,
+    prev_fields: Vec<(u32, Rect)>,
+    pub focused_field: Option<u32>,
 
     // Results for this frame.
     pub tap: Option<Vec2>,
@@ -54,6 +58,7 @@ impl Input {
 
     pub fn begin_frame(&mut self) {
         self.prev_blockers = std::mem::take(&mut self.blockers);
+        self.prev_fields = std::mem::take(&mut self.fields);
         self.prev_pointers = std::mem::take(&mut self.pointers);
         self.tap = None;
         self.long_press = None;
@@ -152,6 +157,15 @@ impl Input {
             }
         }
 
+        // Focus follows taps: a tap on a field focuses it (and only it), anywhere else unfocuses.
+        if let Some(p) = self.tap {
+            let hit = self.prev_fields.iter().find(|(_, r)| r.contains(p)).map(|(id, _)| *id);
+            if hit != self.focused_field {
+                macroquad::miniquad::window::show_keyboard(hit.is_some());
+            }
+            self.focused_field = hit;
+        }
+
         let (_, wy) = mouse_wheel();
         if wy != 0.0 && touches().is_empty() {
             self.zoom = Some((mouse_position().into(), if wy > 0.0 { 1.15 } else { 1.0 / 1.15 }));
@@ -196,6 +210,12 @@ impl Input {
     /// True while scripted input is still queued.
     pub fn scripted(&self) -> bool {
         !self.script.is_empty()
+    }
+
+    /// Register a text field for focus handling (call every frame it's drawn).
+    pub fn field(&mut self, id: u32, r: Rect) {
+        self.fields.push((id, r));
+        self.blockers.push(r);
     }
 
     /// Declare an on-screen widget rect; gestures starting there next frame belong to the UI.

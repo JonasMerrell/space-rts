@@ -79,7 +79,9 @@ pub fn round_button(inp: &mut Input, c: Vec2, rad: f32, label: &str, fill: Color
 #[derive(Default, Clone)]
 pub struct TextField {
     pub text: String,
+    /// Mirrors `Input::focused_field == id` (read-only; focus follows taps).
     pub focused: bool,
+    id: u32,
     pub password: bool,
     pub upper: bool,
     pub max_len: usize,
@@ -87,26 +89,30 @@ pub struct TextField {
 
 impl TextField {
     pub fn new(password: bool) -> Self {
-        Self { password, max_len: 64, ..Default::default() }
+        Self { password, max_len: 64, id: next_field_id(), ..Default::default() }
     }
     pub fn code() -> Self {
-        Self { upper: true, max_len: 6, ..Default::default() }
+        Self { upper: true, max_len: 6, id: next_field_id(), ..Default::default() }
     }
 }
 
+fn next_field_id() -> u32 {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static NEXT: AtomicU32 = AtomicU32::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 /// Single-line text input. Returns true if Enter was pressed while focused.
+/// Focus is owned by `Input` so only one field can have it at a time.
 pub fn text_field(inp: &mut Input, r: Rect, f: &mut TextField, placeholder: &str) -> bool {
-    inp.block(r);
-    if let Some(p) = inp.tap {
-        let inside = r.contains(p);
-        if inside != f.focused {
-            f.focused = inside;
-            macroquad::miniquad::window::show_keyboard(inside);
-        }
-        if inside {
-            inp.consume_tap();
-        }
+    if f.id == 0 {
+        f.id = next_field_id();
     }
+    inp.field(f.id, r);
+    if inp.tap.is_some_and(|p| r.contains(p)) {
+        inp.consume_tap();
+    }
+    f.focused = inp.focused_field == Some(f.id);
     let mut submit = false;
     if f.focused {
         for &c in &inp.chars {
@@ -120,6 +126,7 @@ pub fn text_field(inp: &mut Input, r: Rect, f: &mut TextField, placeholder: &str
         if inp.enter {
             submit = true;
             f.focused = false;
+            inp.focused_field = None;
             macroquad::miniquad::window::show_keyboard(false);
         }
     }
