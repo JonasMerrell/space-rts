@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn defense_stations_shoot_and_get_shot() {
-        use crate::game::{Settings, Ship, StandingOrder};
+        use crate::game::Settings;
         use crate::station::{Station, StationId, StationKind};
         use crate::system::SystemSize;
         let settings = Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0 };
@@ -232,18 +232,7 @@ mod tests {
         g.ships.clear();
         g.stations.push(Station { id: StationId(0), owner: 0, kind: StationKind::Defense, body: x, hp: StationKind::Defense.max_hp(), fuel: 0.0, done_t: 0.0 });
         let st = ShipClass::Bomber.stats();
-        g.ships.push(Ship {
-            id: crate::game::ShipId(99),
-            owner: 1,
-            class: ShipClass::Bomber,
-            name: "b".into(),
-            hp: st.hp,
-            fuel: 0.0,
-            order: StandingOrder::Hold,
-            route: vec![],
-            tech: Default::default(),
-            state: ShipState::Parked { body: x, departure: None },
-        });
+        g.spawn(1, ShipClass::Bomber, x);
         g.advance_to(g.t + 1800.0);
         let ship_hp = g.ships.first().map(|s| s.hp).unwrap_or(0.0);
         assert!(ship_hp < st.hp, "platform didn't fire");

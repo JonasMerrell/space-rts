@@ -221,9 +221,22 @@ impl Game {
     }
 
     /// The planned pushes player `p` may know about: their own, and drives on asteroids their
-    /// sensors can see. (Drifts are public: the pushed orbit is in `system` anyway.)
-    pub fn visible_drives(&self, p: PlayerId, sensors: &[(V2, f64)]) -> Vec<Drive> {
-        self.drives.iter().filter(|d| d.owner == p || self.sees_body(sensors, d.body)).cloned().collect()
+    /// sensors see. Unless a scanner covers the asteroid, the aim stays secret (no target, no
+    /// burn vector) until the burn fires. Drifts are public: the pushed orbit is in `system` anyway.
+    pub fn visible_drives(&self, p: PlayerId, v: &crate::fog::Vision) -> Vec<Drive> {
+        self.drives
+            .iter()
+            .filter(|d| d.owner == p || v.bodies.binary_search(&d.body).is_ok())
+            .map(|d| {
+                let mut d = d.clone();
+                if d.owner != p && v.scanned_bodies.binary_search(&d.body).is_err() {
+                    d.target = None;
+                    d.burn.prograde = 0.0;
+                    d.burn.radial = 0.0;
+                }
+                d
+            })
+            .collect()
     }
 
     /// Validate and schedule a push (from `Command::PushAsteroid` / `AimAsteroid`).
@@ -493,6 +506,17 @@ mod tests {
         g.players[0].techs.push(crate::tech::Tech::AsteroidDrives);
         g.apply(0, Command::AimAsteroid { body: ast, target: home1 }).unwrap();
         let t_hit = plan.impact.unwrap().t;
+        // fog: the owner sees the full plan; others only see a drive on an asteroid they can see,
+        // and not its aim unless they scan it
+        assert_eq!(g.view_for(0).drives.len(), 1);
+        assert!(g.view_for(0).drives[0].target.is_some());
+        assert!(g.view_for(99).drives.is_empty());
+        let v = g.players[1].vision.clone();
+        let seen = g.view_for(1).drives;
+        assert_eq!(seen.len(), v.bodies.binary_search(&ast).is_ok() as usize);
+        if let Some(d) = seen.first() {
+            assert_eq!(d.target.is_some(), v.scanned_bodies.binary_search(&ast).is_ok());
+        }
         g.advance_to(t_hit + 120.0);
         assert!(g.bodies[ast.0 as usize].gone, "asteroid still there");
         assert!(g.events.iter().any(|e| e.title == "Impact" || e.title == "Planet shattered"), "no impact event");

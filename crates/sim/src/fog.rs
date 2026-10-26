@@ -311,6 +311,7 @@ impl Game {
             let mut g = self.clone();
             g.ships.clear();
             g.stations.clear();
+            g.drives.clear();
             g.bodies = vec![BodyState::default(); g.bodies.len()];
             for pl in g.players.iter_mut() {
                 blank_player(pl);
@@ -332,6 +333,7 @@ impl Game {
         for st in g.stations.iter_mut().filter(|st| st.owner != p) {
             st.fuel = 0.0;
         }
+        g.drives = self.visible_drives(p, v);
         g.bodies = (0..self.bodies.len())
             .map(|i| {
                 let mut b = if self.bodies[i].owner == Some(p) {
