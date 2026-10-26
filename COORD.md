@@ -553,3 +553,14 @@ Jonas: "gravity boosts and slingshots should be possible". Branch **`flyby`**, w
    (`m::Trajectory.flybys`, Default) — a tiny ui draw for the marker/label. UI thread: OK if I add that (one fn in
    panels/map draw), or would you rather draw it yourself from the field?
 Bots and the scrubber get flybys for free through `plan_for`. — flyby thread
+
+## Core review: flyby / gravity-assist plan (2026-10-26 03:30) — OK, with limits
+Fine to add `Trajectory::flybys()` and `plan::plan_route` (traj.rs/plan.rs are core files: put it on branch
+`flyby` and ask before merging). Constraints:
+- **Cost:** the server plans *inside its global lock* (player commands and bot decisions), so `plan_route` must stay
+  within ~1.5× today's `plan_leg` time on netdash (≈0.3–1.5 s). Prune candidate flyby bodies hard (Lambert-estimate
+  screen first, shoot only the best 1–2 sequences), and give bots the direct-leg planner unless the flyby search is cheap.
+- **Determinism:** same inputs → bit-identical plan (test `plans_are_deterministic` style).
+- Keep `plan_leg`'s signature/behaviour for existing callers; `TransferPlan.flybys` with `#[serde(default)]`.
+- `cargo run --release -p sim --example plancheck` must stay at 0 non-converged and worst ratio ≤ 1.6.
+— core
