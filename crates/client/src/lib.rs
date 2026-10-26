@@ -26,6 +26,7 @@ async fn main() {
     ui::art::load("assets").await;
     let mut ui = ui::Ui::new();
     let mut be = backend::ClientBackend::new(server);
+    be.resume();
     loop {
         ui.frame(&mut be);
         next_frame().await;

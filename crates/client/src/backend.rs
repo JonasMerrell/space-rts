@@ -32,9 +32,33 @@ pub struct ClientBackend {
     /// background planner jobs keyed like `plan_cache`
     plan_jobs: RefCell<HashMap<(ShipId, BodyId, i64), std::sync::mpsc::Receiver<Option<m::TransferPlan>>>>,
     reconnect_at: f64,
+    /// Signing in from the saved session (shown by the login screen instead of the form).
+    auto_user: Option<String>,
+    /// Welcome received on the current connection.
+    online: bool,
+    /// Commands issued while offline, sent after the next Welcome.
+    pending: RefCell<Vec<ClientMsg>>,
+    /// Reconnect backoff (s): 1, 2, 4 ... 30, reset on Welcome.
+    retry_delay: f64,
+    last_rx: f64,
+    last_ping: f64,
+    last_error: Option<String>,
 }
 
 impl ClientBackend {
+    /// Log back in with the saved session, if there is one (stay logged in across launches).
+    pub fn resume(&mut self) {
+        if let Some((server, user, pass)) = crate::notify::load() {
+            if std::env::var("SPACE_RTS_SERVER").is_err() {
+                self.server = server;
+            }
+            self.auto_user = Some(user.clone());
+            self.creds = Some((user, pass));
+            self.logged_in = false;
+            self.connect(false);
+        }
+    }
+
     pub fn new(server: String) -> ClientBackend {
         ClientBackend {
             server,
@@ -53,13 +77,35 @@ impl ClientBackend {
             plan_cache: RefCell::new(HashMap::new()),
             plan_jobs: RefCell::new(HashMap::new()),
             reconnect_at: 0.0,
+            auto_user: None,
+            online: false,
+            pending: RefCell::new(vec![]),
+            retry_delay: 1.0,
+            last_rx: 0.0,
+            last_ping: 0.0,
+            last_error: None,
         }
     }
 
     fn send(&self, msg: ClientMsg) {
-        if let Some(n) = &self.net {
-            n.send(msg);
+        match &self.net {
+            Some(n) if self.online => n.send(msg),
+            // queued until we're back: taps made while reconnecting still go through
+            _ => self.pending.borrow_mut().push(msg),
         }
+    }
+
+    /// Should we be holding a connection open (logged in, or resuming a saved session)?
+    fn want_online(&self) -> bool {
+        self.creds.is_some() && (self.logged_in || self.auto_user.is_some())
+    }
+
+    fn drop_connection(&mut self, why: Option<String>) {
+        self.net = None;
+        self.online = false;
+        self.last_error = why;
+        self.reconnect_at = unix_now() + self.retry_delay;
+        self.retry_delay = (self.retry_delay * 2.0).min(30.0);
     }
 
     fn code(&self) -> Option<String> {
@@ -88,6 +134,10 @@ impl ClientBackend {
         match msg {
             ServerMsg::Welcome { user } => {
                 self.logged_in = true;
+                self.auto_user = None;
+                self.online = true;
+                self.retry_delay = 1.0;
+                self.last_error = None;
                 if let Some((u, p)) = &self.creds {
                     crate::notify::save(&self.server, u, p);
                 }
@@ -96,9 +146,18 @@ impl ClientBackend {
                 if let Some(code) = self.code() {
                     self.send(ClientMsg::Open { code });
                 }
+                self.send(ClientMsg::ListGames);
+                let queued: Vec<ClientMsg> = self.pending.borrow_mut().drain(..).collect();
+                for m in queued {
+                    self.send(m);
+                }
             }
             ServerMsg::Error { msg } => {
                 if !self.logged_in {
+                    if self.auto_user.take().is_some() {
+                        // saved session no longer valid (password changed / account gone)
+                        crate::notify::clear();
+                    }
                     self.events.push(BackendEvent::LoginFailed(msg));
                     self.net = None;
                     self.creds = None;
@@ -374,29 +433,45 @@ fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Tr
 impl Backend for ClientBackend {
     fn poll(&mut self) -> Vec<BackendEvent> {
         let incoming = self.net.as_ref().map(|n| n.poll()).unwrap_or_default();
+        let wall = unix_now();
         for e in incoming {
             match e {
-                NetEvent::Connected => {}
-                NetEvent::Msg(m) => self.on_msg(m),
+                NetEvent::Connected => self.last_rx = wall,
+                NetEvent::Msg(m) => {
+                    self.last_rx = wall;
+                    self.on_msg(m);
+                }
                 NetEvent::Failed(err) => {
-                    self.net = None;
-                    if self.logged_in {
-                        self.reconnect_at = unix_now() + 5.0;
+                    if self.want_online() {
+                        self.drop_connection(Some(err));
                     } else {
+                        self.net = None;
                         self.events.push(BackendEvent::LoginFailed(err));
                         self.creds = None;
                     }
                 }
                 NetEvent::Closed => {
-                    self.net = None;
-                    if self.logged_in {
-                        self.notice(m::NoticeKind::Bad, "Disconnected", "Reconnecting to the server...", None);
-                        self.reconnect_at = unix_now() + 3.0;
+                    if self.want_online() {
+                        self.drop_connection(Some("connection lost".into()));
+                    } else {
+                        self.net = None;
                     }
                 }
             }
         }
-        if self.net.is_none() && self.logged_in && self.creds.is_some() && unix_now() > self.reconnect_at {
+        // Heartbeat: phones drop sockets silently (sleep, wifi handover), so ping and give up on a
+        // connection that has been quiet for 40 s.
+        if self.net.is_some() && self.online {
+            if wall - self.last_ping > 15.0 {
+                self.last_ping = wall;
+                self.send(ClientMsg::Ping);
+            }
+            if wall - self.last_rx > 40.0 {
+                self.drop_connection(Some("server not responding".into()));
+            }
+        }
+        if self.net.is_none() && self.want_online() && wall > self.reconnect_at {
+            self.last_rx = wall;
             self.connect(false);
         }
         // the server re-sends state on every event and every 20 s; between snapshots ship and body
@@ -420,10 +495,16 @@ impl Backend for ClientBackend {
                 self.logged_in = false;
                 self.connect(register);
             }
-            // full reconnect handling is on branch ui/stay-logged-in
-            UiAction::Reconnect => {}
+            UiAction::Reconnect => {
+                self.reconnect_at = 0.0;
+                self.retry_delay = 1.0;
+            }
             UiAction::Logout => {
                 crate::notify::clear();
+                self.auto_user = None;
+                self.online = false;
+                self.pending.borrow_mut().clear();
+                self.was_running = false;
                 self.net = None;
                 self.creds = None;
                 self.logged_in = false;
@@ -457,6 +538,8 @@ impl Backend for ClientBackend {
                 }
             }
             UiAction::LeaveLobby | UiAction::BackToMenu => {
+                // so re-opening the same game reports GameStarted again
+                self.was_running = false;
                 self.game = None;
                 self.view = None;
                 self.send(ClientMsg::ListGames);
@@ -592,6 +675,19 @@ impl Backend for ClientBackend {
 
     fn default_server(&self) -> String {
         self.server.clone()
+    }
+
+    fn auto_login(&self) -> Option<String> {
+        self.auto_user.clone().filter(|_| !self.logged_in)
+    }
+
+    fn connection_status(&self) -> Option<String> {
+        if !self.want_online() || self.online {
+            return None;
+        }
+        let wait = (self.reconnect_at - unix_now()).ceil();
+        let why = self.last_error.clone().unwrap_or_else(|| "connecting".into());
+        Some(if self.net.is_some() || wait <= 0.0 { format!("Connecting to {}...", self.server) } else { format!("Offline ({why}). Retrying in {wait:.0}s") })
     }
 
     fn body_info(&self, id: BodyId) -> Option<m::BodyInfo> {
