@@ -860,7 +860,7 @@ pub fn demo_report(now: f64) -> AwayReport {
             it(11.5, Contacts, "Contact", "Mara: 3 Interceptors, Scout near Gaia Nova", Some(Focus::Ship(10)), -1),
             it(10.9, Contacts, "Engine burn", "Mara's 3 Interceptors burned near Gaia Nova, heading for Tethys", Some(Focus::Ship(10)), -1),
             it(9.0, Battles, "Battle sighted", "Fighting at Kraken", Some(Focus::Body(4)), 0),
-            it(7.4, Battles, "Territory", "Kraken changed hands: Ozzy → Bot (hard)", Some(Focus::Body(4)), 0),
+            it(7.4, Battles, "Territory", "Kraken changed hands from Ozzy to Bot (hard)", Some(Focus::Body(4)), 0),
             it(6.0, Contacts, "Contact lost", "Lost track of Mara's Dreadnought near Tethys", Some(Focus::Ship(13)), -1),
             it(4.2, Battles, "Under attack", "Tethys: enemy ships in orbit", Some(Focus::Body(2)), -1),
             it(3.9, Battles, "Territory gained", "Gaia Nova is yours", Some(Focus::Body(3)), 1),

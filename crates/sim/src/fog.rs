@@ -357,7 +357,7 @@ impl Game {
             ReportKind::Spotted => ("Contact".into(), format!("{who}: {list} near {}{to}", bname(x.body))),
             ReportKind::Lost => ("Contact lost".into(), format!("Lost track of {who}'s {list} near {}", bname(x.body))),
             ReportKind::Burn => ("Engine burn".into(), format!("{who}'s {list} burned near {}{to}", bname(x.body))),
-            ReportKind::Territory => ("Territory".into(), format!("{} changed hands: {} → {who}", bname(x.body), name(x.other))),
+            ReportKind::Territory => ("Territory".into(), format!("{} changed hands from {} to {who}", bname(x.body), name(x.other))),
             ReportKind::Battle => ("Battle sighted".into(), format!("Fighting at {}", bname(x.body))),
         }
     }
