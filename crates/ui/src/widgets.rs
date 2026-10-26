@@ -1,4 +1,5 @@
-//! Immediate-mode comic widgets. Each takes a rect in px and the shared `Input`.
+//! Immediate-mode widgets. Each takes a rect in px and the shared `Input`.
+//! Flat, quiet chrome: the cel-shaded art lives on the map, not in the buttons.
 
 use crate::cel;
 use crate::input::Input;
@@ -13,55 +14,64 @@ pub enum Style {
     Ghost,
 }
 
-fn style_fill(st: Style) -> (Color, Color) {
+/// (fill, border, label colour)
+fn style_colors(st: Style) -> (Color, Color, Color) {
     match st {
-        Style::Primary => (ACCENT, INK),
-        Style::Secondary => (PAPER, INK),
-        Style::Danger => (DANGER, PAPER),
-        Style::Ghost => (PANEL_HI, PAPER),
+        Style::Primary => (ACCENT, ACCENT, hex(0x1a1430)),
+        Style::Secondary => (Color::new(1.0, 1.0, 1.0, 0.08), Color::new(1.0, 1.0, 1.0, 0.35), PAPER),
+        Style::Danger => (alpha(DANGER, 0.9), DANGER, PAPER),
+        Style::Ghost => (Color::new(0.0, 0.0, 0.0, 0.25), BORDER, MUTED),
     }
 }
 
-/// Chunky comic button; returns true when tapped.
+fn lighten(c: Color, k: f32) -> Color {
+    Color::new(c.r + (1.0 - c.r) * k, c.g + (1.0 - c.g) * k, c.b + (1.0 - c.b) * k, (c.a + k).min(1.0))
+}
+
+/// Flat rounded button; returns true when tapped.
 pub fn button(inp: &mut Input, r: Rect, label: &str, st: Style) -> bool {
     inp.block(r);
     let down = inp.holding(r);
-    let (fill, fg) = style_fill(st);
-    let o = if down { 2.5 * s() } else { 0.0 };
-    let rr = Rect::new(r.x + o, r.y + o, r.w, r.h);
-    cel::panel(rr, fill);
-    let size = (r.h / s() * 0.5).min(26.0);
-    if fg == PAPER {
-        inked(label, rr.center().x, rr.center().y, size, PAPER, Align::Center);
-    } else {
-        text(label, rr.center().x, rr.center().y, size, fg, FontKind::Title, Align::Center);
-    }
+    let (fill, border, fg) = style_colors(st);
+    let rad = 8.0 * s();
+    let b = (1.2 * s()).max(1.0);
+    cel::round_rect(r, rad, if down { lighten(fill, 0.18) } else { fill });
+    cel::round_rect_lines(r, rad, b, border);
+    let size = (r.h / s() * 0.42).min(22.0);
+    text(label, r.center().x, r.center().y + s(), size, fg, FontKind::Title, Align::Center);
     let hit = inp.tapped(r);
     if hit {
         inp.consume_tap();
+        crate::art::sfx(if st == Style::Ghost { "ui_back" } else { "ui_tap" });
     }
     hit
 }
 
-/// Round icon-ish button with a short glyph label (e.g. "≡", "NOW").
+/// Round button with a short label or an "@icon" name. `fill` tints the ring when not plain.
 pub fn round_button(inp: &mut Input, c: Vec2, rad: f32, label: &str, fill: Color, badge: usize) -> bool {
     let r = Rect::new(c.x - rad, c.y - rad, rad * 2.0, rad * 2.0);
     inp.block(r);
     let down = inp.holding(r);
-    let c = if down { c + vec2(2.0, 2.0) * s() } else { c };
-    draw_circle(c.x + 3.0 * s(), c.y + 3.0 * s(), rad + 3.0 * s(), Color::new(0.0, 0.0, 0.0, 0.5));
-    draw_circle(c.x, c.y, rad + 3.0 * s(), INK);
-    draw_circle(c.x, c.y, rad, fill);
-    text(label, c.x, c.y, rad / s() * 0.9, INK, FontKind::Title, Align::Center);
+    let ring = if fill == PAPER { Color::new(1.0, 1.0, 1.0, 0.3) } else { alpha(fill, 0.8) };
+    draw_circle(c.x, c.y, rad + 1.2 * s(), ring);
+    draw_circle(c.x, c.y, rad, if down { PANEL_HI } else { PANEL });
+    // "@name" = icon from assets/sprites/icons, text fallback.
+    match label.strip_prefix('@') {
+        Some(name) => match crate::art::tex(&format!("sprites/icons/{name}.png")) {
+            Some(t) => crate::art::draw_centered(&t, c, vec2(rad, rad) * 1.25, 0.0, WHITE),
+            None => text(&name.to_uppercase(), c.x, c.y, rad / s() * 0.55, PAPER, FontKind::Title, Align::Center),
+        },
+        None => text(label, c.x, c.y, rad / s() * 0.8, PAPER, FontKind::Title, Align::Center),
+    }
     if badge > 0 {
-        let b = c + vec2(rad * 0.75, -rad * 0.75);
-        draw_circle(b.x, b.y, 10.0 * s(), INK);
+        let b = c + vec2(rad * 0.72, -rad * 0.72);
         draw_circle(b.x, b.y, 8.0 * s(), DANGER);
-        text(&badge.min(99).to_string(), b.x, b.y, 12.0, PAPER, FontKind::Title, Align::Center);
+        text(&badge.min(99).to_string(), b.x, b.y, 11.0, PAPER, FontKind::Title, Align::Center);
     }
     let hit = inp.tapped(r);
     if hit {
         inp.consume_tap();
+        crate::art::sfx("ui_tap");
     }
     hit
 }
@@ -113,19 +123,19 @@ pub fn text_field(inp: &mut Input, r: Rect, f: &mut TextField, placeholder: &str
             macroquad::miniquad::window::show_keyboard(false);
         }
     }
-    let o = 3.0 * s();
-    cel::round_rect(Rect::new(r.x - o, r.y - o, r.w + 2.0 * o, r.h + 2.0 * o), 8.0 * s() + o, if f.focused { ACCENT } else { INK });
-    cel::round_rect(r, 8.0 * s(), PAPER);
+    let b = if f.focused { 1.6 * s() } else { 1.0 * s() }.max(1.0);
+    cel::round_rect(r, 8.0 * s(), FIELD);
+    cel::round_rect_lines(r, 8.0 * s(), b, if f.focused { ACCENT } else { BORDER });
     let size = (r.h / s() * 0.45).min(22.0);
     let pad = 12.0 * s();
     let shown: String = if f.password { "•".repeat(f.text.chars().count()) } else { f.text.clone() };
     if shown.is_empty() && !f.focused {
-        text(placeholder, r.x + pad, r.center().y, size, Color::new(0.0, 0.0, 0.0, 0.4), FontKind::Body, Align::Left);
+        text(placeholder, r.x + pad, r.center().y, size, Color::new(1.0, 1.0, 1.0, 0.35), FontKind::Body, Align::Left);
     } else {
-        text(&shown, r.x + pad, r.center().y, size, INK, FontKind::Body, Align::Left);
+        text(&shown, r.x + pad, r.center().y, size, PAPER, FontKind::Body, Align::Left);
         if f.focused && (get_time() * 2.0) as i64 % 2 == 0 {
             let w = measure(&shown, FontKind::Body, size).x;
-            draw_rectangle(r.x + pad + w + 2.0 * s(), r.center().y - size * s() * 0.45, 2.5 * s(), size * s() * 0.9, INK);
+            draw_rectangle(r.x + pad + w + 2.0 * s(), r.center().y - size * s() * 0.45, 2.0 * s(), size * s() * 0.9, ACCENT);
         }
     }
     submit
@@ -141,19 +151,19 @@ pub fn stepper(inp: &mut Input, r: Rect, label: &str, v: u32, lo: u32, hi: u32) 
     if button(inp, Rect::new(r.x + r.w - bw, r.y, bw, r.h), "+", Style::Secondary) && v < hi {
         v += 1;
     }
-    inked(label, r.center().x, r.center().y, (r.h / s() * 0.5).min(24.0), PAPER, Align::Center);
+    text(label, r.center().x, r.center().y, (r.h / s() * 0.45).min(22.0), PAPER, FontKind::Title, Align::Center);
     v
 }
 
 /// Toggle chip; returns true when tapped.
 pub fn chip(inp: &mut Input, r: Rect, label: &str, on: bool, color: Color) -> bool {
     inp.block(r);
-    let o = 2.5 * s();
-    cel::round_rect(Rect::new(r.x - o, r.y - o, r.w + 2.0 * o, r.h + 2.0 * o), r.h / 2.0 + o, INK);
-    cel::round_rect(r, r.h / 2.0, if on { color } else { PANEL });
-    let size = (r.h / s() * 0.5).min(20.0);
+    let b = (1.2 * s()).max(1.0);
+    cel::round_rect(r, r.h / 2.0, if on { alpha(color, 0.22) } else { PANEL });
+    cel::round_rect_lines(r, r.h / 2.0, b, if on { color } else { BORDER });
+    let size = (r.h / s() * 0.42).min(18.0);
     if on {
-        text(label, r.center().x, r.center().y, size, INK, FontKind::Title, Align::Center);
+        text(label, r.center().x, r.center().y, size, color, FontKind::Title, Align::Center);
     } else {
         text(label, r.center().x, r.center().y, size, MUTED, FontKind::Title, Align::Center);
     }
@@ -164,10 +174,11 @@ pub fn chip(inp: &mut Input, r: Rect, label: &str, on: bool, color: Color) -> bo
     hit
 }
 
-/// Horizontal fill bar with ink border.
+/// Thin rounded progress bar.
 pub fn bar(r: Rect, frac: f32, fill: Color) {
-    let o = 2.0 * s();
-    draw_rectangle(r.x - o, r.y - o, r.w + 2.0 * o, r.h + 2.0 * o, INK);
-    draw_rectangle(r.x, r.y, r.w, r.h, PANEL);
-    draw_rectangle(r.x, r.y, r.w * frac.clamp(0.0, 1.0), r.h, fill);
+    cel::round_rect(r, r.h / 2.0, Color::new(1.0, 1.0, 1.0, 0.12));
+    let f = frac.clamp(0.0, 1.0);
+    if f > 0.0 {
+        cel::round_rect(Rect::new(r.x, r.y, (r.w * f).max(r.h), r.h), r.h / 2.0, fill);
+    }
 }

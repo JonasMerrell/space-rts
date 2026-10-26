@@ -1,14 +1,18 @@
 //! Out-of-game screens: login, main menu (games list, new game, join by code), lobby.
 
+use crate::art;
 use crate::backend::{Backend, UiAction};
 use crate::cel;
 use crate::input::Input;
 use crate::model::*;
+#[allow(unused_imports)]
+use crate::model::{Body, BodyKind};
 use crate::theme::*;
 use crate::widgets::{self, Style, TextField};
 use macroquad::prelude::*;
 
-pub const FACTIONS: [&str; 4] = ["SOLAR UNION", "VOID CORSAIRS", "IRON CHOIR", "FREE MINERS"];
+/// Aesthetic factions = art skins (vanguard, hive, prism, junker).
+pub const FACTIONS: [&str; 4] = ["VANGUARD NAVY", "HIVE BROOD", "PRISM COVENANT", "JUNKER CLANS"];
 pub const BOT_LEVELS: [&str; 3] = ["EASY", "NORMAL", "HARD"];
 
 /// A centred column layout helper: hands out rows top to bottom.
@@ -33,12 +37,27 @@ impl Column {
     }
 }
 
-/// The title logo: a burst behind slanted inked letters.
+/// Title block: a lit planet from the game art over the wordmark.
 pub fn logo(c: Vec2, size_dp: f32) {
     let t = get_time() as f32;
-    cel::burst(c, size_dp * 2.6 * s(), 14, DANGER, t * 0.1);
-    cel::burst(c, size_dp * 2.1 * s(), 14, ACCENT, -t * 0.1 + 0.2);
-    inked(GAME_TITLE, c.x, c.y, size_dp, PAPER, Align::Center);
+    let pc = c - vec2(0.0, size_dp * 1.9 * s());
+    let body = Body {
+        id: 3,
+        name: String::new(),
+        kind: BodyKind::Planet,
+        parent: Some(0),
+        radius: 0.0,
+        soi: 0.0,
+        owner: None,
+        intel: None,
+        art: Some("planet_terran".into()),
+        orbit_path: vec![],
+    };
+    crate::game::map::draw_body(&body, pc, size_dp * 1.1 * s(), pc + vec2(-300.0, -200.0) * s(), None, t);
+    text(GAME_TITLE, c.x, c.y, size_dp, PAPER, FontKind::Title, Align::Center);
+    let w = measure(GAME_TITLE, FontKind::Title, size_dp).x;
+    draw_rectangle(c.x - w / 2.0, c.y + size_dp * 0.62 * s(), w, 2.0 * s(), ACCENT);
+    text("MULTIPLAYER ORBITAL STRATEGY", c.x, c.y + size_dp * 0.95 * s(), 13.0, MUTED, FontKind::Title, Align::Center);
 }
 
 #[derive(Default)]
@@ -56,7 +75,7 @@ impl Login {
 
     pub fn draw(&mut self, inp: &mut Input, be: &mut dyn Backend) {
         let h = screen_height();
-        logo(vec2(screen_width() / 2.0, h * 0.2), 46.0);
+        logo(vec2(screen_width() / 2.0, h * 0.24), 44.0);
         let mut col = Column::new(h * 0.38);
         text("PILOT NAME", col.x + 4.0 * s(), col.y, 18.0, MUTED, FontKind::Title, Align::Left);
         col.gap(14.0);
@@ -68,7 +87,7 @@ impl Login {
         go |= widgets::text_field(inp, r, &mut self.pass, "secret");
         col.gap(6.0);
         let r = col.row(60.0);
-        go |= widgets::button(inp, r, if self.busy { "LAUNCHING..." } else { "LOG IN!" }, Style::Primary);
+        go |= widgets::button(inp, r, if self.busy { "LAUNCHING..." } else { "LOG IN" }, Style::Primary);
         let r = col.row(50.0);
         let reg = widgets::button(inp, r, "NEW PILOT? REGISTER", Style::Secondary);
         if (go || reg) && !self.busy {
@@ -120,8 +139,8 @@ impl Menu {
         let games = be.my_games();
         if games.is_empty() {
             let r = col.row(70.0);
-            cel::bubble(r, None, PAPER);
-            text("No games yet. Start one or join a friend's!", r.center().x, r.center().y, 17.0, INK, FontKind::Body, Align::Center);
+            cel::panel(r, PANEL);
+            text("No games yet. Start one or join a friend's!", r.center().x, r.center().y, 16.0, MUTED, FontKind::Body, Align::Center);
         }
         for g in games.iter().take(4) {
             let r = col.row(74.0);
@@ -139,8 +158,8 @@ impl Menu {
             );
             if g.unread > 0 {
                 let c = vec2(r.x + r.w - 30.0 * s(), r.center().y);
-                cel::burst(c, 22.0 * s(), 9, DANGER, 0.0);
-                text(&g.unread.to_string(), c.x, c.y, 18.0, PAPER, FontKind::Title, Align::Center);
+                draw_circle(c.x, c.y, 13.0 * s(), DANGER);
+                text(&g.unread.to_string(), c.x, c.y, 15.0, PAPER, FontKind::Title, Align::Center);
             }
             if inp.tapped(r) {
                 inp.consume_tap();
@@ -150,6 +169,7 @@ impl Menu {
         col.gap(10.0);
         let r = col.row(60.0);
         if widgets::button(inp, r, "START A NEW WAR", Style::Primary) {
+            art::sfx("menu_open");
             self.creating = true;
         }
         col.gap(4.0);
@@ -158,13 +178,14 @@ impl Menu {
         let r = col.row(56.0);
         let fw = r.w * 0.6;
         let mut go = widgets::text_field(inp, Rect::new(r.x, r.y, fw, r.h), &mut self.join, "e.g. K7QX");
-        go |= widgets::button(inp, Rect::new(r.x + fw + 14.0 * s(), r.y, r.w - fw - 14.0 * s(), r.h), "JOIN!", Style::Secondary);
+        go |= widgets::button(inp, Rect::new(r.x + fw + 14.0 * s(), r.y, r.w - fw - 14.0 * s(), r.h), "JOIN", Style::Secondary);
         if go {
             let code = self.join.text.trim().to_uppercase();
             if code.len() < 4 {
                 self.error = Some("Codes are 4+ letters".into());
             } else {
                 self.error = None;
+                art::sfx("start_game");
                 be.act(UiAction::JoinGame { code });
             }
         }
@@ -201,6 +222,7 @@ impl Menu {
             let label = if n > 0 { format!("{lvl} ×{n}") } else { lvl.to_string() };
             let cr = Rect::new(r.x + i as f32 * (cw + 12.0 * s()), r.y, cw, r.h);
             if widgets::chip(inp, cr, &label, n > 0, [GOOD, ACCENT, DANGER][i]) {
+                art::sfx(if self.bots.len() < 3 { "toggle_on" } else { "toggle_off" });
                 if self.bots.len() < 3 {
                     self.bots.push(i);
                 } else {
@@ -243,12 +265,12 @@ impl Lobby {
         let mut col = Column::new(top);
         inked(&info.name.to_uppercase(), screen_width() / 2.0, col.y + 20.0 * s(), 28.0, ACCENT, Align::Center);
         col.gap(48.0);
-        // Join code in a big shout bubble.
+        // Join code, big and spaced out.
         let r = col.row(110.0);
-        cel::bubble(r, Some(vec2(r.x + r.w * 0.8, r.y + r.h + 26.0 * s())), PAPER);
-        text("SHARE THIS CODE WITH FRIENDS", r.center().x, r.y + 24.0 * s(), 16.0, INK, FontKind::Title, Align::Center);
-        let spaced: String = info.code.chars().map(|c| format!("{c} ")).collect();
-        inked(spaced.trim_end(), r.center().x, r.y + 68.0 * s(), 54.0, ACCENT, Align::Center);
+        cel::panel(r, PANEL);
+        text("SHARE THIS CODE WITH FRIENDS", r.center().x, r.y + 22.0 * s(), 14.0, MUTED, FontKind::Title, Align::Center);
+        let spaced: String = info.code.chars().map(|c| format!("{c}  ")).collect();
+        text(spaced.trim_end(), r.center().x, r.y + 66.0 * s(), 52.0, ACCENT, FontKind::Title, Align::Center);
         col.gap(10.0);
         inked(&format!("PILOTS {}/{}", info.players.len(), info.max_players), col.x, col.y + 12.0 * s(), 22.0, PAPER, Align::Left);
         text(&format!("{} days", info.length_days), col.x + col.w, col.y + 12.0 * s(), 18.0, MUTED, FontKind::Body, Align::Right);
@@ -258,10 +280,14 @@ impl Lobby {
             match info.players.get(i) {
                 Some(p) => {
                     cel::panel(r, PANEL);
+                    let c = vec2(r.x + 30.0 * s(), r.center().y);
                     let (l, d) = TEAMS[p.color % 4];
-                    cel::body(vec2(r.x + 30.0 * s(), r.center().y), 14.0 * s(), l, d);
+                    cel::body(c, 16.0 * s(), l, d);
+                    if let Some(t) = art::tex(&format!("sprites/emblems/{}.png", art::skin_of(&p.faction))) {
+                        art::draw_centered(&t, c, vec2(26.0, 26.0) * s(), 0.0, WHITE);
+                    }
                     let me = if p.id == self.me { "  (you)" } else { "" };
-                    let host = if p.id == info.host { "  ★ host" } else { "" };
+                    let host = if p.id == info.host { "  · HOST" } else { "" };
                     inked(&format!("{}{}", p.name.to_uppercase(), me), r.x + 56.0 * s(), r.y + 20.0 * s(), 20.0, PAPER, Align::Left);
                     text(&format!("{}{}", p.faction, host), r.x + 56.0 * s(), r.y + 42.0 * s(), 14.0, MUTED, FontKind::Body, Align::Left);
                 }
@@ -281,6 +307,7 @@ impl Lobby {
             let cr = Rect::new(rr.x + (i % 2) as f32 * (cw + 12.0 * s()), rr.y, cw, rr.h);
             if widgets::chip(inp, cr, f, self.faction == i, ACCENT) {
                 self.faction = i;
+                art::sfx("menu_select");
                 be.act(UiAction::SetFaction(f.to_string()));
             }
         }
@@ -298,13 +325,14 @@ impl Lobby {
             if widgets::button(inp, Rect::new(col.x + bw + 14.0 * s(), r.y - 64.0 * s(), bw, 50.0 * s()), "LEAVE", Style::Ghost) {
                 be.act(UiAction::LeaveLobby);
             }
-            let label = if full { "LAUNCH!" } else { "LAUNCH NOW" };
+            let label = if full { "LAUNCH" } else { "LAUNCH NOW" };
             if widgets::button(inp, r, label, Style::Primary) {
+                art::sfx("start_game");
                 be.act(UiAction::StartGame);
             }
         } else {
-            cel::bubble(Rect::new(col.x, r.y - 64.0 * s(), col.w, 50.0 * s()), None, PAPER);
-            text("Waiting for the host to launch...", col.x + col.w / 2.0, r.y - 39.0 * s(), 17.0, INK, FontKind::Body, Align::Center);
+            cel::panel(Rect::new(col.x, r.y - 64.0 * s(), col.w, 50.0 * s()), PANEL);
+            text("Waiting for the host to launch...", col.x + col.w / 2.0, r.y - 39.0 * s(), 16.0, MUTED, FontKind::Body, Align::Center);
             if widgets::button(inp, r, "LEAVE", Style::Ghost) {
                 be.act(UiAction::LeaveLobby);
             }

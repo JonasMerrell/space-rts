@@ -1,9 +1,10 @@
-//! Style L "cel-shaded comic": palette, fonts, UI scale and outlined text.
+//! Palette, fonts, UI scale and text. Game art (ships, planets) is cel-shaded comic (style L);
+//! the UI chrome around it is deliberately plainer: dark glass panels, thin borders, clean type.
 
 use macroquad::prelude::*;
 use std::cell::Cell;
 
-pub const GAME_TITLE: &str = "KEPLER CLASH!";
+pub const GAME_TITLE: &str = "KEPLER CLASH";
 
 pub const BG: Color = hex(0x1b1340);
 pub const INK: Color = hex(0x000000);
@@ -14,8 +15,10 @@ pub const ACCENT: Color = hex(0xffd23f);
 pub const DANGER: Color = hex(0xe63946);
 pub const GOOD: Color = hex(0x52b788);
 pub const MUTED: Color = Color::new(1.0, 1.0, 1.0, 0.55);
-pub const PANEL: Color = hex(0x2b2160);
-pub const PANEL_HI: Color = hex(0x3d2f85);
+pub const PANEL: Color = Color::new(0.06, 0.05, 0.15, 0.88);
+pub const PANEL_HI: Color = Color::new(0.14, 0.12, 0.30, 0.92);
+pub const BORDER: Color = Color::new(1.0, 1.0, 1.0, 0.16);
+pub const FIELD: Color = Color::new(0.03, 0.02, 0.09, 0.9);
 
 /// Light/dark pairs for team colours (blue, red, green, yellow) and neutral grey.
 pub const TEAMS: [(Color, Color); 4] = [
@@ -45,9 +48,9 @@ pub fn alpha(c: Color, a: f32) -> Color {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FontKind {
-    /// Bangers: titles, numbers, buttons.
+    /// Rajdhani Bold: titles, numbers, buttons.
     Title,
-    /// Comic Neue Bold: body text, chat.
+    /// Barlow Medium: body text, chat.
     Body,
 }
 
@@ -63,8 +66,8 @@ thread_local! {
 }
 
 pub fn init() {
-    let mut title = load_ttf_font_from_bytes(include_bytes!("../assets/Bangers-Regular.ttf")).unwrap();
-    let mut body = load_ttf_font_from_bytes(include_bytes!("../assets/ComicNeue-Bold.ttf")).unwrap();
+    let mut title = load_ttf_font_from_bytes(include_bytes!("../assets/Rajdhani-Bold.ttf")).unwrap();
+    let mut body = load_ttf_font_from_bytes(include_bytes!("../assets/Barlow-Medium.ttf")).unwrap();
     title.set_filter(FilterMode::Linear);
     body.set_filter(FilterMode::Linear);
     FONTS.with(|f| f.set(Some(Box::leak(Box::new(Fonts { title, body })))));
@@ -121,12 +124,12 @@ pub fn text(t: &str, x: f32, y: f32, size_dp: f32, color: Color, kind: FontKind,
     });
 }
 
-/// Comic text with a thick black stroke (the "Impact with black outline" look).
+/// Title-font text with a thin dark halo so it stays legible over the map.
 pub fn inked(t: &str, x: f32, y: f32, size_dp: f32, color: Color, align: Align) {
-    let o = (size_dp * s() * 0.09).max(1.5);
-    for i in 0..12 {
-        let a = i as f32 / 12.0 * std::f32::consts::TAU;
-        text(t, x + a.cos() * o, y + a.sin() * o, size_dp, INK, FontKind::Title, align);
+    let o = s().max(1.0);
+    let halo = Color::new(0.0, 0.0, 0.0, 0.55);
+    for (dx, dy) in [(-o, 0.0), (o, 0.0), (0.0, -o), (0.0, o)] {
+        text(t, x + dx, y + dy, size_dp, halo, FontKind::Title, align);
     }
     text(t, x, y, size_dp, color, FontKind::Title, align);
 }

@@ -2,6 +2,7 @@
 
 use super::map::{self, Camera};
 use super::{GameScreen, Handle, Mode, NodeEdit, SCRUB_SPAN};
+use crate::art;
 use crate::backend::{Backend, UiAction};
 use crate::cel;
 use crate::input::Input;
@@ -66,26 +67,31 @@ pub fn hud(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
     let avail = w - 2.0 * margin() - btn_space;
     let cw = (avail - 2.0 * 8.0 * s()) / 3.0;
     let ch = 44.0 * s();
-    let items: [(&str, f64, f64, fn(Vec2, f32)); 3] =
+    type Item<'a> = (&'a str, f64, f64, fn(Vec2, f32));
+    let items: [Item; 3] =
         [("MATTER", res.matter, res.matter_rate, icon_matter), ("ENERGY", res.energy, res.energy_rate, icon_energy), ("FUEL", res.fuel, res.fuel_rate, icon_fuel)];
     for (i, (label, v, rate, icon)) in items.iter().enumerate() {
         let r = Rect::new(margin() + i as f32 * (cw + 8.0 * s()), top, cw, ch);
         inp.block(r);
         cel::panel(r, PANEL);
-        icon(vec2(r.x + 18.0 * s(), r.center().y), 8.0 * s());
+        let ic = vec2(r.x + 18.0 * s(), r.center().y);
+        match art::tex(&format!("sprites/icons/{}.png", label.to_lowercase())) {
+            Some(t) => art::draw_centered(&t, ic, vec2(26.0, 26.0) * s(), 0.0, WHITE),
+            None => icon(ic, 8.0 * s()),
+        }
         inked(&fmt_amount(*v), r.x + 34.0 * s(), r.y + 17.0 * s(), 19.0, PAPER, Align::Left);
         let rate_s = format!("{}{}/h", if *rate >= 0.0 { "+" } else { "" }, fmt_amount(*rate));
         let col = if *rate >= 0.0 { GOOD } else { DANGER };
         text(&rate_s, r.x + 34.0 * s(), r.y + 34.0 * s(), 12.0, col, FontKind::Title, Align::Left);
-        let _ = label;
     }
     let bx = w - margin() - 22.0 * s();
     let unread = view.chat.len().saturating_sub(g.chat_seen);
-    if widgets::round_button(inp, vec2(bx - 50.0 * s(), top + ch / 2.0), 21.0 * s(), "CHAT", PAPER, if g.chat_open { 0 } else { unread }) {
+    if widgets::round_button(inp, vec2(bx - 50.0 * s(), top + ch / 2.0), 21.0 * s(), "@chat", PAPER, if g.chat_open { 0 } else { unread }) {
         g.chat_open = !g.chat_open;
+        art::sfx(if g.chat_open { "menu_open" } else { "menu_close" });
         g.chat_seen = view.chat.len();
     }
-    if widgets::round_button(inp, vec2(bx, top + ch / 2.0), 21.0 * s(), "≡", ACCENT, 0) {
+    if widgets::round_button(inp, vec2(bx, top + ch / 2.0), 21.0 * s(), "@menu", ACCENT, 0) {
         g.emit(UiAction::BackToMenu);
     }
     // Clock line.
@@ -110,7 +116,11 @@ pub fn scrubber(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
     let grab = Rect::new(track.x - 12.0 * s(), r.y, track.w + 24.0 * s(), r.h);
     if let Some(p) = inp.held {
         if inp.gesture_on_ui() && grab.contains(p) {
-            g.scrub = (((p.x - track.x) / track.w).clamp(0.0, 1.0) as f64) * SCRUB_SPAN;
+            let new = (((p.x - track.x) / track.w).clamp(0.0, 1.0) as f64) * SCRUB_SPAN;
+            if (new / 3600.0).floor() != (g.scrub / 3600.0).floor() {
+                art::sfx("slider_tick");
+            }
+            g.scrub = new;
         }
     }
 
@@ -144,8 +154,8 @@ pub fn scrubber(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
     }
     // Knob.
     let kc = vec2(x_of(g.scrub), track.y + track.h / 2.0);
-    draw_circle(kc.x, kc.y, 13.0 * s(), INK);
-    draw_circle(kc.x, kc.y, 10.0 * s(), PAPER);
+    draw_circle(kc.x, kc.y, 11.0 * s(), alpha(ACCENT, 0.35));
+    draw_circle(kc.x, kc.y, 7.0 * s(), PAPER);
     if g.scrub > 1.0 {
         let label = format!("+{}", fmt_dur(g.scrub));
         let wl = measure(&label, FontKind::Title, 14.0).x + 14.0 * s();
@@ -162,12 +172,19 @@ pub fn scrubber(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
 pub fn prediction_banner(scrub: f64) {
     let w = screen_width();
     let y = hud_bottom() + 6.0 * s();
-    cel::halftone(Rect::new(0.0, hud_bottom(), w, scrub_top() - hud_bottom()), Color::new(1.0, 0.82, 0.25, 0.06));
-    let label = format!("PREDICTED · +{}", fmt_dur(scrub));
-    let lw = measure(&label, FontKind::Title, 16.0).x + 26.0 * s();
-    let r = Rect::new((w - lw) / 2.0, y, lw, 28.0 * s());
-    cel::panel(r, ACCENT);
-    text(&label, r.center().x, r.center().y, 16.0, INK, FontKind::Title, Align::Center);
+    // Thin amber frame around the map = "you are looking at the future".
+    let (t, b) = (hud_bottom(), scrub_top() - 8.0 * s());
+    let k = 2.0 * s();
+    let col = alpha(ACCENT, 0.55);
+    draw_rectangle(0.0, t, w, k, col);
+    draw_rectangle(0.0, b - k, w, k, col);
+    draw_rectangle(0.0, t, k, b - t, col);
+    draw_rectangle(w - k, t, k, b - t, col);
+    let label = format!("PREDICTED  +{}", fmt_dur(scrub));
+    let lw = measure(&label, FontKind::Title, 15.0).x + 26.0 * s();
+    let r = Rect::new((w - lw) / 2.0, y, lw, 26.0 * s());
+    cel::round_rect(r, r.h / 2.0, alpha(ACCENT, 0.92));
+    text(&label, r.center().x, r.center().y + s(), 15.0, hex(0x1a1430), FontKind::Title, Align::Center);
 }
 
 // ---------------------------------------------------------------- Bottom sheet
@@ -207,12 +224,8 @@ fn body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Body) {
     let r = sheet_rect(150.0);
     inp.block(r);
     cel::panel(r, PANEL);
-    let (l, d) = team(view.color_of(b.owner));
-    if b.kind == BodyKind::Star {
-        cel::star(vec2(r.x + 36.0 * s(), r.y + 36.0 * s()), 16.0 * s(), get_time() as f32);
-    } else {
-        cel::body(vec2(r.x + 36.0 * s(), r.y + 36.0 * s()), 18.0 * s(), l, d);
-    }
+    let c = vec2(r.x + 36.0 * s(), r.y + 36.0 * s());
+    map::draw_body(b, c, 16.0 * s(), c + vec2(-100.0, -60.0), view.color_of(b.owner), get_time() as f32);
     inked(&b.name.to_uppercase(), r.x + 66.0 * s(), r.y + 26.0 * s(), 24.0, PAPER, Align::Left);
     let kind = match b.kind {
         BodyKind::Star => "STAR",
@@ -242,8 +255,7 @@ fn body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Body) {
             }
         }
         None => {
-            cel::bubble(Rect::new(body_r.x, body_r.y, body_r.w, 44.0 * s()), None, PAPER);
-            text("??? Contents unknown. Build a telescope!", body_r.center().x, body_r.y + 22.0 * s(), 15.0, INK, FontKind::Body, Align::Center);
+            text("Contents unknown. Build a telescope to see inside.", body_r.x, body_r.y + 12.0 * s(), 15.0, MUTED, FontKind::Body, Align::Left);
         }
     }
     if close_x(inp, r) {
@@ -283,7 +295,7 @@ fn ship_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship, t
         let b = |i: usize| Rect::new(r.x + 12.0 * s() + i as f32 * (bw + 12.0 * s()), by, bw, 46.0 * s());
         if targeting {
             cel::bubble(Rect::new(r.x + r.w - 150.0 * s(), r.y - 30.0 * s(), 140.0 * s(), 36.0 * s()), Some(vec2(r.x + r.w - 40.0 * s(), r.y - 60.0 * s())), PAPER);
-            text("TAP A TARGET!", r.x + r.w - 80.0 * s(), r.y - 12.0 * s(), 16.0, INK, FontKind::Title, Align::Center);
+            text("TAP A TARGET", r.x + r.w - 80.0 * s(), r.y - 12.0 * s(), 16.0, INK, FontKind::Title, Align::Center);
         }
         if widgets::button(inp, b(0), "MANEUVER", Style::Secondary) {
             g.mode = Mode::Nodes(NodeEdit {
@@ -318,7 +330,7 @@ fn plan_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
     let cols = [
         ("DEPART", if p.depart_t - view.now < 60.0 { "NOW".to_string() } else { format!("in {}", fmt_dur(p.depart_t - view.now)) }),
         ("FLIGHT", fmt_dur(p.arrive_t - p.depart_t)),
-        ("Δv", format!("{:.2} km/s", p.dv_depart + p.dv_capture)),
+        ("DELTA-V", format!("{:.2} km/s", p.dv_depart + p.dv_capture)),
     ];
     let cw = (r.w - 32.0 * s()) / 3.0;
     for (i, (k, v)) in cols.iter().enumerate() {
@@ -336,9 +348,10 @@ fn plan_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
     let by = r.y + r.h - 58.0 * s();
     let bw = (r.w - 4.0 * 12.0 * s()) / 3.0;
     let b = |i: usize| Rect::new(r.x + 12.0 * s() + i as f32 * (bw + 12.0 * s()), by, bw, 46.0 * s());
-    if widgets::button(inp, b(0), "ENGAGE!", if ok { Style::Primary } else { Style::Ghost }) && ok {
+    if widgets::button(inp, b(0), "ENGAGE", if ok { Style::Primary } else { Style::Ghost }) && ok {
         g.emit(UiAction::ScheduleTransfer(p.clone()));
-        g.push_notice(Notice { kind: NoticeKind::Good, title: "COURSE LAID IN!".into(), body: format!("Departing for {target}"), focus: None });
+        art::sfx("transfer_scheduled");
+        g.push_notice(Notice { kind: NoticeKind::Good, title: "Course laid in".into(), body: format!("Departing for {target}"), focus: None });
         g.mode = Mode::Idle;
     }
     if widgets::button(inp, b(1), "NEXT WINDOW", Style::Secondary) {
@@ -389,7 +402,7 @@ pub fn plan_world(p: &TransferPlan, be: &dyn Backend, view: &GameView, cam: &Cam
 pub fn plan_bubble(p: &TransferPlan, _be: &dyn Backend, view: &GameView, cam: &Camera, _t: f64) {
     let Some(&(_, d)) = p.path.points.first() else { return };
     let anchor = cam.to_screen(d);
-    let label = if p.depart_t - view.now < 60.0 { "BURN NOW!".to_string() } else { format!("BURN IN {}!", fmt_dur(p.depart_t - view.now)) };
+    let label = if p.depart_t - view.now < 60.0 { "BURN NOW".to_string() } else { format!("BURN IN {}", fmt_dur(p.depart_t - view.now)) };
     let w = measure(&label, FontKind::Title, 18.0).x + 28.0 * s();
     let h = 38.0 * s();
     let mut r = Rect::new(anchor.x - w - 24.0 * s(), anchor.y - h - 34.0 * s(), w, h);
@@ -561,7 +574,7 @@ fn node_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
     inked(&format!("NODE {}/{}", ne.sel + 1, ne.nodes.len()), r.x + 16.0 * s(), r.y + 24.0 * s(), 22.0, ACCENT, Align::Left);
     text(&format!("burn in {}", fmt_dur(n.t - view.now)), r.x + 130.0 * s(), r.y + 25.0 * s(), 15.0, MUTED, FontKind::Body, Align::Left);
     let total: f64 = ne.nodes.iter().map(|n| n.dv()).sum();
-    text(&format!("TOTAL Δv {:.2} km/s", total), r.x + r.w - 16.0 * s(), r.y + 25.0 * s(), 14.0, PAPER, FontKind::Title, Align::Right);
+    text(&format!("TOTAL DV {:.2} km/s", total), r.x + r.w - 16.0 * s(), r.y + 25.0 * s(), 14.0, PAPER, FontKind::Title, Align::Right);
 
     let k = node_frame(&ne, be, g.cam.as_ref().unwrap()).map(|f| f.k * 10.0).unwrap_or(0.1);
     let rows = [("PROGRADE", n.prograde, hex(0x80ed99)), ("RADIAL", n.radial, hex(0x4cc9f0))];
@@ -608,9 +621,10 @@ fn node_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
             close = true;
         }
     }
-    if widgets::button(inp, b(2), "COMMIT!", Style::Primary) {
+    if widgets::button(inp, b(2), "COMMIT", Style::Primary) {
         g.emit(UiAction::SetNodes { ship: ne.ship, nodes: ne.nodes.clone() });
-        g.push_notice(Notice { kind: NoticeKind::Good, title: "BURNS SCHEDULED!".into(), body: format!("{} node(s), Δv {:.2} km/s", ne.nodes.len(), total), focus: None });
+        art::sfx("transfer_scheduled");
+        g.push_notice(Notice { kind: NoticeKind::Good, title: "Burns scheduled".into(), body: format!("{} node(s), dv {:.2} km/s", ne.nodes.len(), total), focus: None });
         close = true;
     }
     if widgets::button(inp, b(3), "CANCEL", Style::Ghost) {
@@ -635,18 +649,22 @@ pub fn toasts(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
         let x = w - margin() - tw * slide + (1.0 - fade) * tw;
         let r = Rect::new(x, y, tw, 62.0 * s());
         inp.block(r);
-        cel::panel(r, PAPER);
-        let (word, col) = match t.notice.kind {
-            NoticeKind::Battle => ("POW!", DANGER),
-            NoticeKind::Bad => ("UH-OH", DANGER),
-            NoticeKind::Good => ("YES!", GOOD),
-            NoticeKind::Info => ("PSST", TEAMS[0].0),
+        cel::panel(r, PANEL);
+        let (icon, col) = match t.notice.kind {
+            NoticeKind::Battle => ("alert", DANGER),
+            NoticeKind::Bad => ("warning", DANGER),
+            NoticeKind::Good => ("check", GOOD),
+            NoticeKind::Info => ("notification", TEAMS[0].0),
         };
-        let bc = vec2(r.x + 34.0 * s(), r.center().y);
-        cel::burst(bc, 30.0 * s(), 10, col, age);
-        inked(word, bc.x, bc.y, 15.0, PAPER, Align::Center);
-        text(&t.notice.title, r.x + 74.0 * s(), r.y + 20.0 * s(), 18.0, INK, FontKind::Title, Align::Left);
-        text(&t.notice.body, r.x + 74.0 * s(), r.y + 43.0 * s(), 14.0, INK, FontKind::Body, Align::Left);
+        cel::round_rect(Rect::new(r.x, r.y, 4.0 * s(), r.h), 2.0 * s(), col);
+        let ic = vec2(r.x + 32.0 * s(), r.center().y);
+        match art::tex(&format!("sprites/icons/{icon}.png")) {
+            Some(tx) => art::draw_centered(&tx, ic, vec2(30.0, 30.0) * s(), 0.0, WHITE),
+            None => draw_circle(ic.x, ic.y, 9.0 * s(), col),
+        }
+        text(&t.notice.title, r.x + 60.0 * s(), r.y + 21.0 * s(), 17.0, col, FontKind::Title, Align::Left);
+        text(&t.notice.body, r.x + 60.0 * s(), r.y + 42.0 * s(), 14.0, PAPER, FontKind::Body, Align::Left);
+        let _ = age;
         if inp.tapped(r) {
             inp.consume_tap();
             tapped = Some(i);
@@ -668,12 +686,13 @@ pub fn hint(g: &mut GameScreen) {
         g.hint = None;
         return;
     }
-    let sc = 1.0 + 0.25 * (1.0 - (age / 0.18).min(1.0)) as f32;
-    let c = vec2(screen_width() / 2.0, hud_bottom() + 60.0 * s());
-    let w = measure(&h, FontKind::Title, 22.0).x + 36.0 * s();
-    let r = Rect::new(c.x - w * sc / 2.0, c.y - 22.0 * s() * sc, w * sc, 44.0 * s() * sc);
-    cel::bubble(r, None, ACCENT);
-    text(&h, c.x, c.y, 22.0 * sc, INK, FontKind::Title, Align::Center);
+    let a = ((2.2 - age) / 0.3).clamp(0.0, 1.0) as f32;
+    let c = vec2(screen_width() / 2.0, hud_bottom() + 52.0 * s());
+    let w = measure(&h, FontKind::Title, 17.0).x + 32.0 * s();
+    let r = Rect::new(c.x - w / 2.0, c.y - 17.0 * s(), w, 34.0 * s());
+    cel::round_rect(r, r.h / 2.0, alpha(PANEL, 0.92 * a));
+    cel::round_rect_lines(r, r.h / 2.0, 1.5 * s(), alpha(ACCENT, a));
+    text(&h, c.x, c.y + s(), 17.0, alpha(ACCENT, a), FontKind::Title, Align::Center);
 }
 
 pub fn chat(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
@@ -681,10 +700,12 @@ pub fn chat(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
     let top = hud_bottom() + 4.0 * s();
     let r = Rect::new(margin(), top, w - 2.0 * margin(), scrub_top() - top - 12.0 * s());
     inp.block(r);
-    cel::panel(r, PANEL);
+    // Opaque: the map and sheets must not show through the conversation.
+    cel::panel(r, alpha(PANEL, 1.0));
     inked("CHAT", r.x + 16.0 * s(), r.y + 22.0 * s(), 24.0, ACCENT, Align::Left);
     if close_x(inp, r) {
         g.chat_open = false;
+        art::sfx("menu_close");
         macroquad::miniquad::window::show_keyboard(false);
     }
     let field_h = 50.0 * s();

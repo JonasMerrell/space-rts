@@ -49,7 +49,7 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                 }
             }
             let mut info = info.unwrap();
-            info.players.insert(1, Player { id: 2, name: "Mara".into(), color: 1, faction: "VOID CORSAIRS".into(), online: true });
+            info.players.insert(1, Player { id: 2, name: "Mara".into(), color: 1, faction: "HIVE BROOD".into(), online: true });
             info.players[2].color = 2;
             ui.screen = Screen::Lobby(Lobby { info: Some(info), me: 1, faction: 0 });
         }
@@ -92,10 +92,14 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
 
 #[macroquad::main(conf)]
 async fn main() {
+    let shot = std::env::var("UI_SHOT").ok();
     let mut be = DemoBackend::new();
     let mut ui = Ui::new();
+    ui::art::load("assets").await;
+    if shot.is_some() {
+        ui::art::set_muted(true);
+    }
     let scene = std::env::var("UI_SCENE").unwrap_or_default();
-    let shot = std::env::var("UI_SHOT").ok();
     if !scene.is_empty() {
         setup(&scene, &mut ui, &mut be);
     }

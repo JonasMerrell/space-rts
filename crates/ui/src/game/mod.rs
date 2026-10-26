@@ -58,6 +58,10 @@ pub struct GameScreen {
     pub chat_field: crate::widgets::TextField,
     pub toasts: Vec<Toast>,
     pub hint: Option<(String, f64)>,
+    /// For sound cues: chat length and bodies we owned last frame.
+    seen_chat: usize,
+    owned: Vec<BodyId>,
+    last_selected: Option<Focus>,
     out: Vec<UiAction>,
 }
 
@@ -79,11 +83,18 @@ impl GameScreen {
             chat_field: crate::widgets::TextField::new(false),
             toasts: vec![],
             hint: None,
+            seen_chat: usize::MAX,
+            owned: vec![],
+            last_selected: None,
             out: vec![],
         }
     }
 
     pub fn push_notice(&mut self, n: Notice) {
+        crate::art::sfx(match n.kind {
+            NoticeKind::Battle | NoticeKind::Bad => "alert_enemy",
+            _ => "notification",
+        });
         self.toasts.push(Toast { notice: n, born: get_time() });
     }
 
@@ -99,9 +110,13 @@ impl GameScreen {
                 return;
             };
             if self.cam.is_none() {
-                self.cam = Some(Camera::fit(view));
+                // Start zoomed on the inner system; pinch out for the whole map.
+                let mut cam = Camera::fit(view);
+                cam.zoom *= 1.8;
+                self.cam = Some(cam);
             }
             let t = view.now + self.scrub;
+            self.sound_cues(view);
 
             // Overlays are drawn after the map but must win the input, so they register their
             // rects (Input::block) and the map only handles gestures that started elsewhere.
@@ -113,14 +128,15 @@ impl GameScreen {
             self.draw_mode_world(be_ref, view, &cam, t);
             map::draw_bodies(be_ref, view, &cam, t, self.selected);
             map::draw_ships(be_ref, view, &cam, t, self.selected);
+            map::draw_labels(be_ref, view, &cam, t);
             self.draw_mode_overlay(be_ref, view, &cam, t);
             if self.scrub > 1.0 {
                 panels::prediction_banner(self.scrub);
             }
 
             panels::hud(self, inp, view);
-            panels::scrubber(self, inp, view);
             panels::sheet(self, inp, be_ref, view);
+            panels::scrubber(self, inp, view);
             panels::toasts(self, inp, be_ref, view);
             panels::hint(self);
             if self.chat_open {
@@ -207,7 +223,8 @@ impl GameScreen {
         self.selected = Some(Focus::Ship(s));
         if view.ship(s).is_some_and(|sh| sh.owner == view.me) {
             self.mode = Mode::Target(s);
-            self.say("TAP A TARGET!");
+            crate::art::sfx("ui_click");
+            self.say("Tap a target");
         } else {
             self.mode = Mode::Idle;
         }
@@ -215,7 +232,7 @@ impl GameScreen {
 
     pub fn plan(&mut self, be: &dyn Backend, view: &GameView, ship: ShipId, target: BodyId, after: f64) {
         if view.ship(ship).is_some_and(|s| s.parked_at == Some(target) && !map::is_flying(s, view.now)) {
-            self.say("ALREADY THERE!");
+            self.say("Already there");
             return;
         }
         match be.plan_transfer(ship, target, after) {
@@ -223,7 +240,10 @@ impl GameScreen {
                 self.selected = Some(Focus::Ship(ship));
                 self.mode = Mode::Plan(plan);
             }
-            None => self.say("NO ROUTE! (fuel?)"),
+            None => {
+                crate::art::sfx("ui_error");
+                self.say("No route (check fuel)")
+            }
         }
     }
 
@@ -261,7 +281,7 @@ impl GameScreen {
         let preview = be.preview_nodes(ship, &nodes);
         self.selected = Some(Focus::Ship(ship));
         self.mode = Mode::Nodes(NodeEdit { ship, nodes, sel, preview, dirty: false, drag: None });
-        self.say("DRAG THE ARROWS!");
+        self.say("Drag the arrows to plan a burn");
     }
 
     fn draw_mode_world(&mut self, be: &dyn Backend, view: &GameView, cam: &Camera, t: f64) {
@@ -291,6 +311,27 @@ impl GameScreen {
             cam.center = p;
         }
         self.selected = Some(f);
+    }
+
+    fn sound_cues(&mut self, view: &GameView) {
+        use crate::art::sfx;
+        if self.seen_chat != usize::MAX && view.chat.len() > self.seen_chat && view.chat.last().is_some_and(|m| m.from != view.me) {
+            sfx("chat_message");
+        }
+        self.seen_chat = view.chat.len();
+        let owned: Vec<BodyId> = view.bodies.iter().filter(|b| b.owner == Some(view.me)).map(|b| b.id).collect();
+        if !self.owned.is_empty() && owned.iter().any(|b| !self.owned.contains(b)) {
+            sfx("capture");
+        }
+        self.owned = owned;
+        if self.selected != self.last_selected {
+            match (self.last_selected, self.selected) {
+                (None, Some(_)) => sfx("menu_open"),
+                (Some(_), None) => sfx("menu_close"),
+                _ => sfx("menu_select"),
+            }
+            self.last_selected = self.selected;
+        }
     }
 
     pub(crate) fn emit(&mut self, a: UiAction) {

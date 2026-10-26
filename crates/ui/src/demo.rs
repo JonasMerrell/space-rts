@@ -125,7 +125,7 @@ impl DemoBackend {
                 kep.push((id, k));
             }
             let soi = if parent.is_some() { a * (k.mu / MU).powf(0.4).max(0.04) } else { 0.0 };
-            bodies.push(Body { id, name: name.into(), kind, parent, radius, soi, owner, intel: None, orbit_path });
+            bodies.push(Body { id, name: name.into(), kind, parent, radius, soi, owner, intel: None, art: None, orbit_path });
         };
         add(0, "Helios", BodyKind::Star, None, 0.0, 0.0, 0.0, 0.0, 6.0, None, &mut kep);
         add(1, "Cinder", BodyKind::Planet, Some(0), 62.0, 0.12, 0.4, 2.4, 1.2, Some(2), &mut kep);
@@ -151,10 +151,10 @@ impl DemoBackend {
             };
         }
         let players = vec![
-            Player { id: 1, name: if self.user.is_empty() { "Jonas".into() } else { self.user.clone() }, color: 0, faction: "Solar Union".into(), online: true },
-            Player { id: 2, name: "Mara".into(), color: 1, faction: "Void Corsairs".into(), online: false },
-            Player { id: 3, name: "Ozzy".into(), color: 2, faction: "Iron Choir".into(), online: true },
-            Player { id: 4, name: "Bot (hard)".into(), color: 3, faction: "Free Miners".into(), online: true },
+            Player { id: 1, name: if self.user.is_empty() { "Jonas".into() } else { self.user.clone() }, color: 0, faction: "Vanguard Navy".into(), online: true },
+            Player { id: 2, name: "Mara".into(), color: 1, faction: "Hive Brood".into(), online: false },
+            Player { id: 3, name: "Ozzy".into(), color: 2, faction: "Prism Covenant".into(), online: true },
+            Player { id: 4, name: "Bot (hard)".into(), color: 3, faction: "Junker Clans".into(), online: true },
         ];
         let ship = |id, name: &str, class, owner, count, at: Option<BodyId>| Ship {
             id,
@@ -356,9 +356,9 @@ impl Backend for DemoBackend {
             }
             UiAction::Logout => self.events.push(BackendEvent::LoggedOut),
             UiAction::CreateGame { name, length_days, bots } => {
-                let mut players = vec![Player { id: 1, name: self.user.clone(), color: 0, faction: "SOLAR UNION".into(), online: true }];
+                let mut players = vec![Player { id: 1, name: self.user.clone(), color: 0, faction: "VANGUARD NAVY".into(), online: true }];
                 for (i, b) in bots.iter().enumerate() {
-                    players.push(Player { id: 10 + i as u32, name: format!("Bot ({b})"), color: i + 1, faction: "FREE MINERS".into(), online: true });
+                    players.push(Player { id: 10 + i as u32, name: format!("Bot ({b})"), color: i + 1, faction: "JUNKER CLANS".into(), online: true });
                 }
                 let info = LobbyInfo { code: "K7QX".into(), name, players, max_players: 4, host: 1, length_days, bots };
                 self.lobby = Some(info.clone());
@@ -373,8 +373,8 @@ impl Backend for DemoBackend {
                         code,
                         name: "Mara's Brawl".into(),
                         players: vec![
-                            Player { id: 2, name: "Mara".into(), color: 1, faction: "VOID CORSAIRS".into(), online: true },
-                            Player { id: 1, name: self.user.clone(), color: 0, faction: "SOLAR UNION".into(), online: true },
+                            Player { id: 2, name: "Mara".into(), color: 1, faction: "HIVE BROOD".into(), online: true },
+                            Player { id: 1, name: self.user.clone(), color: 0, faction: "VANGUARD NAVY".into(), online: true },
                         ],
                         max_players: 4,
                         host: 2,
@@ -392,7 +392,7 @@ impl Backend for DemoBackend {
             UiAction::AddBot { difficulty } => {
                 if let Some(l) = self.lobby.as_mut() {
                     let n = l.players.len();
-                    l.players.push(Player { id: 20 + n as u32, name: format!("Bot ({difficulty})"), color: n, faction: "IRON CHOIR".into(), online: true });
+                    l.players.push(Player { id: 20 + n as u32, name: format!("Bot ({difficulty})"), color: n, faction: "PRISM COVENANT".into(), online: true });
                     self.events.push(BackendEvent::Lobby(l.clone()));
                 }
             }

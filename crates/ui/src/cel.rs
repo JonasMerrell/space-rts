@@ -124,44 +124,59 @@ pub fn dashed_path(pts: &[Vec2], w: f32, dash: f32, color: Color) {
     }
 }
 
+fn round_rect_pts(r: Rect, rad: f32) -> Vec<Vec2> {
+    let rad = rad.min(r.w / 2.0).min(r.h / 2.0).max(0.0);
+    let n = ((rad / s()).ceil() as usize).clamp(2, 10);
+    let corners = [
+        (vec2(r.x + r.w - rad, r.y + r.h - rad), 0.0),
+        (vec2(r.x + rad, r.y + r.h - rad), PI * 0.5),
+        (vec2(r.x + rad, r.y + rad), PI),
+        (vec2(r.x + r.w - rad, r.y + rad), PI * 1.5),
+    ];
+    let mut pts = Vec::with_capacity(4 * (n + 1) + 1);
+    for (c, a0) in corners {
+        for i in 0..=n {
+            pts.push(c + Vec2::from_angle(a0 + PI * 0.5 * i as f32 / n as f32) * rad);
+        }
+    }
+    pts.push(pts[0]);
+    pts
+}
+
+/// Filled rounded rect as one convex fan, so translucent fills don't double up at the corners.
 pub fn round_rect(r: Rect, rad: f32, color: Color) {
-    let rad = rad.min(r.w / 2.0).min(r.h / 2.0);
-    draw_rectangle(r.x + rad, r.y, r.w - 2.0 * rad, r.h, color);
-    draw_rectangle(r.x, r.y + rad, r.w, r.h - 2.0 * rad, color);
-    for (x, y) in [(r.x + rad, r.y + rad), (r.x + r.w - rad, r.y + rad), (r.x + rad, r.y + r.h - rad), (r.x + r.w - rad, r.y + r.h - rad)] {
-        draw_circle(x, y, rad, color);
+    fan(r.center(), &round_rect_pts(r, rad), color);
+}
+
+/// Rounded-rect outline of thickness `w`, centred on the rect edge.
+pub fn round_rect_lines(r: Rect, rad: f32, w: f32, color: Color) {
+    let pts = round_rect_pts(r, rad);
+    // Thin quads per edge segment; tiny overlaps at joints are invisible at hairline widths.
+    for seg in pts.windows(2) {
+        draw_line(seg[0].x, seg[0].y, seg[1].x, seg[1].y, w, color);
     }
 }
 
-/// Comic panel: hard drop shadow, ink border, fill.
+/// UI panel: dark translucent glass with a hairline border.
 pub fn panel(r: Rect, fill: Color) {
-    let o = 3.0 * s();
-    let rad = 10.0 * s();
-    round_rect(Rect::new(r.x + o * 1.6, r.y + o * 1.6, r.w, r.h), rad, Color::new(0.0, 0.0, 0.0, 0.55));
-    round_rect(Rect::new(r.x - o, r.y - o, r.w + 2.0 * o, r.h + 2.0 * o), rad + o, INK);
+    let b = s().max(1.0);
+    let rad = 8.0 * s();
     round_rect(r, rad, fill);
+    round_rect_lines(r, rad, b, BORDER);
 }
 
-/// White speech bubble with a tail pointing at `tail` (if any).
+/// Callout box (light tooltip) with a small pointer toward `tail`.
 pub fn bubble(r: Rect, tail: Option<Vec2>, fill: Color) {
-    let o = 3.0 * s();
     let c = r.center();
-    let tail_tri = tail.map(|t| {
+    if let Some(t) = tail {
         let d = (t - c).normalize_or_zero();
-        let n = d.perp() * r.h.min(r.w) * 0.18;
-        // Base of the tail sits on the bubble edge nearest the target.
-        let edge = vec2(c.x + d.x * r.w * 0.35, c.y + d.y * r.h * 0.35);
-        (t, edge + n, edge - n)
-    });
-    if let Some((t, a, b)) = tail_tri {
-        let g = |p: Vec2| p + (p - (a + b) / 2.0).normalize_or_zero() * o * 1.5;
-        draw_triangle(t + (t - c).normalize_or_zero() * o * 1.5, g(a), g(b), INK);
+        let n = d.perp() * 7.0 * s();
+        let edge = vec2(c.x + d.x * r.w * 0.45, c.y + d.y * r.h * 0.45);
+        let tip = edge + (t - edge).clamp_length_max(14.0 * s());
+        draw_triangle(tip, edge + n, edge - n, fill);
     }
-    round_rect(Rect::new(r.x - o, r.y - o, r.w + 2.0 * o, r.h + 2.0 * o), 14.0 * s() + o, INK);
-    round_rect(r, 14.0 * s(), fill);
-    if let Some((t, a, b)) = tail_tri {
-        draw_triangle(t, a, b, fill);
-    }
+    round_rect(Rect::new(r.x + 1.0, r.y + 2.0 * s(), r.w, r.h), 8.0 * s(), Color::new(0.0, 0.0, 0.0, 0.35));
+    round_rect(r, 8.0 * s(), fill);
 }
 
 /// Spiky "POW!" burst.
@@ -230,8 +245,8 @@ fn bake_backdrop(w: u32, h: u32) -> Texture2D {
             return;
         }
         let p = &mut px[(y as u32 * w + x as u32) as usize];
-        for c in 0..3 {
-            p[c] = (p[c] as f32 + (255.0 - p[c] as f32) * a) as u8;
+        for c in p.iter_mut().take(3) {
+            *c = (*c as f32 + (255.0 - *c as f32) * a) as u8;
         }
     };
     let mut seed: u64 = 2;

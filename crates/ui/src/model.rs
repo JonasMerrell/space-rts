@@ -27,6 +27,8 @@ pub struct Body {
     pub owner: Option<PlayerId>,
     /// What our telescopes know about the contents (None = never scanned).
     pub intel: Option<Intel>,
+    /// Art key from assets/manifest.json `bodies` (e.g. "planet_ocean"); None = pick by id.
+    pub art: Option<String>,
     /// Points of the orbit around the parent, relative to the parent (closed loop), for drawing.
     pub orbit_path: Vec<[f64; 2]>,
 }

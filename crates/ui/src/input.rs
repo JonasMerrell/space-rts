@@ -38,6 +38,13 @@ pub struct Input {
     pub chars: Vec<char>,
     pub backspace: bool,
     pub enter: bool,
+
+    /// Scripted input for tests: per-frame pointer states (None = up) and queued text.
+    script: std::collections::VecDeque<Option<(Vec2, f64)>>,
+    script_text: String,
+    script_enter: bool,
+    /// Frozen clock for scripted long-presses (seconds added to get_time()).
+    script_clock: f64,
 }
 
 impl Input {
@@ -57,8 +64,14 @@ impl Input {
         self.released = None;
         self.held = None;
 
-        let t = touches();
-        if !t.is_empty() {
+        let scripted = self.script.pop_front();
+        let t = if scripted.is_some() { vec![] } else { touches() };
+        if let Some(p) = scripted {
+            if let Some((p, jump)) = p {
+                self.pointers = vec![(0, p)];
+                self.script_clock += jump;
+            }
+        } else if !t.is_empty() {
             self.pointers = t
                 .iter()
                 .filter(|t| !matches!(t.phase, TouchPhase::Ended | TouchPhase::Cancelled))
@@ -72,7 +85,7 @@ impl Input {
             self.pointers = vec![(0, mouse_position().into())];
         }
 
-        let now = get_time();
+        let now = get_time() + self.script_clock;
         let was_down = !self.prev_pointers.is_empty();
         let is_down = !self.pointers.is_empty();
 
@@ -139,8 +152,39 @@ impl Input {
                 self.chars.push(c);
             }
         }
+        self.chars.extend(self.script_text.drain(..));
         self.backspace = is_key_pressed(KeyCode::Backspace);
-        self.enter = is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter);
+        self.enter = is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter) || std::mem::take(&mut self.script_enter);
+    }
+
+    /// Test hook: a tap at `p` (down next frame, up the frame after).
+    pub fn inject_tap(&mut self, p: Vec2) {
+        self.script.extend([Some((p, 0.0)), None]);
+    }
+
+    /// Test hook: hold at `p` long enough to fire a long-press, then release.
+    pub fn inject_long_press(&mut self, p: Vec2) {
+        self.script.extend([Some((p, 0.0)), Some((p, 1.0)), Some((p, 0.0)), None]);
+    }
+
+    /// Test hook: drag from `a` to `b` over `steps` frames.
+    pub fn inject_drag(&mut self, a: Vec2, b: Vec2, steps: usize) {
+        let n = steps.max(2);
+        for i in 0..=n {
+            self.script.push_back(Some((a + (b - a) * (i as f32 / n as f32), 0.0)));
+        }
+        self.script.push_back(None);
+    }
+
+    /// Test hook: type text into the focused field (and optionally press Enter).
+    pub fn inject_text(&mut self, s: &str, enter: bool) {
+        self.script_text.push_str(s);
+        self.script_enter |= enter;
+    }
+
+    /// True while scripted input is still queued.
+    pub fn scripted(&self) -> bool {
+        !self.script.is_empty()
     }
 
     /// Declare an on-screen widget rect; gestures starting there next frame belong to the UI.
@@ -159,12 +203,7 @@ impl Input {
 
     /// A tap landed in `r`.
     pub fn tapped(&self, r: Rect) -> bool {
-        self.tap.is_some_and(|p| r.contains(p)) && self.start_in(r)
-    }
-
-    fn start_in(&self, _r: Rect) -> bool {
-        // Taps are only reported for gestures that didn't move, so start ≈ end.
-        true
+        self.tap.is_some_and(|p| r.contains(p))
     }
 
     /// The finger is currently down inside `r` (for pressed-button visuals).

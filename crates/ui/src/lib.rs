@@ -1,6 +1,7 @@
 //! Space RTS client UI (style L, cel-shaded comic). The client crate owns the window/main loop
 //! and calls `Ui::frame` once per frame with its `Backend`.
 
+pub mod art;
 pub mod backend;
 pub mod cel;
 pub mod demo;
@@ -53,6 +54,7 @@ impl Ui {
         self.input.begin_frame();
         clear_background(theme::BG);
         cel::backdrop();
+        art::music(Some(if matches!(self.screen, Screen::Game(_)) { "orbit" } else { "title" }));
         match &mut self.screen {
             Screen::Login(l) => l.draw(&mut self.input, be),
             Screen::Menu(m) => m.draw(&mut self.input, be),
@@ -87,6 +89,9 @@ impl Ui {
             }
             BackendEvent::Lobby(info) => {
                 if let Screen::Lobby(l) = &mut self.screen {
+                    if l.info.as_ref().is_some_and(|old| info.players.len() > old.players.len()) {
+                        art::sfx("lobby_join");
+                    }
                     l.info = Some(info);
                 } else {
                     let me = be.view().map(|v| v.me).unwrap_or(self.me);

@@ -1,6 +1,7 @@
 //! System map: camera, orbits, bodies, ships, trajectories and hit-testing.
 
 use crate::backend::Backend;
+use crate::art;
 use crate::cel;
 use crate::model::*;
 use crate::theme::*;
@@ -53,7 +54,7 @@ impl Camera {
 /// Minimum on-screen radius per body kind, in dp.
 fn min_radius(kind: BodyKind) -> f32 {
     match kind {
-        BodyKind::Star => 26.0,
+        BodyKind::Star => 18.0,
         BodyKind::Planet => 13.0,
         BodyKind::Moon => 7.0,
         BodyKind::Asteroid => 5.0,
@@ -134,14 +135,15 @@ pub fn draw_bodies(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64, sele
             let pulse = 1.0 + 0.08 * (time * 5.0).sin();
             draw_circle_lines(c.x, c.y, (r + 12.0 * s()) * pulse, 4.0 * s(), ACCENT);
         }
-        match b.kind {
-            BodyKind::Star => cel::star(c, r, time),
-            BodyKind::Asteroid => cel::rock(c, r, b.id),
-            _ => {
-                let (l, d) = team(view.color_of(b.owner));
-                cel::body(c, r, l, d);
-            }
-        }
+        draw_body(b, c, r, cam.to_screen([0.0, 0.0]), view.color_of(b.owner), time);
+    }
+}
+
+/// Names and intel tags, drawn after ships so tokens don't hide them.
+pub fn draw_labels(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64) {
+    for b in &view.bodies {
+        let c = cam.to_screen(be.body_pos(b.id, t));
+        let r = body_radius_px(b, cam);
         let show_label = match b.kind {
             BodyKind::Star => false,
             BodyKind::Planet => true,
@@ -150,7 +152,11 @@ pub fn draw_bodies(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64, sele
         };
         if show_label {
             let size = if b.kind == BodyKind::Planet { 18.0 } else { 14.0 };
-            inked(&b.name.to_uppercase(), c.x, c.y - r - 14.0 * s(), size, PAPER, Align::Center);
+            // Keep names on screen when the body sits at the edge.
+            let name = b.name.to_uppercase();
+            let half = measure(&name, FontKind::Title, size).x / 2.0 + 6.0 * s();
+            let lx = c.x.clamp(half, (screen_width() - half).max(half));
+            inked(&name, lx, c.y - r - 14.0 * s(), size, PAPER, Align::Center);
             if let Some(i) = &b.intel {
                 if b.kind == BodyKind::Planet {
                     text(&format!("PWR {:.0}", i.power), c.x, c.y + r + 14.0 * s(), 13.0, MUTED, FontKind::Title, Align::Center);
@@ -207,24 +213,25 @@ pub fn draw_ships(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64, selec
     for sh in &view.ships {
         let Some((p, dir)) = ship_screen(be, view, cam, sh, t) else { continue };
         let (l, _) = team(view.color_of(Some(sh.owner)));
+        // Manifest `size` per class, so the RPS classes read differently at a glance.
         let size = match sh.class {
-            ShipClass::Interceptor => 9.0,
-            ShipClass::Gunship => 11.0,
-            ShipClass::Bomber => 12.0,
-            ShipClass::Tanker => 10.0,
+            ShipClass::Interceptor => 8.0,
+            ShipClass::Gunship => 10.5,
+            ShipClass::Bomber => 11.5,
+            ShipClass::Tanker => 12.0,
         } * s();
         if selected == Some(Focus::Ship(sh.id)) {
             let pulse = 1.0 + 0.1 * (time * 6.0).sin();
             draw_circle_lines(p.x, p.y, (size + 9.0 * s()) * pulse, 3.5 * s(), ACCENT);
         }
-        let fill = if sh.owner == view.me { PAPER } else { l };
-        cel::ship(p, dir, size, fill);
-        if sh.class == ShipClass::Tanker {
-            draw_circle(p.x, p.y, 2.5 * s(), INK);
-        }
-        if sh.owner == view.me {
-            // Team colour stripe on our own (white) ships.
-            draw_circle(p.x - dir.normalize_or_zero().x * size * 0.2, p.y - dir.normalize_or_zero().y * size * 0.2, 2.6 * s(), l);
+        let player = view.player(sh.owner);
+        let skin = player.map(|p| art::skin_of(&p.faction)).unwrap_or("vanguard");
+        if let Some(t) = art::ship_tex(sh.class, skin, player.map(|p| p.color)) {
+            let px = size * 3.4;
+            art::draw_centered(&t, p, vec2(px, px), dir.y.atan2(dir.x), WHITE);
+        } else {
+            let fill = if sh.owner == view.me { PAPER } else { l };
+            cel::ship(p, dir, size, fill);
         }
         if sh.count > 1 {
             let b = p + vec2(size, -size);
@@ -273,4 +280,44 @@ pub fn nearest_on(points: &[(f64, [f64; 2])], cam: &Camera, p: Vec2, max_px: f32
         }
     }
     best.map(|b| b.1)
+}
+
+/// One body: sprite with the star-facing shadow overlay (vector fallback), plus an inked team
+/// ring when someone owns it.
+pub fn draw_body(b: &Body, c: Vec2, r: f32, star: Vec2, owner_color: Option<usize>, time: f32) {
+    let (key, ratio) = art::body_art(b);
+    match art::tex(&key) {
+        Some(t) => {
+            if b.kind == BodyKind::Star {
+                if let Some(g) = art::tex("sprites/bodies/star_glow.png") {
+                    let gs = r * 6.0 * (1.0 + 0.03 * (time * 1.7).sin());
+                    art::draw_centered(&g, c, vec2(gs, gs), 0.0, Color::new(1.0, 0.85, 0.4, 0.55));
+                }
+            }
+            let size = r / ratio;
+            let rot = if b.kind == BodyKind::Star { time * 0.03 } else { 0.0 };
+            art::draw_centered(&t, c, vec2(size, size), rot, WHITE);
+            if matches!(b.kind, BodyKind::Planet | BodyKind::Moon) {
+                if let Some(sh) = art::tex("sprites/bodies/shadow_overlay.png") {
+                    let d = c - star;
+                    let size = r / (112.0 / 256.0);
+                    art::draw_centered(&sh, c, vec2(size, size), d.y.atan2(d.x), WHITE);
+                }
+            }
+        }
+        None => match b.kind {
+            BodyKind::Star => cel::star(c, r, time),
+            BodyKind::Asteroid => cel::rock(c, r, b.id),
+            _ => {
+                let (l, d) = team(owner_color);
+                cel::body(c, r, l, d);
+            }
+        },
+    }
+    if let (Some(col), BodyKind::Planet | BodyKind::Moon | BodyKind::Asteroid) = (owner_color, b.kind) {
+        let (l, _) = team(Some(col));
+        let rr = r + 6.0 * s();
+        draw_circle_lines(c.x, c.y, rr, 6.0 * s(), INK);
+        draw_circle_lines(c.x, c.y, rr, 3.0 * s(), l);
+    }
 }
