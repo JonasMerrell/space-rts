@@ -326,7 +326,7 @@ pub fn stations_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, vie
             art::sfx("menu_select");
         }
     }
-    let foot = info.unwrap_or_else(|| if sv.present { "Tap a station for details. More construction ships here build faster.".into() } else { "Send a construction ship here to build stations.".into() });
+    let foot = info.unwrap_or_else(|| if sv.present { "Tap a station for details. More construction ships here build faster.".into() } else { sv.options.iter().find_map(|o| o.blocker.clone().filter(|b| b.contains("construction ship"))).unwrap_or_else(|| "Send a construction ship here to build stations.".into()) });
     for (k, line) in wrap(&foot, FontKind::Body, 12.0, r.w - 2.0 * pad).into_iter().take(2).enumerate() {
         text(&line, r.x + pad, r.y + r.h - 32.0 * s() + k as f32 * 16.0 * s(), 12.0, MUTED, FontKind::Body, Align::Left);
     }

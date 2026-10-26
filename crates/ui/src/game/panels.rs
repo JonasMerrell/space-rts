@@ -791,7 +791,8 @@ fn target_bar(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship) {
     let bw = (r.w - (n + 1) as f32 * 10.0 * s()) / n as f32;
     let b = |i: usize| Rect::new(r.x + 10.0 * s() + i as f32 * (bw + 10.0 * s()), by, bw, 42.0 * s());
     // Construction ships in orbit build stations instead of plotting burns.
-    let site = sh.parked_at.filter(|_| sh.class == ShipClass::Constructor && !map::is_flying(sh, view.now));
+    let builds = sh.class == ShipClass::Constructor || sh.members.iter().any(|m| m.class == ShipClass::Constructor);
+    let site = sh.parked_at.filter(|_| builds && !map::is_flying(sh, view.now));
     if let Some(body) = site {
         if widgets::button(inp, b(0), "BUILD STATION", Style::Primary) {
             g.mode = Mode::Idle;
