@@ -150,11 +150,13 @@ fn impact_of(sys: &System, ast: BodyId, tr: &Trajectory) -> Option<Impact> {
     Some(Impact { body, t, v, energy, severity: energy / strength(sys, body) })
 }
 
-/// Fuel the player can spend on a push of `ast`: the asteroid's stock (if theirs) + their tankers there.
+/// Fuel the player can spend on a push of `ast`: the asteroid's stock (if theirs), their fuel
+/// depots there, and their tankers parked there.
 pub fn fuel_available(g: &Game, p: PlayerId, ast: BodyId) -> f64 {
     let bs = &g.bodies[ast.0 as usize];
     let stock = if bs.owner == Some(p) { bs.fuel } else { 0.0 };
-    stock + g.ships.iter().filter(|s| s.owner == p && s.class == ShipClass::Tanker && s.parked_at() == Some(ast)).map(|s| s.fuel).sum::<f64>()
+    let depots: f64 = g.stations_at(ast).filter(|s| s.owner == p).map(|s| s.fuel).sum();
+    stock + depots + g.ships.iter().filter(|s| s.owner == p && s.class == ShipClass::Tanker && s.parked_at() == Some(ast)).map(|s| s.fuel).sum::<f64>()
 }
 
 /// Earliest time a burn of `burn_s` seconds can be centred on.
@@ -213,10 +215,9 @@ pub fn plan_impact(g: &Game, ast: BodyId, target: BodyId, now: f64) -> Option<Im
 }
 
 impl Game {
-    /// Whether `p` may bolt drives onto asteroids. The research thread gates this on
-    /// `Tech::AsteroidDrives`.
-    pub fn can_drive_asteroids(&self, _p: PlayerId) -> bool {
-        true
+    /// Whether `p` may bolt drives onto asteroids (`Tech::AsteroidDrives`).
+    pub fn can_drive_asteroids(&self, p: PlayerId) -> bool {
+        self.has_tech(p, crate::tech::Tech::AsteroidDrives)
     }
 
     /// The planned pushes player `p` may know about: their own, and drives on asteroids their
@@ -286,6 +287,12 @@ impl Game {
         if self.bodies[ast.0 as usize].owner == Some(d.owner) {
             let x = owed.min(self.bodies[ast.0 as usize].fuel);
             self.bodies[ast.0 as usize].fuel -= x;
+            owed -= x;
+        }
+        let t = self.t;
+        for s in self.stations.iter_mut().filter(|s| s.owner == d.owner && s.body == ast && s.active(t)) {
+            let x = owed.min(s.fuel);
+            s.fuel -= x;
             owed -= x;
         }
         for s in self.ships.iter_mut().filter(|s| s.owner == d.owner && s.class == ShipClass::Tanker && s.parked_at() == Some(ast)) {
@@ -401,13 +408,23 @@ impl Game {
                     bs.levels[u.index()] = l - (l as f64 * s).round() as u8;
                 }
                 for sh in self.ships.iter_mut().filter(|sh| sh.parked_at() == Some(target)) {
-                    sh.hp -= s * sh.class.stats().hp;
+                    sh.hp -= s * sh.stats().hp;
+                }
+                for st in self.stations.iter_mut().filter(|st| st.body == target) {
+                    st.hp -= s * st.kind.max_hp();
                 }
             }
         }
         let lost: Vec<(PlayerId, String, BodyId)> =
             self.ships.iter().filter_map(|sh| sh.parked_at().filter(|b| doomed.contains(b) || sh.hp <= 0.0).map(|b| (sh.owner, sh.name.clone(), b))).collect();
         self.ships.retain(|sh| !sh.parked_at().is_some_and(|b| doomed.contains(&b)) && sh.hp > 0.0);
+        let dead: Vec<(PlayerId, String, BodyId)> =
+            self.stations.iter().filter(|st| doomed.contains(&st.body) || st.hp <= 0.0).map(|st| (st.owner, st.kind.label().to_string(), st.body)).collect();
+        self.stations.retain(|st| !doomed.contains(&st.body) && st.hp > 0.0);
+        for (o, label, b) in dead {
+            let bn = self.system.body(b).name.clone();
+            self.event(Some(o), EventKind::Battle, "Station destroyed", &format!("{label} at {bn} was destroyed by the impact"), Some(b), None);
+        }
         for (o, n, b) in lost {
             let bn = self.system.body(b).name.clone();
             self.event(Some(o), EventKind::Battle, "Ship destroyed", &format!("{n} was destroyed by the impact at {bn}"), Some(b), None);
@@ -472,6 +489,8 @@ mod tests {
         g.players[0].energy = 1e4;
         let plan = plan_impact(&g, ast, home1, g.t).expect("no impact course found");
         assert_eq!(plan.impact.unwrap().body, home1);
+        assert!(g.apply(0, Command::AimAsteroid { body: ast, target: home1 }).is_err(), "needs the tech");
+        g.players[0].techs.push(crate::tech::Tech::AsteroidDrives);
         g.apply(0, Command::AimAsteroid { body: ast, target: home1 }).unwrap();
         let t_hit = plan.impact.unwrap().t;
         g.advance_to(t_hit + 120.0);

@@ -220,14 +220,15 @@ mod tests {
     #[test]
     fn shipyard_station_builds_at_a_body_you_dont_own() {
         let mut g = game();
-        let away = g.players[1].home.unwrap();
+        // a neutral body: at an enemy home the defenses would shoot the station down
+        let away = g.system.bodies.iter().find(|b| b.kind == crate::BodyKind::Moon && g.bodies[b.id.0 as usize].owner.is_none()).unwrap().id;
         g.stations.push(Station { id: StationId(0), owner: 0, kind: StationKind::Shipyard, body: away, hp: 300.0, fuel: 0.0, done_t: 0.0 });
         assert_eq!(g.yard_level(0, away), STATION_YARD_LEVEL);
         g.apply(0, Command::Build { body: away, class: ShipClass::Dreadnought }).unwrap();
-        g.advance_to(4.0 * 3600.0);
-        assert!(g.events.iter().any(|e| e.to == Some(0) && e.title == "Ship built" && e.body.starts_with("Dreadnought")));
         // can't upgrade a body you don't own through a station
         assert!(g.apply(0, Command::Upgrade { body: away, upgrade: Upgrade::Mining }).is_err());
+        g.advance_to(4.0 * 3600.0);
+        assert!(g.events.iter().any(|e| e.to == Some(0) && e.title == "Ship built" && e.body.starts_with("Dreadnought")));
     }
 
     #[test]

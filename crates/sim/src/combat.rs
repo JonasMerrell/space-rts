@@ -220,6 +220,37 @@ mod tests {
     }
 
     #[test]
+    fn defense_stations_shoot_and_get_shot() {
+        use crate::game::{Settings, Ship, StandingOrder};
+        use crate::station::{Station, StationId, StationKind};
+        use crate::system::SystemSize;
+        let settings = Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0 };
+        let mut g = Game::new("T".into(), settings, 3, "a");
+        g.add_player("b", None).unwrap();
+        g.start();
+        let x = g.system.bodies.iter().find(|b| b.kind == crate::BodyKind::Moon && g.bodies[b.id.0 as usize].owner.is_none()).unwrap().id;
+        g.ships.clear();
+        g.stations.push(Station { id: StationId(0), owner: 0, kind: StationKind::Defense, body: x, hp: StationKind::Defense.max_hp(), fuel: 0.0, done_t: 0.0 });
+        let st = ShipClass::Bomber.stats();
+        g.ships.push(Ship {
+            id: crate::game::ShipId(99),
+            owner: 1,
+            class: ShipClass::Bomber,
+            name: "b".into(),
+            hp: st.hp,
+            fuel: 0.0,
+            order: StandingOrder::Hold,
+            route: vec![],
+            tech: Default::default(),
+            state: ShipState::Parked { body: x, departure: None },
+        });
+        g.advance_to(g.t + 1800.0);
+        let ship_hp = g.ships.first().map(|s| s.hp).unwrap_or(0.0);
+        assert!(ship_hp < st.hp, "platform didn't fire");
+        assert!(g.stations.first().map(|s| s.hp).unwrap_or(0.0) < StationKind::Defense.max_hp(), "bomber didn't fire back");
+    }
+
+    #[test]
     fn resolve_is_order_independent() {
         let cs = vec![
             ship(1, 0, ShipClass::Bomber, V2::ZERO, V2::ZERO),
@@ -251,13 +282,14 @@ const SUBSTEPS: usize = 4;
 enum Who {
     Ship(usize),
     Defense(BodyId),
+    Station(usize),
 }
 
 impl Game {
     /// Research multipliers for combat: (kinetic damage, energy damage, accuracy).
-    /// The research thread wires this to `Game::mods`.
-    pub fn combat_mods(&self, _p: PlayerId) -> (f64, f64, f64) {
-        (1.0, 1.0, 1.0)
+    pub fn combat_mods(&self, p: PlayerId) -> (f64, f64, f64) {
+        let m = self.mods(p);
+        (m.kinetic_dmg, m.energy_dmg, m.accuracy)
     }
 
     /// "Under attack" / "Battle" notifications, once per battle per body: a battle is on while
@@ -346,7 +378,7 @@ impl Game {
                 owner: o,
                 class: None,
                 weapon: Weapon::Energy,
-                attack: bs.def_attack(),
+                attack: self.def_attack(body),
                 hp: bs.def_hp,
                 pos: sys.pos(body, t),
                 vel: sys.vel(body, t),
@@ -357,7 +389,29 @@ impl Game {
             };
             all.push((Who::Defense(body), Some(body), c(t0), c(t1)));
         }
-        // TODO(research): active Defense stations at body b join here as Who::Station.
+        // stations in orbit are targets; defense platforms shoot back
+        for (si, st) in self.stations.iter().enumerate() {
+            if !st.active(t1) {
+                continue;
+            }
+            let (dm, am) = modf(st.owner, Weapon::Energy);
+            let armed = st.kind.attack() > 0.0;
+            let c = |t| Combatant {
+                key: 2 << 40 | st.id.0 as u64,
+                owner: st.owner,
+                class: None,
+                weapon: if armed { Weapon::Energy } else { Weapon::None },
+                attack: st.kind.attack(),
+                hp: st.hp,
+                pos: sys.pos(st.body, t),
+                vel: sys.vel(st.body, t),
+                size: 2.0,
+                evade: 0.0,
+                dmg_mult: dm,
+                acc_mult: am,
+            };
+            all.push((Who::Station(si), Some(st.body), c(t0), c(t1)));
+        }
 
         // who can possibly engage whom this tick (closest approach of linear relative motion)
         let n = all.len();
@@ -426,6 +480,7 @@ impl Game {
                     let bs = &mut self.bodies[b.0 as usize];
                     bs.def_hp = (bs.def_hp - dmg[i]).max(0.0);
                 }
+                Who::Station(si) => self.stations[si].hp -= dmg[i],
             }
         }
         let mut lost: Vec<(Ship, Option<BodyId>)> = vec![];
@@ -442,6 +497,13 @@ impl Game {
             }
         }
         self.ships.retain(|s| s.hp > 0.0);
+        let dead: Vec<(PlayerId, String, BodyId)> =
+            self.stations.iter().filter(|s| s.hp <= 0.0).map(|s| (s.owner, s.kind.label().to_string(), s.body)).collect();
+        self.stations.retain(|s| s.hp > 0.0);
+        for (o, label, b) in dead {
+            let bn = self.system.body(b).name.clone();
+            self.event(Some(o), EventKind::Battle, "Station destroyed", &format!("{label} at {bn} was destroyed"), Some(b), None);
+        }
         for (s, near) in lost {
             let place = near.map(|b| format!("at {}", self.system.body(b).name)).unwrap_or_else(|| "in deep space".into());
             self.event(Some(s.owner), EventKind::Battle, "Ship destroyed", &format!("{} was destroyed {place}", s.name), near, None);

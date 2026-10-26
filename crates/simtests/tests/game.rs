@@ -517,6 +517,8 @@ fn asteroid_impact_energy_scales_with_mass_and_velocity_squared() {
     g.bodies[ast.0 as usize].fuel = plan.fuel + 1.0;
     g.players[0].matter = 1e5;
     g.players[0].energy = 1e5;
+    assert!(g.apply(0, Command::AimAsteroid { body: ast, target: home }).is_err(), "needs Asteroid Drives research");
+    g.players[0].techs.push(sim::tech::Tech::AsteroidDrives);
     g.apply(0, Command::AimAsteroid { body: ast, target: home }).unwrap();
     assert!(g.apply(0, Command::AimAsteroid { body: ast, target: home }).is_err(), "one drive at a time");
     let before = g.ships.iter().filter(|s| s.parked_at() == Some(home)).count();
