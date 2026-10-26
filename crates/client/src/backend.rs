@@ -88,6 +88,9 @@ impl ClientBackend {
         match msg {
             ServerMsg::Welcome { user } => {
                 self.logged_in = true;
+                if let Some((u, p)) = &self.creds {
+                    crate::notify::save(&self.server, u, p);
+                }
                 self.events.push(BackendEvent::LoggedIn { user });
                 // re-open the game we were looking at after a reconnect
                 if let Some(code) = self.code() {
@@ -418,6 +421,7 @@ impl Backend for ClientBackend {
                 self.connect(register);
             }
             UiAction::Logout => {
+                crate::notify::clear();
                 self.net = None;
                 self.creds = None;
                 self.logged_in = false;

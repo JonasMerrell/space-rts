@@ -277,6 +277,9 @@ pub struct BodyState {
     /// remaining hit points of the planetary defenses
     pub def_hp: f64,
     pub queue: Vec<Job>,
+    /// a battle was going on here last tick (so "Under attack" fires once per battle)
+    #[serde(default)]
+    pub in_combat: bool,
 }
 
 impl BodyState {
@@ -996,7 +999,19 @@ impl Game {
             let body = BodyId(bi as u32);
             let powers = self.power_at(body);
             if powers.iter().filter(|p| p.1 > 0.0).count() < 2 {
+                self.bodies[bi].in_combat = false;
                 continue;
+            }
+            if !self.bodies[bi].in_combat {
+                self.bodies[bi].in_combat = true;
+                let bname = self.system.body(body).name.clone();
+                let owner = self.bodies[bi].owner;
+                if let Some(o) = owner {
+                    self.event(Some(o), EventKind::Battle, "Under attack", &format!("Enemy ships are attacking {bname}"), Some(body), None);
+                }
+                for (p, _) in powers.iter().filter(|p| p.1 > 0.0 && Some(p.0) != owner) {
+                    self.event(Some(*p), EventKind::Battle, "Battle", &format!("Your ships are fighting at {bname}"), Some(body), None);
+                }
             }
             let here: Vec<usize> = (0..self.ships.len()).filter(|&i| self.ships[i].parked_at() == Some(body)).collect();
             let owner = self.bodies[bi].owner;
@@ -1243,6 +1258,20 @@ mod tests {
             println!("bot {p}: {owned} bodies, {} ships", g.ships.iter().filter(|s| s.owner == p).count());
             assert!(owned >= 2, "bot {p} never expanded");
         }
+    }
+
+    #[test]
+    fn under_attack_fires_once_per_battle() {
+        let mut g = game();
+        let home1 = g.players[1].home.unwrap();
+        for _ in 0..3 {
+            g.spawn(0, ShipClass::Bomber, home1);
+        }
+        g.advance_to(4.0 * 3600.0);
+        let alerts = |g: &Game, p: PlayerId, title: &str| g.events_for(p).filter(|e| e.title == title && e.body_ref == Some(home1)).count();
+        assert_eq!(alerts(&g, 1, "Under attack"), 1);
+        assert_eq!(alerts(&g, 0, "Battle"), 1);
+        assert_eq!(alerts(&g, 0, "Under attack"), 0);
     }
 
     #[test]

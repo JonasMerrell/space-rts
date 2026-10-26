@@ -284,7 +284,10 @@ impl Server {
                         }
                     }
                 }
-                reply(self, ServerMsg::Events(out));
+                // a phone that was offline for days only needs the latest news
+                out.sort_by(|a, b| a.1.total_cmp(&b.1));
+                let skip = out.len().saturating_sub(50);
+                reply(self, ServerMsg::Events(out.split_off(skip)));
             }
         }
     }
