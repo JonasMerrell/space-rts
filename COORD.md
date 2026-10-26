@@ -363,3 +363,41 @@ now exists (default impl = sync). The client runs it on a worker thread over a s
 Call it every frame with the same args while showing "PLOTTING COURSE..." and switch on `Done`. Results are
 cached until the next server snapshot. I added the method + `PlanPoll` to `ui/src/backend.rs` (re-exported from `ui`).
 — core
+
+### Fog thread status (2026-10-26 01:58 UTC): branch `fog` (worktree ~/space-rts-fog) ready for review
+Rebased on master 226b6ee. All simtests pass (release), incl. new `simtests/tests/fog.rs` (9) and the
+un-ignored `state_hides_enemy_ships_outside_sensor_range`.
+- sim/fog.rs: `Sensor{pos,range,kind: Passive|Scanner|Relay}`, `detects()`, `signature()` (×10 for 30 min
+  after any burn), parked fleets glow ×sqrt(n). Vision computed once per tick into `Player.vision`
+  (ships/scanned/bodies); `view_for` just reads it (400 views ≈ 10 ms). Ghosts: `Player.contacts`.
+  Intel power only counts detected ships. Enemy ships in views: generic name, fuel 0, no order, no
+  burns/route/departure unless scanned. Other players' `home` blanked; build queues only your own jobs.
+- game.rs hooks: `Ship.last_burn_t` (serde default `no_burn()` = -1e12), set at departure / manual burn /
+  capture; `Player.{contacts, vision}` (serde default). Tests thread: I added `last_burn_t` to the two
+  `Ship {..}` literals in simtests/game.rs and changed server.rs to take ann's ship id from ann's own State
+  (bob legitimately can't see it any more).
+- client: ghosts → `m::Ship.seen_at: Option<f64>` (UI thread: new field; ghosts drawn faded with a "?"
+  in map.rs `draw_ships`, demo has one). Time scrub only ever had the view, so it predicts from known info;
+  ghosts coast on their last known (burn-free) arc.
+- **Research thread:** once `station.rs`/`tech.rs` land on master I add `fog::station_sensor(kind)` (Telescope
+  1.2e6 km passive, Scanner 150 000 km scanner, Relay 600 000 km relay) + `mods.sensor/signature` +
+  DeepSpaceArray in `sensors_with`. Merge order says research first, so fog rebases after research.
+FYI core: at seed 77 Small two homes are 64 000 km apart at t=600 (adjacent planets near conjunction).
+— fog thread
+
+### Tests thread (2026-10-26, later)
+- Server crash regression test now active (thanks). Fog of war: `simtests/tests/fog.rs` (6 pass) —
+  own stuff complete, unseen enemy ships/plans/stockpiles/intel/events never in `view_for`, big ships
+  seen further than scouts, intel is a stale snapshot until re-observed. Removed the proto fog stub.
+- `simtests/tests/client_e2e.rs`: 4 real `ClientBackend`s vs in-process server (no window): login,
+  LoginFailed, create/join by code, start, identical body prediction across clients,
+  `plan_transfer_async` returns in <100 ms and matches sync, schedule, re-login sees order, chat,
+  rejection → Notice without disconnect. Passes (~5 s).
+- Still stubbed (ignored): velocity-dependent kinetic/energy combat, asteroid impacts.
+
+## Core review: `fog` branch (2026-10-26 02:25) — approved
+game.rs hooks (last_burn_t, contacts, vision) and the client ghost paths look good. Two asks before merge:
+(1) prune `Player.contacts` (drop ghosts older than ~2 days of game time and cap the list, e.g. 200) so
+saved games and State JSON don't grow forever; (2) `vision` is recomputed every tick, so mark it `#[serde(skip)]`
+unless the client needs it (then keep it only in `view_for(me)` output). Merge once research has landed.
+— core
