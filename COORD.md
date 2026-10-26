@@ -854,3 +854,33 @@ time-dependent (the planned ship's fuel vs. the plan's now), not fleet-related.
 ### Research thread (2026-10-26 03:15): Jonas — constructors required everywhere. Branch `constructors-only` ready (on e78ca43, ci.sh OK)
 `Game::workers` = constructors parked there only (planet shipyards no longer count); blocker text "needs a construction ship in orbit";
 UI crew line + demo updated; station test updated. Bots already parked a constructor at home first. Small diff: station.rs, ui research.rs/demo.rs.
+### Flyby thread → core: branch `flyby` ready to merge (2026-10-26 04:20 UTC)
+`flyby` @ 7b61804 (pushed), 4 commits on origin/master be19e42. sim 36 + all simtests pass in release; plancheck 0
+non-converged, worst ratio **1.55** (was 1.59). The three planner quality gates are un-ignored and pass.
+- **Physics needed no fix.** traj tests: 200 random planet/moon passes are proper hyperbolas (rp/v∞/timing match,
+  turn at the SOI matches 2·atan(sin ν/(e+cos ν)), body-frame energy conserved, pos/vel continuous across frames);
+  a pass behind the biggest planet gives +10.9 km/s, in front −11.3. `Trajectory::flybys()` reports them.
+- **assist.rs** (new): Lambert screen A→F→B over sibling planets/moons, then `fly`: Nelder–Mead aims the departure at
+  F's periapsis → NM on the real total (departure + Lambert correction after SOI exit) → one correction burn after
+  the pass, polished into a capture. The burn rides in `Departure.burns` (serde default) → `Flight.burns`, so it shows
+  up as a normal maneuver node. `plan::plan_route` = direct or assist (keeps the assist when ≥5% cheaper).
+  Survey `cargo run --release -p sim --example flybycheck 1,2`: assists save 20–45% Δv on many pairs (e.g. 24.7 →
+  13.9 km/s), longer flights.
+- **Cost / server lock:** `plan_route` is 2–5× `plan_leg`, so it runs **client-side only** (the async planner).
+  `Game::plan_for` (bots, route hops, plain `Transfer`) stays direct. Jonas also asked for "options between the most
+  efficient and fastest trajectories": `plan::options` → Cheapest / Balanced / Fastest (sorted by Δv, each arriving
+  sooner). Each plan carries a `PlanHint`; the client sends **`Command::TransferPlanned { ships, to, depart_t, hint }`**
+  (new variant, `Transfer` unchanged) and the server re-plans with `plan_hinted` = one shooting run, bit-identical to
+  the client's plan (test `plans_are_deterministic_and_hints_reproduce_them`). So player orders get *cheaper* on the
+  server. Bad hints are errors.
+- **plan_leg change (the one that touches the budget):** after picking a window it probes ±5% of the span with the
+  real shooter (`slide_departure`), which clears the "window 5% worse than a fixed departure" gate and saves 2.3%
+  on average, at **1.54×** plan_leg time (48 adjacent pairs, interleaved timing). If that's too much for bots, say so
+  and I'll gate it to the client.
+- client: compute_plan uses `options`; `Departure.burns` predicted; flyby marks in `to_model_traj`.
+- ui (small, UI thread FYI): `m::TransferPlan` += `dv_mid, via, label, options, token`; `m::Trajectory.flybys:
+  Vec<FlybyMark>`; plan sheet gets a chip row (CHEAPEST / BALANCED / FASTEST with Δv + flight time) and "VIA X" title;
+  `map::draw_flybys` pill markers ("FLYBY X +3.1 km/s", node-editor END-pill style) on the selected own course, the
+  plan preview and the node-editor preview. Demo backend fakes options for the `plan` scene.
+- Note: client_e2e failed once under load (fuel_needed > ship fuel) before 53d4dc6; passes after rebase.
+Core: OK to merge? — flyby thread
