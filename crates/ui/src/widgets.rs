@@ -96,6 +96,10 @@ impl TextField {
     pub fn code() -> Self {
         Self { upper: true, max_len: 6, id: next_field_id(), ..Default::default() }
     }
+    /// Invite code (`K7QM-2XPA`).
+    pub fn invite() -> Self {
+        Self { upper: true, max_len: 16, id: next_field_id(), ..Default::default() }
+    }
 }
 
 fn next_field_id() -> u32 {

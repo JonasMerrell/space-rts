@@ -5,11 +5,13 @@ const USAGE: &str = "usage: server [--port 7777] [--data DIR] [--tls-cert PEM --
   --tls-cert/--tls-key  certificate chain + key (e.g. Let's Encrypt fullchain.pem/privkey.pem);
                         default: a self-signed cert made once in DIR/tls/
   --no-plain            refuse unencrypted connections even from the LAN
-  --invite-codes FILE   registering needs a code from FILE (one per line, each works once)";
+  --invite-codes FILE   registering needs a code from FILE (one per line, each works once)
+  --make-invites N      append N new random codes to the --invite-codes FILE, print them and exit";
 
 fn main() {
     let mut port = proto::DEFAULT_PORT;
     let mut cfg = server::Config::new(PathBuf::from("data"));
+    let mut make = None;
     let mut args = std::env::args().skip(1);
     let usage = || -> ! {
         eprintln!("{USAGE}");
@@ -24,8 +26,20 @@ fn main() {
             "--tls-key" => cfg.tls_key = Some(path()),
             "--invite-codes" => cfg.invites = Some(path()),
             "--no-plain" => cfg.plain = server::Plain::Never,
+            "--make-invites" => make = Some(path().to_str().and_then(|n| n.parse::<usize>().ok()).unwrap_or_else(|| usage())),
             _ => usage(),
         }
+    }
+    if let Some(n) = make {
+        let Some(file) = &cfg.invites else { usage() };
+        match server::make_invites(file, n) {
+            Ok(codes) => codes.iter().for_each(|c| println!("{c}")),
+            Err(e) => {
+                eprintln!("{}: {e}", file.display());
+                std::process::exit(1);
+            }
+        }
+        return;
     }
     let listener = match TcpListener::bind(("0.0.0.0", port)) {
         Ok(l) => l,

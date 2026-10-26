@@ -16,7 +16,7 @@ fn pump(be: &mut ClientBackend, secs: f64) -> Vec<BackendEvent> {
 fn main() {
     let server = std::env::args().nth(1).unwrap_or("127.0.0.1:7777".into());
     let mut be = ClientBackend::new(server);
-    be.act(UiAction::Login { server: String::new(), user: "headless".into(), pass: "pw".into(), register: true });
+    be.act(UiAction::Login { server: String::new(), user: "headless".into(), pass: "pw".into(), register: true, invite: String::new() });
     for e in pump(&mut be, 1.0) { println!("{e:?}"); }
     be.act(UiAction::CreateGame { name: "headless test".into(), length_days: 7, speed: 1.0, bots: vec!["normal".into()] });
     for e in pump(&mut be, 1.0) { println!("{}", format!("{e:?}").chars().take(200).collect::<String>()); }

@@ -38,12 +38,12 @@ fn four_phones_play_a_game_through_the_real_client_backend() {
 
     // register + log in
     for (c, n) in cs.iter_mut().zip(names) {
-        c.act(UiAction::Login { server: addr.clone(), user: n.into(), pass: "pw".into(), register: true });
+        c.act(UiAction::Login { server: addr.clone(), user: n.into(), pass: "pw".into(), register: true, invite: String::new() });
         until(c, "LoggedIn", 10.0, |_, ev| ev.iter().any(|e| matches!(e, BackendEvent::LoggedIn { user } if user == n)).then_some(()));
     }
     // wrong password is reported as LoginFailed
     let mut bad = ClientBackend::new(addr.clone());
-    bad.act(UiAction::Login { server: addr.clone(), user: "ann".into(), pass: "nope".into(), register: false });
+    bad.act(UiAction::Login { server: addr.clone(), user: "ann".into(), pass: "nope".into(), register: false, invite: String::new() });
     until(&mut bad, "LoginFailed", 10.0, |_, ev| ev.iter().any(|e| matches!(e, BackendEvent::LoginFailed(_))).then_some(()));
 
     // ann hosts; the lobby event carries the join code
@@ -135,7 +135,7 @@ fn four_phones_play_a_game_through_the_real_client_backend() {
     until(&mut cs[0], "own ship has a destination", 30.0, |b, _| b.view()?.ship(ship.id)?.destination.map(|_| ()));
     // and it survives a reconnect: a fresh client logged in as ann sees the same order
     let mut ann2 = ClientBackend::new(addr.clone());
-    ann2.act(UiAction::Login { server: addr.clone(), user: "ann".into(), pass: "pw".into(), register: false });
+    ann2.act(UiAction::Login { server: addr.clone(), user: "ann".into(), pass: "pw".into(), register: false, invite: String::new() });
     until(&mut ann2, "ann re-login", 10.0, |_, ev| ev.iter().any(|e| matches!(e, BackendEvent::LoggedIn { .. })).then_some(()));
     ann2.act(UiAction::OpenGame { code: code.clone() });
     until(&mut ann2, "ann2 sees her ship's order", 30.0, |b, _| b.view()?.ship(ship.id)?.destination.map(|_| ()));

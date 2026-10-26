@@ -19,7 +19,7 @@ fn conf() -> Conf {
 fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
     ui.user = "Jonas".into();
     let game = |ui: &mut Ui, be: &mut DemoBackend| {
-        be.act(UiAction::Login { server: String::new(), user: "Jonas".into(), pass: "x".into(), register: false });
+        be.act(UiAction::Login { server: String::new(), user: "Jonas".into(), pass: "x".into(), register: false, invite: String::new() });
         be.start_game();
         be.speed = 0.0;
         let _ = be.poll();
@@ -40,7 +40,7 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
             ui.screen = Screen::Menu(m);
         }
         "lobby" => {
-            be.act(UiAction::Login { server: String::new(), user: "Jonas".into(), pass: "x".into(), register: false });
+            be.act(UiAction::Login { server: String::new(), user: "Jonas".into(), pass: "x".into(), register: false, invite: String::new() });
             be.act(UiAction::CreateGame { name: "Friday Night War".into(), length_days: 7, speed: 1.0, bots: vec!["hard".into()] });
             let mut info = None;
             for ev in be.poll() {
@@ -57,7 +57,7 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
             ui.screen = Screen::Game(GameScreen::new());
         }
         "lobby_guest" => {
-            be.act(UiAction::Login { server: String::new(), user: "Jonas".into(), pass: "x".into(), register: false });
+            be.act(UiAction::Login { server: String::new(), user: "Jonas".into(), pass: "x".into(), register: false, invite: String::new() });
             be.act(UiAction::JoinGame { code: "MX4PQ".into() });
             let _ = be.poll();
             ui.screen = Screen::Game(GameScreen::new());
