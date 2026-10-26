@@ -230,8 +230,13 @@ pub fn draw_flybys(tr: &Trajectory, view: &GameView, cam: &Camera, t: f64, color
         let ring: Vec<Vec2> = (0..=24).map(|i| c + Vec2::from_angle(i as f32 / 24.0 * std::f32::consts::TAU) * r).collect();
         cel::dashed_path(&ring, 2.0 * s(), 4.0 * s(), color);
         let name = view.body(f.body).map(|b| b.name.to_uppercase()).unwrap_or_default();
-        let label = if f.gain >= 0.0 { format!("SLINGSHOT {name} +{:.1} km/s", f.gain) } else { format!("FLYBY {name} {:.1} km/s", f.gain) };
-        inked(&label, c.x + r + 6.0 * s(), c.y - r, 13.0, color, Align::Left);
+        let label = if f.gain >= 0.0 { format!("FLYBY {name} +{:.1} km/s", f.gain) } else { format!("FLYBY {name} {:.1} km/s", f.gain) };
+        // same pill as the node editor's END marker
+        let w = measure(&label, FontKind::Title, 12.0).x + 14.0 * s();
+        let pill = Rect::new(c.x + 24.0 * s(), c.y - 40.0 * s(), w, 20.0 * s());
+        cel::inked_path(&[c + vec2(r * 0.7, -r * 0.7), vec2(pill.x, pill.y + pill.h)], 1.5 * s(), color);
+        cel::round_rect(pill, pill.h / 2.0, alpha(PANEL, 0.9));
+        text(&label, pill.center().x, pill.center().y + s(), 12.0, color, FontKind::Title, Align::Center);
     }
 }
 
