@@ -559,6 +559,10 @@ pub enum Command {
     AimAsteroid { body: BodyId, target: BodyId },
     /// Give the ship from the shipyard job at `body` finishing at `done_t` a transfer (`to: None` clears it).
     QueueOrder { body: BodyId, done_t: f64, to: Option<BodyId>, depart_t: Option<f64> },
+    /// Cancel entry `index` of a body's build queue (yours only); refunds its cost, later jobs move up.
+    CancelJob { body: BodyId, index: usize },
+    /// Move entry `from` of a body's build queue to position `to` (both yours); finish times are recomputed.
+    MoveJob { body: BodyId, from: usize, to: usize },
     /// Host only: game seconds per real second from now on.
     SetSpeed { speed: f64 },
 }
@@ -807,6 +811,8 @@ impl Game {
             | Command::BuildStation { body, .. }
             | Command::PushAsteroid { body, .. }
             | Command::QueueOrder { body, .. }
+            | Command::CancelJob { body, .. }
+            | Command::MoveJob { body, .. }
                 if bad(body) =>
             {
                 return Err("no such body".into())
@@ -829,6 +835,61 @@ impl Game {
             Command::Chat { text } => {
                 let text: String = text.chars().take(500).collect();
                 self.chat.push(ChatMsg { from: player, t: self.t, text });
+                Ok(())
+            }
+            Command::MoveJob { body, from, to } => {
+                let now = self.t;
+                let q = &mut self.bodies[body.0 as usize].queue;
+                if from >= q.len() || to >= q.len() || q[from].owner != player || q[to].owner != player {
+                    return Err("can only reorder your own queued jobs".into());
+                }
+                // remaining time of each of my jobs, in the current order
+                let mine: Vec<usize> = (0..q.len()).filter(|&i| q[i].owner == player).collect();
+                let mut prev = now;
+                let mut dur = vec![0.0; q.len()];
+                for &i in &mine {
+                    dur[i] = (q[i].done_t - prev.max(now)).max(0.0);
+                    prev = q[i].done_t;
+                }
+                let job = q.remove(from);
+                let d = dur.remove(from);
+                q.insert(to, job);
+                dur.insert(to, d);
+                let mut end = now;
+                for i in 0..q.len() {
+                    if q[i].owner == player {
+                        end += dur[i];
+                        q[i].done_t = end;
+                    }
+                }
+                Ok(())
+            }
+            Command::CancelJob { body, index } => {
+                let now = self.t;
+                let q = &mut self.bodies[body.0 as usize].queue;
+                let job = q.get(index).ok_or("that job is no longer queued")?;
+                if job.owner != player {
+                    return Err("not your job".into());
+                }
+                // how long this job occupies the queue: from the previous job of the same owner (or now)
+                let start = q[..index].iter().filter(|j| j.owner == player).map(|j| j.done_t).fold(now, f64::max);
+                let span = (job.done_t - start).max(0.0);
+                let job = q.remove(index);
+                for j in q.iter_mut().skip(index).filter(|j| j.owner == player) {
+                    j.done_t -= span;
+                }
+                let (m, e) = match job.kind {
+                    JobKind::Ship(c) => (c.stats().matter, c.stats().energy),
+                    JobKind::Upgrade(u) => {
+                        let b = &self.bodies[body.0 as usize];
+                        let pending = b.queue.iter().filter(|j| matches!(j.kind, JobKind::Upgrade(x) if x == u)).count() as u8;
+                        let (m, e, _) = u.cost(b.level(u) + pending + 1);
+                        (m, e)
+                    }
+                };
+                let p = &mut self.players[player as usize];
+                p.matter += m;
+                p.energy += e;
                 Ok(())
             }
             Command::QueueOrder { body, done_t, to, depart_t } => {
@@ -1597,6 +1658,22 @@ mod tests {
         let s = g.ship(gunship).unwrap();
         assert_eq!(s.parked_at(), Some(target), "{:?}", g.events.iter().rev().take(5).collect::<Vec<_>>());
         assert_eq!(g.bodies[target.0 as usize].owner, Some(0));
+    }
+
+    #[test]
+    fn cancel_job_refunds_and_moves_queue_up() {
+        let mut g = game();
+        let home = g.players[0].home.unwrap();
+        let m0 = g.players[0].matter;
+        g.apply(0, Command::Build { body: home, class: ShipClass::Interceptor }).unwrap();
+        g.apply(0, Command::Build { body: home, class: ShipClass::Scout }).unwrap();
+        let second = g.bodies[home.0 as usize].queue[1].done_t;
+        g.apply(0, Command::CancelJob { body: home, index: 0 }).unwrap();
+        let q = &g.bodies[home.0 as usize].queue;
+        assert_eq!(q.len(), 1);
+        assert!(q[0].done_t < second);
+        assert!((g.players[0].matter - (m0 - ShipClass::Scout.stats().matter)).abs() < 1e-9);
+        assert!(g.apply(1, Command::CancelJob { body: home, index: 0 }).is_err());
     }
 
     #[test]

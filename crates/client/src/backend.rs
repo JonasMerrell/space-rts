@@ -889,6 +889,11 @@ impl Backend for ClientBackend {
                 }
             }
             UiAction::DismissReport => self.report = None,
+            UiAction::CancelJob { body, index } => {
+                if let Some(code) = code {
+                    self.send(ClientMsg::Cmd { code, cmd: Command::CancelJob { body: SimBody(body), index } });
+                }
+            }
             UiAction::Chat(text) => {
                 if let Some(code) = code {
                     self.send(ClientMsg::Cmd { code, cmd: Command::Chat { text } });
