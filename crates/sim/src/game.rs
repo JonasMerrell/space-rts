@@ -984,7 +984,10 @@ impl Game {
         let first = *hops.first().ok_or("already there")?;
         // direct legs only: this runs inside the server lock (bots, route hops). Gravity assists and
         // fast courses are searched on the client (`plan::options`) and ordered with a hint.
-        let p = plan::plan_leg(&self.system, from, first, self.t, depart_t)?;
+        // bots keep the cheaper planner (no departure probe): they plan inside the server lock
+        let bot = self.players.get(ship.owner as usize).is_some_and(|p| p.bot.is_some());
+        let plan_fn = if bot { plan::plan_leg_quick } else { plan::plan_leg };
+        let p = plan_fn(&self.system, from, first, self.t, depart_t)?;
         if !p.converged {
             return Err("couldn't find a working trajectory, try another departure time".into());
         }

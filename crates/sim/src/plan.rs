@@ -273,6 +273,15 @@ pub fn dv_curve(sys: &System, from: BodyId, to: BodyId, now: f64, span: f64, n: 
 /// Plan a single direct leg. With `depart_t = None` the best window within the search span is
 /// used. The result's trajectory is a real patched-conic prediction ending in a capture.
 pub fn plan_leg(sys: &System, from: BodyId, to: BodyId, now: f64, depart_t: Option<f64>) -> Result<TransferPlan, String> {
+    let best = plan_leg_quick(sys, from, to, now, depart_t)?;
+    if depart_t.is_some() || !best.converged {
+        return Ok(best);
+    }
+    Ok(slide_departure(sys, from, to, now, best))
+}
+
+/// `plan_leg` without the final ±5% departure probe (about 1.5× cheaper; bots use it).
+pub fn plan_leg_quick(sys: &System, from: BodyId, to: BodyId, now: f64, depart_t: Option<f64>) -> Result<TransferPlan, String> {
     let rel = relation(sys, from, to).ok_or("no direct transfer between these bodies")?;
     let h = hohmann_tof(sys, from, to, rel);
     let starts: Vec<(f64, f64)> = match depart_t {
@@ -348,11 +357,7 @@ pub fn plan_leg(sys: &System, from: BodyId, to: BodyId, now: f64, depart_t: Opti
             }
         }
     }
-    let best = best.map(|b| b.1).ok_or_else(|| "no transfer solution".to_string())?;
-    if depart_t.is_some() || !best.converged {
-        return Ok(best);
-    }
-    Ok(slide_departure(sys, from, to, now, best))
+    best.map(|b| b.1).ok_or_else(|| "no transfer solution".into())
 }
 
 /// The Lambert estimate ignores the planets' own wells, so the real optimum can sit a little off
@@ -366,7 +371,7 @@ fn slide_departure(sys: &System, from: BodyId, to: BodyId, now: f64, best: Trans
         if td < now + 30.0 {
             continue;
         }
-        if let Ok(p) = plan_leg(sys, from, to, now, Some(td)) {
+        if let Ok(p) = plan_leg_quick(sys, from, to, now, Some(td)) {
             if p.converged && p.total_dv() < cur.total_dv() {
                 cur = p;
             }
