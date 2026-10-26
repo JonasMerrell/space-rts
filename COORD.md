@@ -958,3 +958,37 @@ Jonas is port-forwarding the game server to the internet (VM `hohmann-reach-serv
   (or tiny fixes on `harden`, flagged here).
 - **Audit**: unwrap()/expect()/indexing on client input in server/proto/client.
 — hardening thread
+
+### Hardening thread → core (2026-10-26 17:20 UTC): branch `harden` ready to merge
+`harden` (pushed, on origin/master c780fbf). The VM release must be built from it. What's in it:
+- **TLS** on :7777 (rustls + ring). New `proto::wire` (bounded `read_line`, TLS reader/writer split for the
+  thread-per-direction design). Server: `server::serve_with(listener, Config)`; `serve(l, dir)` is unchanged for tests.
+  Flags: `--tls-cert PEM --tls-key PEM --no-plain --invite-codes FILE`. Without cert flags it makes a self-signed cert
+  once in `<data>/tls/` (valid to 4096) and logs `TLS cert sha256 <hex>`. First byte 0x16 → TLS; plaintext only from
+  loopback/RFC1918 unless `--no-plain`; a plaintext client from outside gets an Error "needs the updated app".
+- **Client** (`client::tls`): always TLS. Pin order: `host:port#<sha256>` in the server field (openssl's `AA:BB:..`
+  form works) > baked pin (`BUILT_IN` in client/src/tls.rs, or `HOHMANN_PIN="host:port=hex"` env at build time) >
+  public roots (Let's Encrypt) > trust-on-first-use saved in `pins.txt` next to server.txt (saved only after a
+  complete handshake). A changed cert is refused with a clear message. **Core: once the VM thread posts the cert
+  fingerprint, add it to `BUILT_IN` (or export HOHMANN_PIN in build-apk.sh) with the public address/DEFAULT_SERVER.**
+- **Passwords**: argon2id PHC in `accounts.json` (`phc`); sha256 accounts upgrade on next good login (tested).
+  Hashing runs outside the server mutex, max 2 at once. Names starting with "Bot " can't register (bots are found by name).
+- **Limits** (`server::guard::Limits`, defaults): 512 conns, 8/IP; 10 failed logins/IP/10 min; 20 per account/15 min;
+  3 registrations/IP/h; handshake 10 s; idle 90 s (app pings every 15 s); 20 msg/s burst 100 (over → disconnect);
+  heavy requests (Open/Join/Create/ListGames/Events/Chat) 0.5/s burst 15 (over → Error, stays connected); 10 hosted
+  running games per player; chat history trimmed to 300 when it passes 400; 64 KiB per client line; outgoing queue
+  256 lines (a client that stops reading is cut off). Loopback is exempt from login/register rate limits only.
+- **Validation**: `ClientMsg::check()` caps strings/vecs and rejects NaN before handling; bot difficulty whitelisted;
+  wrong join codes count as failed logins (codes can't be swept); non-members get the same answer for any code.
+  `handle` no longer unwraps the user.
+- **Proto change**: `ClientMsg::Hello` gains `invite: Option<String>` (`#[serde(default)]`, old clients fine). Tests
+  thread: I added `invite: None` to the Hello literals in simtests (proto.rs, report.rs, server.rs), nothing else.
+- **Tests**: server `fuzz.rs` (proptest: hostile + mutated messages through `Server::handle` on a running game with bots,
+  garbage bytes, deep nesting; `FUZZ_CASES=n`), `guard` unit tests, client `tests/secure.rs` (TLS through the real
+  `Net`, pin mismatch, plaintext refusal, sha256→argon2 migration, invites, long line, flood, lockout, IP cap).
+  No panics found in 400+ cases per property (5000-case run in progress). proto/server/client + simtests
+  server/client_e2e/report/proto green; workspace builds all targets; cargo-ndk arm64 builds.
+- **scripts/release-server.sh**: ring needs a C compiler for musl → `CC_x86_64_unknown_linux_musl=gcc` (static-pie
+  build verified, TLS ping OK).
+- **Invite-only UI**: server side done; the login screen has no invite field yet (UI thread) — waiting on Jonas.
+— hardening thread
