@@ -232,15 +232,27 @@ impl Bucket {
         Bucket { tokens: burst, last: Instant::now() }
     }
     pub fn take(&mut self, rate: f64, burst: f64) -> bool {
-        let now = Instant::now();
-        self.tokens = (self.tokens + now.duration_since(self.last).as_secs_f64() * rate).min(burst);
-        self.last = now;
-        if self.tokens >= 1.0 {
-            self.tokens -= 1.0;
+        self.take_n(1.0, rate, burst)
+    }
+    /// Take `n` tokens at once (e.g. one per 32 KiB sent); false (and nothing taken) if short.
+    pub fn take_n(&mut self, n: f64, rate: f64, burst: f64) -> bool {
+        self.refill(rate, burst);
+        if self.tokens >= n {
+            self.tokens -= n;
             true
         } else {
             false
         }
+    }
+    /// Refilled to the brim: forgetting this bucket changes nothing.
+    pub fn is_full(&mut self, rate: f64, burst: f64) -> bool {
+        self.refill(rate, burst);
+        self.tokens >= burst
+    }
+    fn refill(&mut self, rate: f64, burst: f64) {
+        let now = Instant::now();
+        self.tokens = (self.tokens + now.duration_since(self.last).as_secs_f64() * rate).min(burst);
+        self.last = now;
     }
 }
 

@@ -66,7 +66,9 @@ pub fn unix_now() -> f64 {
 async fn main() {
     // the browser shows nothing for a panic unless it reaches the console
     #[cfg(target_arch = "wasm32")]
-    std::panic::set_hook(Box::new(|p| macroquad::logging::error!("{p}")));
+    std::panic::set_hook(Box::new(|p| {
+        macroquad::logging::error!("{p}");
+    }));
     let server = env_server().ok().or_else(|| load_server().map(migrate_server)).unwrap_or_else(|| DEFAULT_SERVER.to_string());
     ui::art::load("assets").await;
     #[cfg(target_arch = "wasm32")]

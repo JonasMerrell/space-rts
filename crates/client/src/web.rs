@@ -95,8 +95,7 @@ impl Net {
                 self.send_raw(&h);
             }
         }
-        loop {
-            let Some(line) = staged(unsafe { hr_ws_recv_len(self.id) }) else { break };
+        while let Some(line) = staged(unsafe { hr_ws_recv_len(self.id) }) {
             match decode::<ServerMsg>(&line) {
                 Ok(m) => out.push(NetEvent::Msg(m)),
                 Err(e) => {

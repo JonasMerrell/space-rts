@@ -3,6 +3,7 @@
 //! - `GET /play/...` the browser build, from a file map built at startup from `<data>/public/web/`
 //!   (request paths are never joined onto the filesystem), keep-alive so its ~300 files load fast;
 //! - `GET /ws` + `Upgrade: websocket` hands the connection to the game protocol (see `ws.rs`).
+//!
 //! GET/HEAD only, no request bodies; anything malformed closes the connection.
 use crate::guard::{self, Bucket};
 use std::collections::HashMap;
@@ -15,29 +16,51 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 pub const APK_NAME: &str = "hohmann-reach.apk";
 const MAX_HEAD: usize = 8192;
 const MAX_HEADERS: usize = 50;
-/// Requests per minute per IP for the download page + APK.
-const RATE_PER_MIN: f64 = 12.0;
-const BURST: f64 = 6.0;
-/// The browser build loads every sprite and sound as its own file.
-const PLAY_RATE_PER_MIN: f64 = 600.0;
-const PLAY_BURST: f64 = 800.0;
+/// Per-IP budgets (tokens per minute, burst), so one address can't eat the home upload.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum Kind {
+    /// download page, /ws handshakes, 404s: one token per request
+    Page,
+    /// the APK (~20 MB): one token per download
+    Apk,
+    /// the browser build: one token per file plus one per 32 KiB, so a full first load
+    /// (~300 files, ~23 MB) fits the burst and the sustained rate stays near 1.3 Mbit/s
+    Play,
+}
+
+impl Kind {
+    fn budget(self) -> (f64, f64) {
+        match self {
+            Kind::Page => (12.0, 6.0),
+            Kind::Apk => (3.0, 3.0),
+            Kind::Play => (300.0, 1200.0),
+        }
+    }
+}
+
+/// Bytes per extra /play/ token.
+const PLAY_TOKEN_BYTES: u64 = 32 * 1024;
 /// Requests served on one keep-alive connection.
 const MAX_KEEPALIVE: usize = 1000;
 
-static BUCKETS: Mutex<Option<HashMap<(IpAddr, bool), Bucket>>> = Mutex::new(None);
+static BUCKETS: Mutex<Option<HashMap<(IpAddr, Kind), Bucket>>> = Mutex::new(None);
 
-fn allowed(ip: IpAddr, play: bool) -> bool {
+fn allowed(ip: IpAddr, kind: Kind, cost: f64) -> bool {
     // loopback = tests and tools on the server itself
     if ip.is_loopback() {
         return true;
     }
-    let (rate, burst) = if play { (PLAY_RATE_PER_MIN, PLAY_BURST) } else { (RATE_PER_MIN, BURST) };
+    let (per_min, burst) = kind.budget();
     let mut g = BUCKETS.lock().unwrap_or_else(|e| e.into_inner());
     let map = g.get_or_insert_with(HashMap::new);
     if map.len() > 10_000 {
-        map.clear();
+        // forget only addresses that have been quiet long enough to be back at full budget
+        map.retain(|(_, k), b| {
+            let (r, bu) = k.budget();
+            !b.is_full(r / 60.0, bu)
+        });
     }
-    map.entry((ip, play)).or_insert_with(|| Bucket::new(burst)).take(rate / 60.0, burst)
+    map.entry((ip, kind)).or_insert_with(|| Bucket::new(burst)).take_n(cost, per_min / 60.0, burst)
 }
 
 /// Does a connection start like an HTTP request we serve?
@@ -213,11 +236,6 @@ fn origin_ok(origin: Option<&str>, ctx: &Ctx) -> bool {
             .is_some_and(|h| h == "localhost" || h.parse::<IpAddr>().is_ok_and(crate::is_lan))
 }
 
-/// Host header, if it looks like a host name (it goes into the CSP).
-fn host(req: &Request) -> Option<&str> {
-    req.header("host").filter(|h| h.len() <= 255 && h.chars().all(|c| c.is_ascii_alphanumeric() || ".-:[]".contains(c)))
-}
-
 fn respond(s: &mut dyn Write, status: &str, ctype: &str, extra: &str, body: &[u8], head_only: bool, keep: bool) -> bool {
     let conn = if keep { "keep-alive" } else { "close" };
     let head = format!(
@@ -273,7 +291,15 @@ enum Next {
 fn answer(req: &Request, w: &mut dyn Write, ctx: &Ctx) -> Next {
     let path = req.path.as_str();
     let play = path == "/play" || path.starts_with("/play/");
-    if !allowed(ctx.ip, play) {
+    let (kind, cost) = if play {
+        let size = ctx.site.files.get(path.strip_prefix("/play").unwrap_or("")).and_then(|f| std::fs::metadata(&f.path).ok()).map_or(0, |m| m.len());
+        (Kind::Play, 1.0 + (size / PLAY_TOKEN_BYTES) as f64)
+    } else if path == format!("/{APK_NAME}") {
+        (Kind::Apk, 1.0)
+    } else {
+        (Kind::Page, 1.0)
+    };
+    if !allowed(ctx.ip, kind, cost) {
         guard::log_limited(ctx.ip);
         respond(w, "429 Too Many Requests", "text/plain", "Retry-After: 60\r\n", b"slow down\n", false, false);
         return Next::Close;
@@ -348,12 +374,9 @@ fn play_file(req: &Request, w: &mut dyn Write, ctx: &Ctx, head_only: bool) -> Ne
         return if respond(w, "404 Not Found", "text/plain", "", msg, head_only, true) { Next::KeepAlive } else { Next::Close };
     };
     let keep = !req.has_token("connection", "close");
-    let host = host(req).unwrap_or("");
-    let csp = format!(
-        "Content-Security-Policy: default-src 'self'; connect-src 'self' wss://{host} ws://{host}; script-src 'self' 'wasm-unsafe-eval'; \
+    let csp = "Content-Security-Policy: default-src 'self'; connect-src 'self'; script-src 'self' 'wasm-unsafe-eval'; \
 style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'\r\n\
-Referrer-Policy: no-referrer\r\nX-Frame-Options: DENY\r\n"
-    );
+Referrer-Policy: no-referrer\r\nX-Frame-Options: DENY\r\n";
     // index.html and the code change with every release; sprites rarely, and the ETag catches it
     let cache = if rel.starts_with("/assets/") { "Cache-Control: max-age=3600\r\n" } else { "Cache-Control: no-cache\r\n" };
     let extra = format!("{csp}{cache}ETag: {}\r\n", f.etag);
@@ -394,7 +417,7 @@ fn websocket(req: &Request, w: &mut dyn Write, ctx: &Ctx) -> Next {
         return Next::Close;
     }
     if !origin_ok(req.header("origin"), ctx) {
-        guard::log_fail(ctx.ip);
+        // not an auth failure (a typo'd host or the raw IP auto-reconnects); the Page bucket limits it
         respond(w, "403 Forbidden", "text/plain", "", b"origin not allowed\n", false, false);
         return Next::Close;
     }
@@ -477,7 +500,7 @@ mod tests {
         let both = get(port, "GET /play/ HTTP/1.1\r\nHost: h:7777\r\n\r\nGET /play/hohmann.wasm HTTP/1.1\r\n\r\nGET /play/assets/a.png HTTP/1.1\r\nConnection: close\r\n\r\n");
         assert_eq!(both.matches("HTTP/1.1 200").count(), 3, "{both}");
         assert!(both.contains("<html>game</html>") && both.contains("application/wasm") && both.ends_with("PNG"));
-        assert!(both.contains("script-src 'self' 'wasm-unsafe-eval'") && both.contains("connect-src 'self' wss://h:7777"));
+        assert!(both.contains("script-src 'self' 'wasm-unsafe-eval'") && both.contains("connect-src 'self';"));
         let etag = both.split("ETag: ").nth(1).unwrap().split("\r\n").next().unwrap().to_string();
         assert!(get(port, &format!("GET /play/ HTTP/1.1\r\nIf-None-Match: {etag}\r\nConnection: close\r\n\r\n")).starts_with("HTTP/1.1 304"));
         assert!(looks_like_http(b"GET ") && looks_like_http(b"HEAD") && !looks_like_http(b"{\"He"));

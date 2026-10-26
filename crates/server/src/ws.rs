@@ -31,7 +31,16 @@ fn base64(data: &[u8]) -> String {
 }
 
 /// The raw stream's write half, shared so the reader can answer pings and closes.
-type Raw = Arc<Mutex<Box<dyn Write + Send>>>;
+type Raw = Arc<Mutex<RawW>>;
+
+struct RawW {
+    w: Box<dyn Write + Send>,
+    /// a close frame went out; nothing may follow it
+    closed: bool,
+}
+
+/// Most control frames (ping/pong) in a row without a data frame before we hang up.
+const MAX_CONTROL_RUN: u32 = 20;
 
 fn frame(raw: &Raw, opcode: u8, payload: &[u8]) -> io::Result<()> {
     let mut head = vec![0x80 | opcode];
@@ -46,10 +55,14 @@ fn frame(raw: &Raw, opcode: u8, payload: &[u8]) -> io::Result<()> {
             head.extend_from_slice(&(n as u64).to_be_bytes());
         }
     }
-    let mut w = raw.lock().unwrap_or_else(|e| e.into_inner());
-    w.write_all(&head)?;
-    w.write_all(payload)?;
-    w.flush()
+    let mut g = raw.lock().unwrap_or_else(|e| e.into_inner());
+    if g.closed {
+        return Err(io::Error::new(io::ErrorKind::BrokenPipe, "websocket closed"));
+    }
+    g.closed = opcode == 0x8;
+    g.w.write_all(&head)?;
+    g.w.write_all(payload)?;
+    g.w.flush()
 }
 
 fn bad(msg: &str) -> io::Error {
@@ -58,8 +71,8 @@ fn bad(msg: &str) -> io::Error {
 
 /// Split an upgraded connection into a line reader and a line writer.
 pub fn split(r: Box<dyn BufRead + Send>, w: Box<dyn Write + Send>) -> (WsReader, WsWriter) {
-    let raw: Raw = Arc::new(Mutex::new(w));
-    (WsReader { inner: r, raw: raw.clone(), msg: vec![], frag: false, out: vec![], pos: 0, closed: false }, WsWriter { raw, line: vec![] })
+    let raw: Raw = Arc::new(Mutex::new(RawW { w, closed: false }));
+    (WsReader { inner: r, raw: raw.clone(), msg: vec![], frag: false, out: vec![], pos: 0, closed: false, controls: 0 }, WsWriter { raw, line: vec![] })
 }
 
 pub struct WsReader {
@@ -73,6 +86,8 @@ pub struct WsReader {
     out: Vec<u8>,
     pos: usize,
     closed: bool,
+    /// control frames since the last data frame
+    controls: u32,
 }
 
 impl WsReader {
@@ -109,6 +124,11 @@ impl WsReader {
             let control = opcode & 0x8 != 0;
             if control && (len > 125 || !fin) {
                 return Err(bad("bad control frame"));
+            }
+            // pings skip the line loop's message bucket; don't let them flood either
+            self.controls = if control { self.controls + 1 } else { 0 };
+            if self.controls > MAX_CONTROL_RUN {
+                return Err(bad("too many control frames"));
             }
             // checked before allocating anything
             if len as usize > MAX_MESSAGE || self.msg.len() + len as usize > MAX_MESSAGE {
@@ -265,6 +285,8 @@ mod tests {
         let out = sink.0.lock().unwrap().clone();
         assert_eq!(&out[..4], &[0x8A, 2, b'h', b'i'], "pong");
         assert_eq!(&out[4..], &[0x88, 2, 0x03, 0xE8], "close echoed");
+        drop(_w);
+        assert_eq!(sink.0.lock().unwrap().len(), out.len(), "no second close frame");
     }
 
     #[test]
@@ -282,6 +304,8 @@ mod tests {
         let mut f = client_frame(false, 1, &vec![b'a'; MAX_MESSAGE / 2 + 1]);
         f.extend(client_frame(true, 0, &vec![b'a'; MAX_MESSAGE / 2 + 1]));
         assert!(err(f));
+        // a ping flood
+        assert!(err((0..=MAX_CONTROL_RUN).flat_map(|_| client_frame(true, 9, b"p")).collect()));
         // fragmented ping, oversized ping, continuation without a start, reserved bits, unknown opcode
         assert!(err(client_frame(false, 9, b"x")));
         assert!(err(client_frame(true, 9, &[0; 126])));
