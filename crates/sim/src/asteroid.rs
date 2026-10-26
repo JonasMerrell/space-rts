@@ -354,7 +354,8 @@ impl Game {
                 let r = self.system.pos(ast, t);
                 let v = self.system.vel(ast, t);
                 let traj = predict(&detached(&self.system, ast), State { parent: star, t, r, v }, &[], None, t + HORIZON);
-                if matches!(traj.end, End::Impact { .. }) || traj.segs.len() > 1 {
+                // (a prediction that can't make progress is dropped, so this never spins)
+                if traj.end.t() > t + 60.0 && (matches!(traj.end, End::Impact { .. }) || traj.segs.len() > 1) {
                     self.drifts.push(Drift { body: ast, owner: d.owner, traj, next_seg: 1 });
                 }
             }
