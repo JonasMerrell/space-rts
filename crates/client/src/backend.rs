@@ -4,6 +4,8 @@
 use crate::net::{Net, NetEvent};
 use proto::{unix_now, ClientMsg, GameSummary as WireSummary, ServerMsg};
 use sim::game::{self as g, Command, Game, ShipState, Status};
+use sim::station::StationKind;
+use sim::tech::{Branch, Tech};
 use sim::system::{BodyKind as SimKind, SystemSize};
 use sim::traj::{Burn, Trajectory as SimTraj};
 use sim::{BodyId as SimBody, V2};
@@ -253,6 +255,14 @@ fn upgrade_by_name(name: &str) -> Option<g::Upgrade> {
     g::Upgrade::ALL.into_iter().find(|u| format!("{u:?}").eq_ignore_ascii_case(name))
 }
 
+fn tech_by_name(name: &str) -> Option<Tech> {
+    Tech::ALL.into_iter().find(|t| format!("{t:?}") == name)
+}
+
+fn station_by_name(name: &str) -> Option<StationKind> {
+    StationKind::ALL.into_iter().find(|k| format!("{k:?}") == name)
+}
+
 fn arr(v: V2) -> [f64; 2] {
     [v.x, v.y]
 }
@@ -307,7 +317,7 @@ fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Tr
                         seen_at: i.seen_t,
                         power: i.power.iter().filter(|p| p.0 != me).map(|p| p.1).sum::<f64>() as f32,
                         upgrades,
-                        stations: vec![],
+                        stations: game.stations.iter().filter(|st| st.body == b.id && st.owner != me).map(|st| st.kind.label().to_string()).collect(),
                     })
                 },
                 art: if b.kind == SimKind::GasGiant { Some("planet_gas".into()) } else { None },
@@ -503,6 +513,14 @@ impl Backend for ClientBackend {
                     self.send(ClientMsg::Cmd { code, cmd: Command::Extend { seconds: days as f64 * 86_400.0 } });
                 }
             }
+            UiAction::Research { body, tech } => match (code, tech_by_name(&tech)) {
+                (Some(code), Some(tech)) => self.send(ClientMsg::Cmd { code, cmd: Command::Research { body: SimBody(body), tech } }),
+                _ => self.notice(m::NoticeKind::Bad, "Unknown tech", &tech, None),
+            },
+            UiAction::BuildStation { body, kind } => match (code, station_by_name(&kind)) {
+                (Some(code), Some(kind)) => self.send(ClientMsg::Cmd { code, cmd: Command::BuildStation { body: SimBody(body), kind } }),
+                _ => self.notice(m::NoticeKind::Bad, "Unknown station", &kind, None),
+            },
         }
     }
 
@@ -618,7 +636,7 @@ impl Backend for ClientBackend {
         let buildable = if mine {
             g::ShipClass::ALL
                 .iter()
-                .filter(|c| st.level(g::Upgrade::Shipyard) >= c.stats().min_shipyard)
+                .filter(|c| g.yard_level(self.me, b) >= c.stats().min_shipyard)
                 .map(|&c| {
                     let s = c.stats();
                     (ship_class(c), m::Cost { matter: s.matter, energy: s.energy, seconds: s.build_time })
@@ -640,6 +658,95 @@ impl Backend for ClientBackend {
             .collect();
         let (matter_rate, energy_rate, fuel_rate) = if mine { g.production(b) } else { (0.0, 0.0, 0.0) };
         Some(m::BodyInfo { upgrades, buildable, queue, fuel: st.fuel, power: g.power_at(b), matter_rate, energy_rate, fuel_rate })
+    }
+
+    fn research(&self) -> Option<m::ResearchView> {
+        let g = self.game.as_ref()?;
+        let me = self.me;
+        let p = g.players.get(me as usize)?;
+        let labs: Vec<m::LabInfo> = (0..g.bodies.len())
+            .filter(|&i| g.bodies[i].owner == Some(me) && g.bodies[i].level(g::Upgrade::Research) > 0)
+            .map(|i| {
+                let b = SimBody(i as u32);
+                let busy = p.research.iter().find(|r| r.body == b).map(|r| (r.tech.label().to_string(), r.done_t));
+                m::LabInfo { body: i as u32, name: g.system.body(b).name.clone(), level: g.bodies[i].level(g::Upgrade::Research), busy }
+            })
+            .collect();
+        let techs = Tech::ALL
+            .iter()
+            .map(|&t| {
+                let state = if p.techs.contains(&t) {
+                    m::TechState::Done
+                } else if let Some(r) = p.research.iter().find(|r| r.tech == t) {
+                    m::TechState::Running { lab: r.body.0, done_t: r.done_t }
+                } else {
+                    // the best idle lab that can take it, else the reason the first lab gives
+                    let mut best: Option<(u8, u32)> = None;
+                    let mut why = if labs.is_empty() { "needs a research lab".to_string() } else { String::new() };
+                    for l in &labs {
+                        match g.research_blocker(me, SimBody(l.body), t) {
+                            None if best.is_none_or(|b| l.level > b.0) => best = Some((l.level, l.body)),
+                            None => {}
+                            Some(w) if why.is_empty() || w.starts_with("needs ") => why = w,
+                            Some(_) => {}
+                        }
+                    }
+                    match best {
+                        Some((_, lab)) => m::TechState::Ready { lab },
+                        None => m::TechState::Locked(why),
+                    }
+                };
+                let (matter, energy, seconds) = t.cost();
+                m::TechInfo {
+                    id: format!("{t:?}"),
+                    name: t.label().to_string(),
+                    branch: t.branch().label().to_string(),
+                    tier: t.tier(),
+                    desc: t.describe().to_string(),
+                    cost: m::Cost { matter, energy, seconds },
+                    min_lab: t.min_lab(),
+                    state,
+                }
+            })
+            .collect();
+        debug_assert!(Branch::ALL.iter().zip(m::TECH_BRANCHES).all(|(b, n)| b.label() == n));
+        Some(m::ResearchView { techs, labs })
+    }
+
+    fn stations(&self, id: BodyId) -> Option<m::StationsView> {
+        let g = self.game.as_ref()?;
+        let me = self.me;
+        let b = SimBody(id);
+        let st = g.bodies.get(id as usize)?;
+        if g.system.body(b).is_star() {
+            return None;
+        }
+        let present = st.owner == Some(me) || g.ships.iter().any(|s| s.owner == me && s.parked_at() == Some(b));
+        let here = g
+            .stations
+            .iter()
+            .filter(|s| s.body == b)
+            .map(|s| m::StationInfo {
+                kind: format!("{:?}", s.kind),
+                owner: s.owner,
+                building_until: (s.done_t > g.t).then_some(s.done_t),
+                hp: (s.hp / s.kind.max_hp()) as f32,
+            })
+            .collect();
+        let options = StationKind::ALL
+            .iter()
+            .map(|&k| {
+                let (matter, energy, seconds) = k.cost();
+                m::StationOption {
+                    kind: format!("{k:?}"),
+                    name: k.label().to_string(),
+                    desc: k.describe().to_string(),
+                    cost: m::Cost { matter, energy, seconds },
+                    blocker: g.station_blocker(me, b, k),
+                }
+            })
+            .collect();
+        Some(m::StationsView { here, options, present })
     }
 
     fn preview_nodes(&self, ship: ShipId, nodes: &[m::ManeuverNode]) -> Option<m::Trajectory> {
