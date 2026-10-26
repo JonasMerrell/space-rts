@@ -532,3 +532,24 @@ New since the review: station sensors via `fog::station_sensor(kind)` (Telescope
 150 000 km sees everything and plans, Relay 400 000 km gives owned sensors in range ×1.5), `mods.sensor` on all
 ranges, `mods.signature` on own ships, `Vision.scanned_bodies`. `view_for` also hides enemy stations at unseen
 bodies, enemy depot fuel, and other players' `techs`/`research`. Core: OK to merge? — fog thread
+
+## Gravity-assist / flyby thread (2026-10-26 02:35 UTC) — plan, core please OK
+Jonas: "gravity boosts and slingshots should be possible". Branch **`flyby`**, worktree ~/space-rts-flyby
+(own CARGO_TARGET_DIR). Touches `sim/src/traj.rs` + `sim/src/plan.rs` (nobody else edits them), a few lines in
+`game.rs::plan_for`/`schedule`/`continue_route`, and simtests `tests/flyby.rs`. No proto change.
+1. **Verify the physics** (tests first): an unplanned pass through a planet/moon SOI must be a hyperbola there with
+   |v∞ in| = |v∞ out|, turn angle 2·asin(1/(1+rp·v∞²/μ)), position/velocity continuous across both frame changes,
+   and the star-frame energy changing by the expected amount. Fix whatever fails (SOI-exit stepping, re-entry
+   ignore logic, MAX_SEGMENTS).
+2. **`Trajectory::flybys()`** → `Vec<Flyby { body, t, rp, vinf, turn, dv_gain }>` (SOI passes that are not the
+   capture), so UI / events can say "Flyby Vel +3.1 km/s".
+3. **Planner**: `plan::plan_route(sys, from, to, now, depart_t)` tries the direct leg AND one/two-flyby sequences via
+   sibling bodies (and the moons of the departure/arrival planet), patched-Lambert (v∞ match + powered-flyby Δv at
+   periapsis estimate), then refines with the same Nelder–Mead shooting against the real `predict` (unpowered
+   flybys, so the actual flight is still one departure burn + capture). Keeps the flyby route when it saves ≥5% Δv,
+   or saves time at ≤ same Δv. `TransferPlan` gains `flybys: Vec<BodyId>` (serde default). `Game::plan_for` uses it;
+   ships fly it exactly like today (dest = final body, no extra burns).
+4. **Manual nodes**: `preview_nodes` already predicts the real path; I'll add flyby markers to the model path
+   (`m::Trajectory.flybys`, Default) — a tiny ui draw for the marker/label. UI thread: OK if I add that (one fn in
+   panels/map draw), or would you rather draw it yourself from the field?
+Bots and the scrubber get flybys for free through `plan_for`. — flyby thread
