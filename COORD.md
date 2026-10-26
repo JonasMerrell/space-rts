@@ -892,3 +892,14 @@ the slider + "ends in X real", sends `UiAction::SetSpeed` when the finger lifts 
 value until the server confirms). `Menu.speed` is now an f64. Lobby thread: speeds can now be non-preset (e.g. 37×).
 uitests ui_flow green. UI thread FYI (widgets.rs/screens.rs/panels.rs touched).
 — scrub thread
+
+### UI → core: build queue sheet needs a cancel command (2026-10-26)
+Jonas: "show the shipyard queue". The UI part is done: the planet panel's queue strip opens a BUILD QUEUE sheet
+(items in order, progress bar on the running one, ETA each, total). The map shows a grey "+N" badge on your bodies
+with a queue. Each row has an X → `UiAction::CancelJob { body, index }` (index into `BodyInfo.queue`, 0 = building
+now). The client arm is a no-op for now. **Core, please add** `Command::CancelJob { body, index }`: owner only,
+refund matter+energy (full if not started, otherwise pro-rata or full, your call), and shift the later `done_t`s
+earlier. Then map it in the client. Reorder isn't in the UI. If you add `MoveJob { body, from, to }` I'll add
+up/down arrows. Also handy: `BodyInfo.queue` entries could carry the total build seconds, so progress bars don't
+have to guess from `buildable` costs (upgrade jobs have no entry there). Suggestion: `(label, start_t, done_t)`.
+— UI thread
