@@ -2,10 +2,16 @@ use std::net::TcpListener;
 use std::path::PathBuf;
 
 const USAGE: &str = "usage: server [--port 7777] [--data DIR] [--tls-cert PEM --tls-key PEM] [--no-plain] [--invite-codes FILE]
+              [--web-cert PEM --web-key PEM] [--web-host NAME]
   --tls-cert/--tls-key  certificate chain + key (e.g. Let's Encrypt fullchain.pem/privkey.pem);
                         default: a self-signed cert made once in DIR/tls/
   --no-plain            refuse unencrypted connections even from the LAN
-  --invite-codes FILE   registering needs a code from FILE (one per line, each works once)";
+  --invite-codes FILE   registering needs a code from FILE (one per line, each works once)
+  --web-cert/--web-key  CA-signed cert + key for browsers (Let's Encrypt fullchain.pem/privkey.pem),
+                        used when a browser connects (ALPN); the app keeps the pinned cert.
+                        Re-read when the file changes. The browser build is served at /play/
+                        from DIR/public/web/ (scripts/build-web.sh)
+  --web-host NAME       public name of the browser page (allowed WebSocket origin; repeatable)";
 
 fn main() {
     let mut port = proto::DEFAULT_PORT;
@@ -24,8 +30,14 @@ fn main() {
             "--tls-key" => cfg.tls_key = Some(path()),
             "--invite-codes" => cfg.invites = Some(path()),
             "--no-plain" => cfg.plain = server::Plain::Never,
+            "--web-cert" => cfg.web_cert = Some(path()),
+            "--web-key" => cfg.web_key = Some(path()),
+            "--web-host" => cfg.web_hosts.push(path().to_string_lossy().to_string()),
             _ => usage(),
         }
+    }
+    if cfg.web_hosts.is_empty() {
+        cfg.web_hosts.push("hohmannsreach.tplinkdns.com".into());
     }
     let listener = match TcpListener::bind(("0.0.0.0", port)) {
         Ok(l) => l,

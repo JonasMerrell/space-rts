@@ -1,9 +1,10 @@
 //! Authoritative game server: accounts, lobbies with join codes, persistent real-time games.
-//! One JSON message per line over TLS (see `proto`). Thread per connection, one ticker thread.
+//! One JSON message per line over TLS (see `proto`), or over a WebSocket for the browser build (`ws`). Thread per connection, one ticker thread.
 //! Internet-facing: see `guard` for the abuse limits and `tls` for the certificate.
 pub mod guard;
 pub mod http;
 pub mod tls;
+pub mod ws;
 #[cfg(test)]
 mod fuzz;
 
@@ -64,6 +65,16 @@ pub struct Config {
     /// Invite-only registration: one code per line, each used once (removed from the file).
     pub invites: Option<PathBuf>,
     pub limits: Limits,
+    /// CA-signed cert + key for browsers (e.g. Let's Encrypt fullchain.pem/privkey.pem), served to
+    /// TLS clients that offer ALPN http/1.1 or h2; the app offers none and keeps the pinned cert.
+    pub web_cert: Option<PathBuf>,
+    pub web_key: Option<PathBuf>,
+    /// Public host names of the browser build (WebSocket origins https://name[:port]).
+    pub web_hosts: Vec<String>,
+    /// Port the server listens on (for the origins and https redirects).
+    pub port: u16,
+    /// Browser build files, scanned from `<data>/public/web/` when the server starts.
+    pub site: Arc<http::Site>,
 }
 
 /// Who may connect without TLS (old app builds, LAN tools, tests).
@@ -76,11 +87,28 @@ pub enum Plain {
 
 impl Config {
     pub fn new(data: PathBuf) -> Config {
-        Config { data, tls_cert: None, tls_key: None, plain: Plain::Lan, invites: None, limits: Limits::default() }
+        Config {
+            data,
+            tls_cert: None,
+            tls_key: None,
+            plain: Plain::Lan,
+            invites: None,
+            limits: Limits::default(),
+            web_cert: None,
+            web_key: None,
+            web_hosts: vec![],
+            port: proto::DEFAULT_PORT,
+            site: Arc::default(),
+        }
+    }
+
+    /// Origins a browser page of ours can have: https://host and https://host:port.
+    fn origins(&self) -> Vec<String> {
+        self.web_hosts.iter().flat_map(|h| [format!("https://{h}"), format!("https://{h}:{}", self.port)]).collect()
     }
 }
 
-fn is_lan(ip: IpAddr) -> bool {
+pub(crate) fn is_lan(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v) => v.is_loopback() || v.is_private() || v.is_link_local(),
         IpAddr::V6(v) => {
@@ -577,31 +605,54 @@ fn hello(server: &Mutex<Server>, guard: &Guard, id: u64, ip: IpAddr, user: Strin
 type Reader = Box<dyn BufRead + Send>;
 type Writer = Box<dyn Write + Send>;
 
-/// TLS handshake or plaintext, decided by the first byte (a TLS record starts with 0x16).
+/// Sniff the first byte: 0x16 = TLS (then sniff again inside), 'G'/'H' = HTTP (download page, the
+/// browser build, or a WebSocket upgrade), anything else = plaintext JSON lines (LAN only).
 fn setup(cfg: &Config, tls: &Arc<rustls::ServerConfig>, stream: TcpStream, ip: IpAddr) -> Option<(Reader, Writer)> {
-    let mut b = [0u8; 4];
+    let mut b = [0u8; 1];
     let n = stream.peek(&mut b).ok()?;
     if n == 0 {
         return None;
     }
-    // a browser fetching the download page / APK (plain HTTP on the game port)
-    if http::looks_like_http(&b[..n]) {
-        http::serve(stream, ip, &cfg.data);
-        return None;
-    }
-    if b[0] == 0x16 {
+    let plain_ok = cfg.plain == Plain::Lan && is_lan(ip);
+    let secure = b[0] == 0x16;
+    let (mut r, mut w): (Reader, Writer) = if secure {
         let conn = rustls::ServerConnection::new(tls.clone()).ok()?;
         let (r, w) = wire::split(conn, stream).ok()?;
-        return Some((Box::new(BufReader::with_capacity(16 * 1024, r)), Box::new(w)));
-    }
-    if cfg.plain == Plain::Lan && is_lan(ip) {
+        (Box::new(BufReader::with_capacity(16 * 1024, r)), Box::new(w))
+    } else if http::looks_like_http(&b) || plain_ok {
         let w = stream.try_clone().ok()?;
-        return Some((Box::new(BufReader::new(stream)), Box::new(w)));
+        (Box::new(BufReader::new(stream)), Box::new(w))
+    } else {
+        // an old app build: tell it why instead of just hanging up
+        let mut s = stream;
+        let _ = s.write_all(encode(&ServerMsg::Error { msg: "this server needs the updated app (secure connection)".into() }).as_bytes());
+        return None;
+    };
+    if !http::looks_like_http(r.fill_buf().ok()?) {
+        return Some((r, w));
     }
-    // an old app build: tell it why instead of just hanging up
-    let mut s = stream;
-    let _ = s.write_all(encode(&ServerMsg::Error { msg: "this server needs the updated app (secure connection)".into() }).as_bytes());
-    None
+    let origins = cfg.origins();
+    let https_base = (cfg.web_cert.is_some()).then(|| cfg.web_hosts.first().map(|h| format!("https://{h}:{}", cfg.port))).flatten();
+    let ctx = http::Ctx {
+        ip,
+        data: &cfg.data,
+        site: &cfg.site,
+        secure,
+        game_ok: secure || plain_ok,
+        origins: &origins,
+        https_base: https_base.as_deref(),
+        head_timeout: cfg.limits.handshake_timeout,
+    };
+    match http::serve(&mut r, &mut *w, &ctx) {
+        http::Outcome::WebSocket => {
+            let (r, w) = ws::split(r, w);
+            Some((Box::new(r), Box::new(w)))
+        }
+        http::Outcome::Close => {
+            let _ = w.flush();
+            None
+        }
+    }
 }
 
 fn client_thread(server: Arc<Mutex<Server>>, guard: Arc<Guard>, cfg: Arc<Config>, tls: Arc<rustls::ServerConfig>, stream: TcpStream, ip: IpAddr) {
@@ -696,9 +747,22 @@ pub fn serve(listener: TcpListener, data: PathBuf) {
 }
 
 /// Run the server with `cfg`. Returns only if the TLS setup fails.
-pub fn serve_with(listener: TcpListener, cfg: Config) -> Result<(), String> {
-    let (tls, fp) = tls::load(&cfg.data, cfg.tls_cert.as_deref(), cfg.tls_key.as_deref())?;
+pub fn serve_with(listener: TcpListener, mut cfg: Config) -> Result<(), String> {
+    let web = match (cfg.web_cert.as_deref(), cfg.web_key.as_deref()) {
+        (Some(c), Some(k)) => Some((c, k)),
+        (None, None) => None,
+        _ => return Err("--web-cert and --web-key go together".into()),
+    };
+    let (tls, fp) = tls::load_with_web(&cfg.data, cfg.tls_cert.as_deref(), cfg.tls_key.as_deref(), web)?;
     eprintln!("TLS cert sha256 {fp}");
+    if let Ok(a) = listener.local_addr() {
+        cfg.port = a.port();
+    }
+    let web_dir = cfg.data.join("public").join("web");
+    cfg.site = Arc::new(http::Site::scan(&web_dir));
+    if !cfg.site.is_empty() {
+        eprintln!("browser build from {} at /play/", web_dir.display());
+    }
     let guard = Guard::new(cfg.limits.clone());
     let mut srv = Server::load(cfg.data.clone());
     srv.invites = cfg.invites.clone();
