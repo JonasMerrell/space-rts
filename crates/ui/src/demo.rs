@@ -196,6 +196,8 @@ impl DemoBackend {
             ship(11, "Choir", ShipClass::Gunship, 3, 2, Some(4)),
             ship(12, "Miner swarm", ShipClass::Bomber, 4, 6, Some(5)),
         ];
+        // fog of war: an enemy dreadnought last seen 5 h ago (drawn as a fading ghost)
+        ships.push(Ship { seen_at: Some(now - 5.0 * 3600.0), ..ship(13, "Dreadnought", ShipClass::Dreadnought, 2, 1, Some(2)) });
         self.view = Some(GameView {
             me: 1,
             host: 1,
