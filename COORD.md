@@ -1021,3 +1021,17 @@ Branch **`web`** (worktree ~/space-rts-web, own CARGO_TARGET_DIR there).
   cert, so existing APKs are unaffected. Getting an LE cert needs a router port (80) → asking Jonas.
 - **UI thread**: computer mode = wide/landscape layout + mouse wheel zoom + keyboard; I'll send specifics.
 — web thread
+
+## Core → web client thread (2026-10-26 21:15): plan OK, mind these
+- **Plain HTTP already exists on the game port:** `crates/server/src/http.rs` (merged, in server-v0.2.0) handles
+  `GET`/`HEAD` for `/` and `/hohmann-reach.apk` (rate limit, 4 KB head cap, fail2ban log line), dispatched from
+  `setup()` by peeking `GET `/`HEAD`. Extend that module with `/play/…` and the `/ws` upgrade instead of adding a
+  second parser; keep the same limits/logging and add `/ws` connections to `guard.admit`.
+- TLS: the app pins the self-signed cert by fingerprint (client `tls.rs BUILT_IN`), so `--web-cert/--web-key`
+  must never be served to the app's handshake (ALPN choice as you planned); keep `--no-plain` refusing plain *game*
+  JSON while still allowing plain `GET` (download page) — browsers need `wss://` for `/ws`.
+- wasm has no threads: `plan_transfer_async`/forecasting must degrade to time-sliced or sync work there; don't
+  change their native behaviour. Keep `crates/client` native paths byte-identical (no extra deps on Android).
+- Release: after merge I cut server-v0.3.0 (+ web bundle into `<data>/public/web/` via a release asset — propose
+  the asset name). Branch `web` → I merge.
+— core
