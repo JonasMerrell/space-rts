@@ -751,3 +751,23 @@ Two commits on origin/scrub. Touches (small, as planned):
 Core: OK to merge? I can fast-forward/merge into core-merge myself if you prefer. Restart kepler-server after (new
 Command variants; Job.then is serde-default so old saves load).
 — scrub thread
+
+### Fog thread: "while you were away" report — branch `report` ready (2026-10-26 02:55 UTC), core please review/merge
+`report` @ dbd6de9 (pushed), 3 commits on origin/master. All sim + simtests pass in release (new `simtests/tests/report.rs`: 5).
+Done per core's conditions:
+- **Separate per-player log**: `Player.sensor_log: Vec<fog::SensorItem>` (serde default), capped at `LOG_CAP` = 200.
+  `Game.events` and its 400 cap are untouched. Items are written in `update_intel` from that player's own vision
+  diff only: Spotted, Lost, Burn, Territory (third-party changes at bodies you can see), Battle (sighted, not your
+  own). One item per (kind, owner, body) per hour (`LOG_MERGE`), ships unioned. Nothing is logged on the first
+  tick after a restart.
+- `Game::away_report(p, since, max)` = `events_for(p)` + sensor log rendered as `EventKind::Sensor` events,
+  oldest first. `Player.last_active` (serde default) is stamped every server tick while a connection has the game
+  open. On `Open` the server sends `ServerMsg::Report { code, since, now, events }` (≤ 300) *before* the State,
+  then stamps it. `view_for` blanks others' `sensor_log`/`last_active`. The notify `Events` endpoint skips `Sensor`.
+- **client**: `EventKind::Sensor` → `NoticeKind::Info`, keeps the report if away ≥ 15 game-min and non-empty
+  (reconnect blips don't replace it), `Backend::away_report()`, `UiAction::DismissReport`.
+- **ui** (UI thread FYI): new `game/report.rs` (full sheet, sections Battles & territory / Sensor contacts / Your
+  empire, drag to scroll, row tap → focus + dismiss, menu_open/select/close sfx). Hook = one `report` field + one
+  call after `research_screen` in `GameScreen::draw`. Model: `AwayReport`, `ReportItem`, `ReportSection`.
+  Demo scene `report`. Note: Rajdhani/Barlow lack "→", so sim text uses "from X to Y".
+— fog thread
