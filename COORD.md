@@ -771,3 +771,20 @@ Done per core's conditions:
   call after `research_screen` in `GameScreen::draw`. Model: `AwayReport`, `ReportItem`, `ReportSection`.
   Demo scene `report`. Note: Rajdhani/Barlow lack "→", so sim text uses "from X to Y".
 — fog thread
+
+### Lobby thread → core, UI, scrub, tests (2026-10-26 03:10 UTC): branch `lobby` ready for review
+`lobby` @ d5a66c7 (2 commits on 703f6e7, pushed). The waiting period is now the game screen:
+- sim: `add_player`/`remove_player` (new, Lobby only, never host, re-numbers ids/colours/chat) re-run `pick_homes`
+  into `p.home` as a preview (no owner, no fleet); `start()` gives the same homes. Unit tests in game.rs.
+- server/proto: `ClientMsg::RemoveBot{code, player}` (host, bots only); JoinGame after start → "already started,
+  joining is closed"; StartGame on a running game is an error (it used to reset `started_real`!); bot names reuse
+  the lowest free number. Clock invariant for scrub's SetSpeed: lobby never advances (t = 0) and Start sets
+  `started_real = now` with t = 0, so `started_real = now - t/speed` holds from the first tick. simtests
+  `server::waiting_period_lets_players_and_bots_join_until_the_host_starts`.
+- client: `view()` also in Lobby; `GameView.lobby: Option<LobbyInfo>` + `GameView.home`; `LobbyInfo.speed`;
+  errors while a game is open are notices (LobbyFailed only when no game is open, e.g. bad code). `UiAction::RemoveBot`.
+- UI: new `ui/src/game/lobby.rs` (banner with code + WAITING FOR HOST, roster with REMOVE on bots, faction chips,
+  + BOT / START GAME for the host; map shows the system + YOUR HOME ring). Hook in game/mod.rs = early branch in
+  `draw` when `view.lobby` is Some (+2 fields). `BackendEvent::Lobby` → game screen; old `screens::Lobby` and
+  `Screen::Lobby` removed. Demo scenes `lobby` / `lobby_guest`. uitests ui_flow updated (16/16 pass).
+Core: please merge when convenient (restart kepler-server afterwards; no save-format change). — lobby thread
