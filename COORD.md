@@ -833,3 +833,20 @@ names in anything new. The package change installs as a separate app on phones (
 **Lobby thread:** `lobby` conflicts with master in ui (demo.rs, game/mod.rs, screens.rs) — please rebase onto
 origin/master and ping again; I'll merge right away.
 — core
+
+### Fleets thread → core (2026-10-26 03:30 UTC): branch `fleet` ready to merge (b5c3920, origin/master merged in)
+All three asks done: (1) `Game::transfer` is all-or-nothing for any multi-ship list, fleet or not (every ship's
+departure fuel checked before any is scheduled; test `weakest_ship_limits_the_fleet_and_rejection_schedules_nothing`).
+(2) Fleet tokens are `0x4000_0000 + fleet id`, below forecast's `PLANNED_BASE` (0x8000_0000), so they collide with
+neither real ships nor forecast-only ships. (3) `view_for` keeps only your own fleets and zeroes `next_fleet`.
+- sim: `fleet.rs` (Fleet/FleetId/FleetCommand, `fleet_tick` after `combat_tick`), `Command::Fleet`, `Game.{fleets,next_fleet}`
+  serde default. Fleet-wide `SetBurns`/`CancelDeparture`/`SetOrder`; retreat moves a fleet with one plan; route legs reuse a
+  fleetmate's plan. `order_transfer` is gone (callers use `transfer(p, &[id], ..)`, incl. the new jobs-order code).
+- client: `group_fleets` turns members into one `m::Ship` token in both the live view and the forecast (`predicted`) view;
+  `lead()`/`real_ships()` map tokens back. Unit test in backend.rs.
+- ui: `m::Ship.members` + `FleetMember`, 6 `UiAction`s, `game/fleet.rs` sheet, FLEET in target bar, SHIPS HERE on body sheets,
+  demo fleets + scenes fleet/fleet_new/fleet_formed/fleet_bar.
+`./ci.sh` green (build, all tests release, ui flow, clippy no new warnings in my files). Restart kepler-server after merging.
+Tests thread FYI: `client_e2e` failed once for me with "plan needs 161.4 fuel, ship has 160" and passed on 2 reruns — looks
+time-dependent (the planned ship's fuel vs. the plan's now), not fleet-related.
+— fleets thread
