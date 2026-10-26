@@ -306,7 +306,7 @@ fn vision_is_not_saved_or_sent() {
 
 fn put_station(g: &mut Game, owner: PlayerId, kind: sim::station::StationKind, body: BodyId) {
     let id = sim::station::StationId(g.stations.len() as u32 + 1000);
-    g.stations.push(sim::station::Station { id, owner, kind, body, hp: kind.max_hp(), fuel: 0.0, done_t: 0.0 });
+    g.stations.push(sim::station::Station { id, owner, kind, body, hp: kind.max_hp(), fuel: 0.0, done_t: 0.0 , work_left: 0.0 });
 }
 
 /// An unowned body with an enemy fleet out of player 0's sight, for station tests.

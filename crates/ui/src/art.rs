@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 pub const SKINS: [&str; 4] = ["vanguard", "hive", "prism", "junker"];
 const TEAM_NAMES: [&str; 4] = ["blue", "red", "green", "yellow"];
-const CLASSES: [&str; 5] = ["scout", "interceptor", "gunship", "bomber", "tanker"];
+const CLASSES: [&str; 6] = ["scout", "interceptor", "gunship", "bomber", "tanker", "tug"];
 const PLANETS: [&str; 11] = [
     "planet_terran", "planet_ocean", "planet_desert", "planet_ice", "planet_lava", "planet_barren", "planet_toxic",
     "planet_jungle", "planet_gas_orange", "planet_gas_blue", "planet_gas_ringed",
@@ -114,6 +114,8 @@ pub fn ship_tex(class: ShipClass, skin: &str, team: Option<usize>) -> Option<Tex
         // No dreadnought sprite yet: a big gunship hull (drawn larger by the map).
         ShipClass::Dreadnought => "gunship",
         ShipClass::Tanker => "tanker",
+        // the assets' tug: a stubby work boat with grapples
+        ShipClass::Constructor => "tug",
     };
     let team = team.map(|t| TEAM_NAMES[t % 4]).unwrap_or("neutral");
     let skin = if SKINS.contains(&skin) { skin } else { "vanguard" };

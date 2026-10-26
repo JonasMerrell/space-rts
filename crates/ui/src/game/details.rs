@@ -66,6 +66,7 @@ fn ship_text(class: ShipClass) -> (&'static str, f64, f64, f64, &'static str, &'
         ShipClass::Bomber => ("Heavy hitter against big hulls.", 80.0, 40.0, 130.0, "Gunships, Dreadnoughts", "Interceptors"),
         ShipClass::Dreadnought => ("Huge capital ship. Very visible.", 500.0, 90.0, 700.0, "Gunships, Bombers", "swarms of Bombers"),
         ShipClass::Tanker => ("Carries fuel to other ships and fuel depots.", 60.0, 0.0, 600.0, "-", "everything (takes 1.5× damage)"),
+        ShipClass::Constructor => ("Builds space stations where it is parked. More of them build faster.", 50.0, 0.0, 120.0, "-", "everything (takes 1.5× damage)"),
     }
 }
 

@@ -51,11 +51,20 @@ pub enum ShipClass {
     Bomber,
     Dreadnought,
     Tanker,
+    /// Builds space stations where it's parked; more of them build faster.
+    Constructor,
 }
 
 impl ShipClass {
-    pub const ALL: [ShipClass; 6] =
-        [ShipClass::Scout, ShipClass::Interceptor, ShipClass::Gunship, ShipClass::Bomber, ShipClass::Dreadnought, ShipClass::Tanker];
+    pub const ALL: [ShipClass; 7] = [
+        ShipClass::Scout,
+        ShipClass::Interceptor,
+        ShipClass::Gunship,
+        ShipClass::Bomber,
+        ShipClass::Dreadnought,
+        ShipClass::Tanker,
+        ShipClass::Constructor,
+    ];
     pub fn label(self) -> &'static str {
         match self {
             ShipClass::Scout => "Scout",
@@ -64,6 +73,7 @@ impl ShipClass {
             ShipClass::Bomber => "Bomber",
             ShipClass::Dreadnought => "Dreadnought",
             ShipClass::Tanker => "Tanker",
+            ShipClass::Constructor => "Constructor",
         }
     }
 }
@@ -393,8 +403,10 @@ pub struct StationInfo {
     /// One of `STATION_KINDS`.
     pub kind: String,
     pub owner: PlayerId,
-    /// Under construction until then.
+    /// Under construction: estimated finish (INFINITY = paused, no workers there).
     pub building_until: Option<f64>,
+    /// Construction progress 0..1 (1 when finished).
+    pub progress: f32,
     /// 0..1
     pub hp: f32,
 }
@@ -416,8 +428,12 @@ pub struct StationsView {
     /// Stations we know of in orbit here (ours always, others when sensors see them).
     pub here: Vec<StationInfo>,
     pub options: Vec<StationOption>,
-    /// We own the body or have a ship parked there, so building is possible at all.
+    /// We have workers here (constructors, or our own shipyard), so building is possible at all.
     pub present: bool,
+    /// Our construction ships parked here.
+    pub constructors: usize,
+    /// Workers on our sites here (constructors + our shipyard, capped); build speed multiplier.
+    pub workers: usize,
 }
 
 /// Station kinds (= sim `StationKind`), also the icon names `station_<lowercase>`.

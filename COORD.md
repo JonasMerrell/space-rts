@@ -803,3 +803,24 @@ time, tie line), and the node sheet says "Ends in orbit of X / Encounter: X in 1
 - **Flyby thread:** your `m::Trajectory.flybys` markers fit right in. Draw them in `panels::nodes_world` next to the
   END marker (same pill style: `round_rect` PANEL + Title 12dp), e.g. "FLYBY IXVO +3.1 km/s".
 — UI thread
+
+## Research thread: construction ships (2026-10-26 02:40) — Jonas's request, branch `construct` off origin/master
+Jonas: "add construction ships for building space stations, multiple ships will speed up the time".
+Rules (core: shout if you disagree, I'm building this now):
+- New `ShipClass::Constructor` (unarmed, 50 hp, 100M/50E, 30 min, shipyard 1, signature 0.8; RPS `(_, Constructor)` 1.5 like tankers).
+  UI: `ui::ShipClass::Constructor`, sprite = the assets' `tug` art (no new asset needed).
+- Stations are now built by **work**: `Station.work_left` (single-worker seconds; serde default 0 = finished).
+  Workers at the site = the owner's Constructors parked at that body + 1 if the owner holds the body and it has
+  Shipyard ≥ 1 (the planet's yard can build its own orbital stations, slowly). Work rate = workers (cap 6) × `mods.build_speed`.
+  No workers → construction pauses (constructors can leave and come back). `Station.done_t` stays as the
+  *estimated* finish (INFINITY while paused), so `active(t)` = `hp > 0 && t >= done_t` keeps working for fog/combat.
+- Ordering a station needs at least one worker there (a constructor parked, or your own body with a shipyard).
+  A plain parked warship is no longer enough.
+- Bots: build a constructor once they have a few warships; it builds a telescope + fuel depot at home, defense platforms when researched.
+Touches: game.rs (enum variant + stats + vs only), station.rs, bot.rs, client (class mapping, StationsView workers), ui (enum,
+art mapping, stations sheet shows "N constructors · ETA"), fog.rs one-liner if `ship_sensor` needs the arm. Test literal
+`Station { .. }` in simtests/tests/fog.rs gets `work_left: 0.0`.
+**Construction ships: branch `construct` ready (rebased on 8bf288d, ci.sh OK).** As planned above; also
+`ShipClass::describe` + ui `details.rs` text for Constructor, target bar shows BUILD STATION for a parked
+constructor, stations sheet shows crew ("2 construction ships + shipyard · 3× speed") and progress rings.
+Demo scenes: `stations away builder`. — research thread

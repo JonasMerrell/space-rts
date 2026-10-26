@@ -396,6 +396,7 @@ fn ship_class(c: g::ShipClass) -> m::ShipClass {
         g::ShipClass::Bomber => m::ShipClass::Bomber,
         g::ShipClass::Dreadnought => m::ShipClass::Dreadnought,
         g::ShipClass::Tanker => m::ShipClass::Tanker,
+        g::ShipClass::Constructor => m::ShipClass::Constructor,
     }
 }
 
@@ -407,6 +408,7 @@ fn sim_class(c: m::ShipClass) -> g::ShipClass {
         m::ShipClass::Bomber => g::ShipClass::Bomber,
         m::ShipClass::Dreadnought => g::ShipClass::Dreadnought,
         m::ShipClass::Tanker => g::ShipClass::Tanker,
+        m::ShipClass::Constructor => g::ShipClass::Constructor,
     }
 }
 
@@ -1056,11 +1058,12 @@ impl Backend for ClientBackend {
         let g = self.game.as_ref()?;
         let me = self.me;
         let b = SimBody(id);
-        let st = g.bodies.get(id as usize)?;
+        g.bodies.get(id as usize)?;
         if g.system.body(b).is_star() {
             return None;
         }
-        let present = st.owner == Some(me) || g.ships.iter().any(|s| s.owner == me && s.parked_at() == Some(b));
+        let workers = g.workers(me, b);
+        let present = workers > 0;
         let here = g
             .stations
             .iter()
@@ -1068,7 +1071,8 @@ impl Backend for ClientBackend {
             .map(|s| m::StationInfo {
                 kind: format!("{:?}", s.kind),
                 owner: s.owner,
-                building_until: (s.done_t > g.t).then_some(s.done_t),
+                building_until: s.building().then_some(s.done_t),
+                progress: if s.building() { (1.0 - s.work_left / s.kind.cost().2).clamp(0.0, 1.0) as f32 } else { 1.0 },
                 hp: (s.hp / s.kind.max_hp()) as f32,
             })
             .collect();
@@ -1085,7 +1089,7 @@ impl Backend for ClientBackend {
                 }
             })
             .collect();
-        Some(m::StationsView { here, options, present })
+        Some(m::StationsView { here, options, present, constructors: g.constructors_at(me, b), workers })
     }
 
     fn preview_nodes(&self, ship: ShipId, nodes: &[m::ManeuverNode]) -> Option<m::Trajectory> {

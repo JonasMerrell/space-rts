@@ -2,6 +2,7 @@
 //! replay of the same commands gives the same game.
 use crate::game::{Command, Game, PlayerId, ShipClass, ShipState, Upgrade, TICK};
 use crate::system::{BodyId, BodyKind};
+use crate::station::StationKind;
 use crate::tech::{Branch, Tech};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,8 +78,19 @@ fn think(g: &mut Game, me: PlayerId, d: Difficulty) {
     let mix = [ShipClass::Gunship, ShipClass::Bomber, ShipClass::Interceptor, ShipClass::Gunship, ShipClass::Tanker];
     let n_ships = g.ships.iter().filter(|s| s.owner == me).count();
     let want = mix[n_ships % mix.len()];
+    let constructors = g.ships.iter().filter(|s| s.owner == me && s.class == ShipClass::Constructor).count();
     if g.bodies[home.0 as usize].queue.len() < 2 {
-        let _ = g.apply(me, Command::Build { body: home, class: want });
+        // one construction ship once the fleet is going, then back to warships
+        let class = if n_ships >= 6 && constructors == 0 { ShipClass::Constructor } else { want };
+        let _ = g.apply(me, Command::Build { body: home, class });
+    }
+    // stations at home: sensors and fuel first, guns once researched
+    if g.constructors_at(me, home) > 0 && !g.stations.iter().any(|s| s.owner == me && s.building()) {
+        for kind in [StationKind::Telescope, StationKind::FuelDepot, StationKind::Defense, StationKind::Shipyard] {
+            if g.station_blocker(me, home, kind).is_none() && g.apply(me, Command::BuildStation { body: home, kind }).is_ok() {
+                break;
+            }
+        }
     }
     // expansion / attack: idle armed ships at home go out in squads
     let idle: Vec<_> = g

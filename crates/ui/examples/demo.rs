@@ -71,16 +71,20 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                     g.research_branch = if scene == "research" { 2 } else { 0 };
                 }
                 "stations" => {
+                    add_builders(be, 2, 2);
                     be.act(ui::UiAction::BuildStation { body: 2, kind: "Telescope".into() });
                     g.selected = Some(Focus::Body(2));
                     g.stations_for = Some(2);
                     g.station_pick = Some("FuelDepot".into());
                 }
                 "away" => {
-                    if let Some(sh) = be.view.as_mut().and_then(|v| v.ships.iter_mut().find(|s| s.id == 3)) {
-                        sh.parked_at = Some(3);
-                    }
+                    add_builders(be, 3, 1);
                     g.selected = Some(Focus::Body(3));
+                }
+                "builder" => {
+                    add_builders(be, 3, 3);
+                    g.selected = Some(Focus::Ship(90));
+                    g.mode = Mode::Target(90);
                 }
                 "rock" => g.selected = Some(Focus::Body(9)),
                 "res_energy" => g.res_open = Some(1),
@@ -128,6 +132,28 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                 _ => {}
             }
         }
+    }
+}
+
+/// Park `n` construction ships (one stack, id 90) at a body.
+fn add_builders(be: &mut DemoBackend, body: BodyId, n: u32) {
+    if let Some(v) = be.view.as_mut() {
+        let me = v.me;
+        v.ships.push(Ship {
+            id: 90,
+            name: "Hardhats".into(),
+            class: ShipClass::Constructor,
+            owner: me,
+            count: n,
+            fuel: 120.0,
+            fuel_max: 120.0,
+            parked_at: Some(body),
+            trajectory: None,
+            nodes: vec![],
+            destination: None,
+            retreat: false,
+            seen_at: None,
+        });
     }
 }
 

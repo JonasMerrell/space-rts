@@ -229,13 +229,20 @@ pub fn stations_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, vie
     let pad = 16.0 * s();
     let name = view.body(body).map(|b| b.name.to_uppercase()).unwrap_or_default();
     inked("STATIONS", r.x + pad, r.y + 22.0 * s(), 22.0, PAPER, Align::Left);
-    text(&format!("in orbit of {name}"), r.x + pad, r.y + 44.0 * s(), 13.0, MUTED, FontKind::Title, Align::Left);
     if close_x(inp, r) {
         g.stations_for = None;
         art::sfx("menu_close");
         return;
     }
     let Some(sv) = be.stations(body) else { return };
+    // Crew line: who is building here and how fast.
+    let yard = sv.workers > sv.constructors;
+    let crew = match (sv.constructors, yard) {
+        (0, false) => "no construction ships here".to_string(),
+        (0, true) => "your shipyard builds at 1×".to_string(),
+        (n, y) => format!("{n} construction ship{}{} · {}× speed", if n == 1 { "" } else { "s" }, if y { " + shipyard" } else { "" }, sv.workers),
+    };
+    text(&format!("in orbit of {name} · {crew}"), r.x + pad, r.y + 44.0 * s(), 13.0, if sv.present { MUTED } else { DANGER }, FontKind::Title, Align::Left);
 
     // Existing stations as a row of small icons.
     let mut x = r.x + pad;
@@ -246,17 +253,31 @@ pub fn stations_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, vie
     for st in &sv.here {
         let c = vec2(x + 12.0 * s(), y);
         let tint = if st.building_until.is_some() { Color::new(1.0, 1.0, 1.0, 0.45) } else { WHITE };
+        if st.building_until.is_some() {
+            // progress ring under the icon
+            draw_circle_lines(c.x, c.y, 14.0 * s(), 2.0 * s(), Color::new(1.0, 1.0, 1.0, 0.15));
+            let n = 24;
+            let k = (st.progress * n as f32).round() as i32;
+            for j in 0..k {
+                let a0 = -std::f32::consts::FRAC_PI_2 + j as f32 / n as f32 * std::f32::consts::TAU;
+                let a1 = a0 + std::f32::consts::TAU / n as f32;
+                let p0 = c + vec2(a0.cos(), a0.sin()) * 14.0 * s();
+                let p1 = c + vec2(a1.cos(), a1.sin()) * 14.0 * s();
+                draw_line(p0.x, p0.y, p1.x, p1.y, 2.5 * s(), ACCENT);
+            }
+        }
         if !icon(&format!("station_{}", snake(&st.kind)), c, 24.0 * s(), tint) {
             cel::diamond(c, 8.0 * s(), team(view.player(st.owner).map(|p| p.color)).0);
         }
         let mine = st.owner == view.me;
         draw_circle(c.x + 9.0 * s(), c.y + 9.0 * s(), 3.5 * s(), if mine { team(view.player(view.me).map(|p| p.color)).0 } else { DANGER });
         let label = match st.building_until {
-            Some(t) => fmt_dur(t - view.now),
+            Some(t) if t.is_infinite() => format!("{:.0}% paused", st.progress * 100.0),
+            Some(t) => format!("{:.0}% · {}", st.progress * 100.0, fmt_dur(t - view.now)),
             None => format!("{:.0}%", st.hp * 100.0),
         };
         text(&label, c.x + 16.0 * s(), y, 11.0, MUTED, FontKind::Title, Align::Left);
-        x += 26.0 * s() + measure(&label, FontKind::Title, 11.0).x + 8.0 * s();
+        x += 30.0 * s() + measure(&label, FontKind::Title, 11.0).x + 10.0 * s();
         if x > r.x + r.w - 60.0 * s() {
             break;
         }
@@ -287,7 +308,7 @@ pub fn stations_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, vie
         text(&o.name.to_uppercase(), cr.x + 40.0 * s(), cr.y + cr.h * 0.36, 13.0, if blocked { MUTED } else { PAPER }, FontKind::Title, Align::Left);
         let sub = match &o.blocker {
             Some(b) => b.clone(),
-            None => format!("{}M {}E {}", fmt_amount(o.cost.matter), fmt_amount(o.cost.energy), fmt_dur(o.cost.seconds)),
+            None => format!("{}M {}E {}", fmt_amount(o.cost.matter), fmt_amount(o.cost.energy), fmt_dur(o.cost.seconds / sv.workers.max(1) as f64)),
         };
         let sub_w = cr.w - 40.0 * s() - 48.0 * s();
         let sub = wrap(&sub, FontKind::Body, 11.0, sub_w).into_iter().next().unwrap_or_default();
@@ -307,7 +328,7 @@ pub fn stations_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, vie
             art::sfx("menu_select");
         }
     }
-    let foot = info.unwrap_or_else(|| if sv.present { "Tap a station for details.".into() } else { "Park a ship here to build stations.".into() });
+    let foot = info.unwrap_or_else(|| if sv.present { "Tap a station for details. More construction ships here build faster.".into() } else { "Send a construction ship here to build stations.".into() });
     for (k, line) in wrap(&foot, FontKind::Body, 12.0, r.w - 2.0 * pad).into_iter().take(2).enumerate() {
         text(&line, r.x + pad, r.y + r.h - 32.0 * s() + k as f32 * 16.0 * s(), 12.0, MUTED, FontKind::Body, Align::Left);
     }
