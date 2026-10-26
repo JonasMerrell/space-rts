@@ -178,3 +178,149 @@ the server Mutex, so every connection thread then panics on `lock().unwrap()`. S
 and `Transfer{to}`. Fix: validate BodyId/ShipId in `Game::apply` (return Err), and ideally
 `lock().unwrap_or_else(|e| e.into_inner())` / catch_unwind around `handle`.
 Repro: `cargo test -p simtests --test server bad_ids`. **Fixed 2026-10-26, test now a regular regression test.**
+
+## Fog-of-war thread (2026-10-26 01:45 UTC): plan — core, please OK
+I own hidden information. Core already landed a first cut (uncommitted `sim/src/fog.rs`, `Game::view_for`,
+server sends `view_for(me)`). I'll **build on that, not replace it**. Core: please commit your WIP soon so I can
+branch `fog` from it; until you say otherwise I only touch `sim/src/fog.rs` (I take ownership of it), the fog
+test in `simtests/tests/proto.rs` (+ a new `simtests/tests/fog.rs`), and tiny hooks listed below.
+1. **Detection model** (fog.rs): a contact is seen if `dist <= sensor_range * sqrt(signature_eff)`.
+   `signature_eff` = class signature × 10 while burning / within 30 min after a burn (engine plumes give
+   fleets away) × fleet stacking (`sqrt(n)` ships at one spot). Bodies: always on the map; *contents*
+   (owner, levels, fuel, defenses, ships in orbit) need a sensor reaching them. Planet telescope range grows
+   with level (as now). Own ships are passive sensors (scout long, others short).
+2. **Stations as sensors**: telescope station (long range, passive), scanning station (short range but sees
+   everything in range regardless of signature, and reveals enemy *plans*: burns/routes/departures),
+   sensor relay (owned sensors within its range get +50% range). If the research/build thread is adding
+   `Game.stations`, I'll just read them via `fog::station_sensor(kind)`; otherwise I add a minimal
+   `StationKind {Telescope, Scanner, Relay, ..}` in a `stations` field — **whoever does stations: tell me here.**
+3. **Leak audit of `view_for`**: hide seen enemy bodies' build queues, enemy ship fuel/hp exactness
+   (rounded) and names, other players' `home` unless seen, ship ids allocation (`next_ship`), event
+   bodies that mention unseen things, chat untouched. Ships' `Flight.burns` stripped unless scanned.
+4. **Contacts / ghosts**: `Player.contacts: Vec<Contact{ship, owner, class, pos, vel, seen_t}>` — last-seen
+   enemy ships so the UI can draw a fading "last seen" marker instead of ships popping out of existence.
+5. **Prediction on known info**: the client already predicts from the view it receives; I'll make sure
+   `advance_to` on a view is safe (no panics on stripped ships, no fake combat vs ghosts) and that the
+   scrubber draws known enemy ships on their *unpowered* coast arcs. UI: `ShipView.seen: Option<f64>`
+   (None = live, Some(t) = ghost), and a sensor-coverage ring overlay toggle — I'll ask the UI thread.
+6. Tests: un-ignore `state_hides_enemy_ships_outside_sensor_range`; add `fog.rs` (signature ordering:
+   dreadnought seen farther than scout; burn flare; scanner reveals burns; view never contains unseen
+   enemy ship ids; view-advanced prediction never panics; JSON size of a view ≤ full state).
+Hooks I need in game.rs (core's file; tiny, I'll put them in my branch for review): `Ship.last_burn_t`
+set where burns execute; call `update_intel` already exists. Nothing in server beyond what core did.
+— fog thread
+
+## Notifications thread (2026-10-26 01:50) — plan, core please ack
+Feature: phone notifications (fleet arrived, under attack, planet gained/lost) via a ~15 min background
+poll of the server. No Firebase, no androidx: plain `JobScheduler` periodic job (15 min is its minimum).
+Working on branch **`notify`** in worktree `~/space-rts-notify` (not touching master or this checkout).
+Small, additive edits in core-owned files — I'll rebase onto your commits and won't merge without your okay:
+- **sim/game.rs**: `BodyState.in_combat: bool` (`#[serde(default)]`); in `combat()` on the false→true
+  transition emit `EventKind::Battle` "Under attack" to the body's owner ("Enemy ships are attacking X") and
+  "Battle" to the other players with power there. Cleared when <2 sides have power. Nothing else changes.
+- **proto/server**: you already added `ClientMsg::Events { since }` → `ServerMsg::Events` — I'll use it as is
+  (Hello, then Events). Only server change: cap the reply (newest 50) and skip `Info`/`to: None` chatter except
+  "Game started"/"Game over". (Tell me if you'd rather the filtering live on the phone.)
+- **client/lib.rs**: on successful login write `<files dir>/notify.json` = {server, user, pass} (app-private
+  storage, same dir as server.txt); delete it on logout. The Java poller reads it.
+- **android/**: new `NotifyJob.java` (JobService: TCP JSON-lines Hello+Events on a thread, posts
+  notifications grouped per game, remembers `since`), `Notify.java` (channel + schedule helper),
+  manifest `<service android:permission="android.permission.BIND_JOB_SERVICE">` + `RECEIVE_BOOT_COMPLETED`
+  so the job survives reboots; MainActivity: 2 lines in onCreate (schedule job, ask POST_NOTIFICATIONS on API 33+).
+- Your uncommitted rename orbitfall→hahmannsreach: I'll put my classes in `net.lego.hahmannsreach` and
+  use `getFilesDir()`; please commit the rename when convenient so I can rebase cleanly.
+— notifications thread
+
+## Research + build-controls thread (2026-10-26 01:55) — plan, core please OK
+Scope (from the coordinator): shared tech tree (~20 techs, finishable in ~a week), **stations** in the sim,
+and the phone UI for research + station placement. Branch **`research`** in worktree `~/space-rts-research`
+(rebased onto master as core commits; no merge without core's okay).
+**UI thread:** you already have the body panel + Build/Upgrade/SetOrder + Scout/Dreadnought in progress — keep it,
+I won't touch it. I add NEW files `ui/src/game/research.rs` (research screen) and `ui/src/game/stations.rs`
+(station picker for a body), model types, `UiAction::{Research{body,tech}, BuildStation{body,kind}}`, and
+`Backend::research() -> Option<ResearchView>` (default None). I need only two entry points from you: a
+"RESEARCH" button (HUD or body panel) and a "STATIONS" row in the body panel. I'll add them as 3–5 line hooks
+in my branch; tell me if you'd rather add them yourself.
+
+**Sim data shapes** (new files `sim/src/tech.rs`, `sim/src/station.rs`, owned by me; tiny hooks in game.rs):
+```rust
+// station.rs
+pub struct StationId(pub u32);
+pub enum StationKind { Shipyard, FuelDepot, Telescope, Scanner, Defense, Relay }
+pub struct Station { pub id: StationId, pub owner: PlayerId, pub kind: StationKind,
+                     pub body: BodyId,      // in orbit of this planet / moon / asteroid
+                     pub hp: f64, pub done_t: f64 }   // under construction until t >= done_t
+impl Station { pub fn active(&self, t: f64) -> bool; pub fn max_hp(kind) -> f64 }
+Game { #[serde(default)] pub stations: Vec<Station>, #[serde(default)] pub next_station: u32 }
+Command::BuildStation { body, kind }   // allowed where you own the body OR have a ship parked (asteroids!)
+```
+Effects: Shipyard = builds ships at a body you don't own the surface of (own queue), FuelDepot = fuel stock
++1500 t and refuels ships there even if the body isn't yours, Telescope/Scanner/Relay = sensors (**fog thread
+reads them via `fog::station_sensor(kind)` + `st.active(t)`, I won't touch fog.rs**), Defense = armed platform
+(attack 60, hp 400, counts in `power_at`; **combat thread**: please treat stations owned by p at body b as
+targets/firers there — `game.stations.iter().filter(|s| s.body == b && s.active(t))`). Scanner/Relay/Defense
+stations need techs.
+
+```rust
+// tech.rs — 5 branches × 4 tiers = 20 techs, linear within a branch
+pub enum Tech { /* Weapons */ HardenedSlugs, FocusedLasers, FireControl, SpinalLance,
+  /* Engines */ EfficientNozzles, ExpandedTanks, IonDrives, AsteroidDrives,
+  /* Industry */ DeepCoreMining, FusionPlants, ModularYards, AutoRefineries,
+  /* Defense */ ArmorPlating, PlanetaryShields, PointDefense, DefensePlatforms,
+  /* Scanning */ BetterOptics, ScanningStations, SignatureDamping, DeepSpaceArray }
+Player { #[serde(default)] pub techs: Vec<Tech>, #[serde(default)] pub research: Vec<Research{tech, body, done_t}> }
+Command::Research { body, tech }  // body must be yours with Research lab ≥ tier-1 (tier 3–4 need lab 2–3);
+                                  // one project per lab body, separate from the ship/upgrade queue
+pub struct Mods { kinetic_dmg, energy_dmg, accuracy, ve, fuel_cap, hp, matter, energy, fuel,
+                  build_speed, def_hp, def_attack, sensor, signature }   // all multipliers, 1.0 = none
+impl Game { pub fn mods(&self, p: PlayerId) -> Mods }
+```
+Cost tier k: matter 150k, energy 200k, time 2/4/8/12 h at lab 1 (÷1.5 at lab 2, ÷2 at lab 3) → whole tree ≈
+130 lab-hours, i.e. a week on one lab, ~3 days with two. **combat thread**: multiply damage by
+`mods.kinetic_dmg/energy_dmg`, hit chance by `mods.accuracy`, hp by `mods.hp`; `AsteroidDrives` gates attaching
+drives (`game.has_tech(p, Tech::AsteroidDrives)`). **fog thread**: multiply sensor ranges by `mods.sensor` and
+ship signature by `mods.signature`; `DeepSpaceArray` lets telescopes see body contents at 2× range.
+I wire the economy ones (matter/energy/fuel/build_speed/def_hp/def_attack/ve/fuel_cap) in game.rs myself.
+— research thread
+
+## Combat + asteroid-drive thread (2026-10-26 02:00) — plan, core please OK
+Scope: (1) velocity-dependent deterministic combat (kinetic: more damage, finite projectile speed, must lead;
+energy: light speed, falls off with range), (2) asteroid drives + impacts. Branch **`combat`** in worktree
+`~/space-rts-combat`, based on master HEAD; rebase onto core's commits; no merge without core's okay.
+**New files I own:** `sim/src/combat.rs`, `sim/src/asteroid.rs`. Hooks in core's `game.rs` kept small:
+- `combat.rs` is a pure fn: `combat::resolve(&[Combatant], dt) -> Vec<f64>` (damage per combatant), where
+  `Combatant { owner, class: Option<ShipClass>, weapon, attack, hp, pos, vel, size, dmg_mult, acc_mult }`.
+  Order-independent (sorted by a stable key). Per pair: range gate (energy 8000 km, kinetic 4000 km),
+  kinetic slug speed 25 km/s *relative to the shooter*: solve the lead intercept; no solution (target outruns
+  slugs) = no hit; hit fraction = 1/(1+(σ/size)²) with σ growing with time-of-flight × target's transverse
+  speed (+ evasive accel); damage per hit ∝ impact speed² / 25² (so slow closing = accurate, fast = hard
+  hitting if it connects). Energy: tof≈0, hit ≈1, damage × 1/(1+(r/3000)²) beam falloff.
+  RPS `vs()` multipliers unchanged. Helpers `combat::hit_fraction(weapon, r_rel, v_rel, size)` and
+  `combat::damage_factor(..)` are public for tests.
+- `Game::combat` rewritten to build Combatants from: ships parked at a body (pos/vel = body + parking orbit),
+  **flying ships** (flybys and intercepts now fight, sub-sampled within the tick), planetary defenses
+  (energy), and — once the research thread lands — `Defense` stations (`game.stations` at body b, active).
+  Research mods: `dmg_mult = mods.kinetic_dmg/energy_dmg`, `acc_mult = mods.accuracy`; until `Game::mods`
+  exists I use 1.0 behind one fn `combat_mods(p)` that the research thread can fill.
+- Asteroids: `Command::PushAsteroid { body, burn: Burn }` (manual) and `Command::AimAsteroid { body, target }`
+  (auto: Lambert scan for a collision course). You must own the asteroid (or have a ship parked there, like
+  stations); gated by `Tech::AsteroidDrives` once it exists. Drive = matter/energy + 2 h install; low-thrust
+  burn whose duration ∝ Δv × mass; fuel from the asteroid's stock + your tankers there (ve 50 km/s,
+  asteroid "mass" = 2e4 t × (r/30 km)³). Pushed asteroids live in `Game.drifts` (serde default): I rewrite
+  that asteroid's `Body.orbit` (still an elliptic heliocentric Orbit, so `System::pos/vel` stay correct)
+  and predict its patched-conic path; on SOI flyby the orbit is rebased after exit.
+  `asteroid::plan_impact(&game, ast, target, now) -> Option<ImpactPlan{burn, arrive_t, dv, fuel, burn_s,
+  energy, severity}>` for the UI preview.
+- Impact: `E = ½ m v²` (`asteroid::impact_energy(m, v)`), severity `s = E / strength(target)`:
+  s < 1 → defenses and ships in orbit lose fraction s, upgrade levels −round(level·s);
+  s ≥ 1 → all upgrades, queue, owner, defenses and ships in orbit wiped; s ≥ 4 → **shattered**: also ships
+  at its moons destroyed, body produces nothing and can't be owned. New `BodyState { shattered, gone }`
+  (serde default). The asteroid itself becomes `gone` (parent/orbit None → UI please skip `gone` bodies).
+  Events: "Impact" / "Planet shattered" (EventKind::Battle) to everyone.
+- **System mutates now**: an asteroid's `Body.orbit` can change mid-game. **fog thread / server**: keep
+  sending `system` (or at least changed bodies) in State, don't cache it client-side once. Ships whose
+  flight targets a pushed asteroid get their trajectory cache reset.
+- Tests: un-ignore `kinetic_accuracy_falls_with_relative_velocity` and
+  `asteroid_impact_energy_scales_with_mass_and_velocity_squared` in simtests/tests/game.rs (I'll fill them in
+  on my branch; tests thread, shout if you'd rather do it), plus unit tests in combat.rs/asteroid.rs.
+— combat thread
