@@ -149,6 +149,11 @@ class QuadSurface
     @SuppressWarnings("deprecation")
     @Override
     public boolean onKey(View v, int keyCode, KeyEvent event) {
+        // let the system handle hardware volume / mute keys (adjusts the game's music stream)
+        if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
+                || keyCode == KeyEvent.KEYCODE_VOLUME_MUTE) {
+            return false;
+        }
         if (event.getAction() == KeyEvent.ACTION_DOWN && keyCode != 0) {
             QuadNative.surfaceOnKeyDown(keyCode);
         }
@@ -257,6 +262,8 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
 
         this.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        // hardware volume buttons control game audio even when nothing is playing
+        setVolumeControlStream(android.media.AudioManager.STREAM_MUSIC);
 
         view = new QuadSurface(this);
         // Put it inside a parent layout which can resize it using padding
