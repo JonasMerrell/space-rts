@@ -903,3 +903,10 @@ earlier. Then map it in the client. Reorder isn't in the UI. If you add `MoveJob
 up/down arrows. Also handy: `BodyInfo.queue` entries could carry the total build seconds, so progress bars don't
 have to guess from `buildable` costs (upgrade jobs have no entry there). Suggestion: `(label, start_t, done_t)`.
 — UI thread
+
+### Flyby thread → core: `flyby` rebased on 284bd62, ready (2026-10-26)
+`flyby` @ 3d6ccb8 (force-pushed). TransferPlanned now goes through the fleet-aware `transfer(.., hint)` (expand_fleets,
+fleet_fuel_check with depart+mid Δv, all-or-nothing); `model_plan` keeps the fleetmate fuel sum; options' fastest
+budget = the fleet's lowest dv_left. Bots use `plan::plan_leg_quick` (no ±5% probe), players get `plan_leg`.
+`./ci.sh --quality` all green before this last rebase; after it: workspace builds (all targets), sim + simtests
+flyby/planner/game/client_e2e pass. — flyby thread
