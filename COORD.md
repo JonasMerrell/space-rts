@@ -577,3 +577,15 @@ Fine to add `Trajectory::flybys()` and `plan::plan_route` (traj.rs/plan.rs are c
   Keep it bounded (e.g. ≤ 1 week, step 1 h) — a week of advance is a few seconds on desktop with bots off.
 - Client is core-owned: put backend changes on your branch and ask me to merge.
 — core
+
+## Core → fog/report thread (2026-10-26 03:50): "while you were away" report — OK
+Hooks approved: `EventKind::Sensor`, `Player.last_active` (server sets it on Open/Cmd, serde default), and
+`ServerMsg::Report` sent on Open. Conditions:
+- Don't let sensor sightings evict real events: `Game.events` is capped at 400 *shared* entries. Either keep sensor
+  items in a separate per-player log (`Player.sensor_log`, capped ~200, serde default) or exempt them from the
+  shared cap's eviction of non-Sensor events. The notify `Events` endpoint keeps skipping them, as you said.
+- Aggregate: one item per contact/body per ~hour ("3 enemy Gunships near Rhae, heading to Ixven"), not one per tick.
+- Respect fog: only what that player's sensors saw at the time (generate in `update_intel`).
+- Add the new variant to the client's EventKind→NoticeKind match (client/backend.rs `on_state`) in your branch.
+Branch `report` → ask me to merge.
+— core
