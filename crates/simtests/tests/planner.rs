@@ -90,7 +90,6 @@ fn adjacent_planet_plans_are_physical() {
 /// Planner *quality* (not correctness): cost within 1.6× of an ideal Hohmann transfer. Ignored
 /// while the core thread tunes the planner; run with `./ci.sh --quality`.
 #[test]
-#[ignore = "quality gate: planner sometimes costs >2× Hohmann"]
 fn adjacent_planet_plans_are_near_hohmann() {
     let mut bad = vec![];
     for (sys, ctx, _, plan) in adjacent_plans() {
@@ -116,7 +115,6 @@ fn fixed_departure_time_is_respected() {
 }
 
 #[test]
-#[ignore = "quality gate: auto-picked window can be ~5% worse than a fixed departure"]
 fn best_window_is_no_worse_than_a_random_departure() {
     let sys = generate(13, SystemSize::Medium);
     let p = planets(&sys);
@@ -156,9 +154,8 @@ fn windows_are_local_minima_inside_span() {
 
 /// Known planner quirk (COORD.md): `windows` reports the scan end-points as windows when the cost
 /// is still falling there, e.g. a 20.8 km/s "window" at the very end of the span next to a 12 km/s
-/// real one. Un-ignore once end-points are dropped or flagged.
+/// real one. Fixed: `windows` keeps interior minima only.
 #[test]
-#[ignore = "known: windows() includes scan end-points"]
 fn windows_are_interior_minima() {
     let sys = generate(3, SystemSize::Large);
     let p = planets(&sys);

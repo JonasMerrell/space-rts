@@ -72,6 +72,25 @@ impl End {
     }
 }
 
+/// An unpowered pass through a body's sphere of influence that isn't the end of the trajectory: a
+/// gravity assist. Speeds are km/s; `gain` is the change of speed in the frame of the body's parent
+/// (positive = slingshot boost, negative = braking flyby).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Flyby {
+    pub body: BodyId,
+    /// time of closest approach (or of SOI exit if the pass was cut short by a burn)
+    pub t: f64,
+    pub t_in: f64,
+    pub t_out: f64,
+    /// closest approach to the body's centre, km
+    pub rp: f64,
+    /// hyperbolic excess speed relative to the body
+    pub vinf: f64,
+    /// angle the body turned the velocity by (radians, unsigned)
+    pub turn: f64,
+    pub gain: f64,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Trajectory {
     pub segs: Vec<Segment>,
@@ -105,6 +124,56 @@ impl Trajectory {
                 propagate(mu, seg.r0, seg.v0, t - seg.t0).0
             })
             .collect()
+    }
+    /// Gravity assists along the path: every complete pass (entered from the parent's frame and left
+    /// again) through a body's SOI. Burns inside the SOI split the pass into several segments; they are
+    /// merged here.
+    pub fn flybys(&self, sys: &System) -> Vec<Flyby> {
+        let mut out = vec![];
+        let mut i = 1;
+        while i < self.segs.len() {
+            let b = self.segs[i].parent;
+            let up = sys.body(b).parent;
+            if up.is_none() || Some(self.segs[i - 1].parent) != up {
+                i += 1;
+                continue;
+            }
+            let mut j = i;
+            while j + 1 < self.segs.len() && self.segs[j + 1].parent == b {
+                j += 1;
+            }
+            if j + 1 >= self.segs.len() || Some(self.segs[j + 1].parent) != up {
+                i = j + 1;
+                continue; // still inside at the end (capture, impact or horizon), or went down into a moon
+            }
+            let mu = sys.body(b).mu;
+            let (s0, s1) = (&self.segs[i], &self.segs[j]);
+            let (_, v_out) = propagate(mu, s1.r0, s1.v0, s1.t1 - s1.t0);
+            let mut best = (s0.r0.len(), s0.t0);
+            for s in &self.segs[i..=j] {
+                let c = Conic::from_state(mu, s.r0, s.v0);
+                if let Some(tp) = c.time_to_periapsis(s.r0, s.v0).filter(|&tp| s.t0 + tp <= s.t1) {
+                    if c.rp < best.0 {
+                        best = (c.rp, s.t0 + tp);
+                    }
+                }
+            }
+            let energy = s0.v0.len2() / 2.0 - mu / s0.r0.len();
+            let (_, vb_in) = sys.rel_state(b, s0.t0);
+            let (_, vb_out) = sys.rel_state(b, s1.t1);
+            out.push(Flyby {
+                body: b,
+                t: best.1,
+                t_in: s0.t0,
+                t_out: s1.t1,
+                rp: best.0,
+                vinf: (2.0 * energy).max(0.0).sqrt(),
+                turn: s0.v0.cross(v_out).atan2(s0.v0.dot(v_out)).abs(),
+                gain: (v_out + vb_out).len() - (s0.v0 + vb_in).len(),
+            });
+            i = j + 1;
+        }
+        out
     }
     pub fn total_dv(&self) -> f64 {
         self.burns.iter().map(|b| b.dv()).sum()
@@ -306,4 +375,123 @@ fn scan_segment(sys: &System, st: &State, dest: Option<BodyId>, t_lim: f64, step
         v = vn;
     }
     (ev, t_end)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::system::{generate, BodyKind, Rng, SystemSize};
+    use crate::v2::V2;
+
+    /// A pass through `b`'s SOI built in b's frame: periapsis `rp` at time `tp` with excess speed
+    /// `vinf`, started just outside the SOI in the parent's frame.
+    fn pass(sys: &System, b: BodyId, rp: f64, vinf: f64, ang: f64, ccw: bool, tp: f64) -> State {
+        let body = sys.body(b);
+        let vp = (vinf * vinf + 2.0 * body.mu / rp).sqrt();
+        let dir = V2::from_angle(ang);
+        let (r, v) = (dir * rp, dir.perp() * if ccw { vp } else { -vp });
+        // back up to just outside the SOI (two-body in b's frame; outside the SOI this is the patched-conic approximation)
+        let (mut lo, mut hi) = (0.0, 1.0);
+        while propagate(body.mu, r, v, -hi).0.len() < body.soi * 1.002 {
+            hi *= 2.0;
+        }
+        for _ in 0..80 {
+            let m = 0.5 * (lo + hi);
+            if propagate(body.mu, r, v, -m).0.len() < body.soi * 1.002 {
+                lo = m
+            } else {
+                hi = m
+            }
+        }
+        let (r0, v0) = propagate(body.mu, r, v, -hi);
+        let t0 = tp - hi;
+        let (br, bv) = sys.rel_state(b, t0);
+        State { parent: body.parent.unwrap(), t: t0, r: r0 + br, v: v0 + bv }
+    }
+
+    fn abs_state(sys: &System, s: &Segment, t: f64) -> (V2, V2) {
+        let (r, v) = propagate(sys.body(s.parent).mu, s.r0, s.v0, t - s.t0);
+        (sys.pos(s.parent, t) + r, sys.vel(s.parent, t) + v)
+    }
+
+    #[test]
+    fn unplanned_flyby_is_a_proper_hyperbola() {
+        let sys = generate(7, SystemSize::Medium);
+        let mut rng = Rng::new(99);
+        let targets: Vec<BodyId> = sys.bodies.iter().filter(|b| matches!(b.kind, BodyKind::Planet | BodyKind::GasGiant | BodyKind::Moon)).map(|b| b.id).collect();
+        let mut n = 0;
+        for k in 0..200 {
+            let b = targets[k % targets.len()];
+            let body = sys.body(b);
+            let rp = rng.range(body.radius * 1.1, (body.radius * 4.0).min(body.soi * 0.7).max(body.radius * 1.2));
+            let vesc = (2.0 * body.mu / rp).sqrt();
+            let vinf = vesc * rng.range(0.1, 1.5);
+            let tp = rng.range(0.0, 3.0 * 86_400.0);
+            let st = pass(&sys, b, rp, vinf, rng.range(0.0, 6.3), rng.f() < 0.5, tp);
+            let tr = predict(&sys, st, &[], None, tp + 86_400.0);
+            if std::env::var("FBDBG").is_ok() {
+                let (cr, cv) = sys.rel_state(b, st.t);
+                println!("case {k} {} soi {} rp {rp} vinf {vinf} d0 {} vrel {} segs {:?}", body.name, body.soi, st.r.dist(cr), (st.v - cv).len(), tr.segs);
+            }
+            if tr.segs.iter().any(|s| sys.body(s.parent).parent == Some(b)) {
+                continue; // ran into one of b's moons on the way: a different (also valid) path
+            }
+            let fb = tr.flybys(&sys);
+            let Some(f) = fb.iter().find(|f| f.body == b) else {
+                panic!("case {k}: no flyby of {} in {:?} / {:?}", body.name, tr.segs.iter().map(|s| s.parent).collect::<Vec<_>>(), tr.end);
+            };
+            n += 1;
+            // closest approach and timing match the hyperbola we built
+            // (loosely: the short approach arc outside the SOI is in the star frame)
+            assert!((f.rp - rp).abs() < rp * 0.05, "case {k}: rp {} vs {rp}", f.rp);
+            assert!((f.t - tp).abs() < 60.0, "case {k}: tp {} vs {tp}", f.t);
+            assert!((f.vinf - vinf).abs() < 0.02 * vinf + 0.1, "case {k}: vinf {} vs {vinf}", f.vinf);
+            // the turn between SOI entry and exit is what the conic predicts at r = SOI:
+            // 2·atan(sin ν / (e + cos ν)), approaching the asymptotic 2·asin(1/e) for a big SOI
+            let e = 1.0 + f.rp * f.vinf * f.vinf / body.mu;
+            let cnu = ((f.rp * (1.0 + e) / body.soi - 1.0) / e).clamp(-1.0, 1.0);
+            let turn = 2.0 * (1.0 - cnu * cnu).sqrt().atan2(e + cnu);
+            assert!(f.turn <= 2.0 * (1.0 / e).asin() + 1e-9, "case {k}");
+            assert!((f.turn - turn).abs() < 2e-3, "case {k}: turn {} vs {turn}", f.turn);
+            // energy in the body frame is the same entering and leaving
+            let i = tr.segs.iter().position(|s| s.parent == b).unwrap();
+            let s_in = &tr.segs[i];
+            let s_out = tr.segs[i..].iter().take_while(|s| s.parent == b).last().unwrap();
+            let (r_out, v_out) = propagate(body.mu, s_out.r0, s_out.v0, s_out.t1 - s_out.t0);
+            let en = |r: V2, v: V2| v.len2() / 2.0 - body.mu / r.len();
+            assert!((en(s_in.r0, s_in.v0) - en(r_out, v_out)).abs() < 1e-6 * en(r_out, v_out).abs().max(1.0), "case {k}: energy");
+            assert!((s_in.r0.len() / body.soi - 1.0).abs() < 1e-3 && (r_out.len() / body.soi - 1.0).abs() < 1e-3, "case {k}: SOI crossing");
+            // position and velocity are continuous across every frame change
+            for w in tr.segs.windows(2) {
+                let (pa, va) = abs_state(&sys, &w[0], w[0].t1);
+                let (pb, vb) = abs_state(&sys, &w[1], w[1].t0);
+                assert!((w[0].t1 - w[1].t0).abs() < 1e-9, "case {k}: gap");
+                assert!(pa.dist(pb) < 1e-3 && va.dist(vb) < 1e-6, "case {k}: jump {} km {} km/s", pa.dist(pb), va.dist(vb));
+            }
+        }
+        assert!(n >= 150, "only {n} clean passes");
+    }
+
+    #[test]
+    fn trailing_pass_boosts_leading_pass_brakes() {
+        let sys = generate(7, SystemSize::Medium);
+        let b = sys.bodies.iter().filter(|b| matches!(b.kind, BodyKind::Planet | BodyKind::GasGiant)).max_by(|a, c| a.mu.total_cmp(&c.mu)).unwrap();
+        let tp = 5000.0;
+        let (rb, vb) = sys.rel_state(b.id, tp);
+        let rp = b.radius * 1.5;
+        let vinf = 6.0;
+        // periapsis behind the planet (opposite its velocity), moving outward from the star: CCW turn
+        // bends the velocity forward → boost. The mirrored pass (in front of the planet) brakes.
+        let behind = (-vb).angle();
+        let gains: Vec<f64> = [(behind, rb.cross(vb) > 0.0), (behind + std::f64::consts::PI, rb.cross(vb) > 0.0)]
+            .into_iter()
+            .map(|(a, ccw)| {
+                let tr = predict(&sys, pass(&sys, b.id, rp, vinf, a, ccw, tp), &[], None, tp + 86_400.0);
+                tr.flybys(&sys)[0].gain
+            })
+            .collect();
+        println!("gains {gains:?}");
+        assert!(gains[0] > 1.0, "{gains:?}");
+        assert!(gains[1] < -1.0, "{gains:?}");
+    }
 }

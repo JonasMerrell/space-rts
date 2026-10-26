@@ -308,7 +308,7 @@ impl ClientBackend {
         }
         for s in &game.ships {
             if let ShipState::Parked { departure: Some(d), .. } = &s.state {
-                let tr = sim::traj::predict(&sys, d.state, &[], Some(d.to), d.state.t + g::Flight::HORIZON);
+                let tr = sim::traj::predict(&sys, d.state, &d.burns, Some(d.to), d.state.t + g::Flight::HORIZON);
                 self.paths.insert(s.id.0, to_model_traj(&sys, &tr));
             }
         }
@@ -411,16 +411,39 @@ fn real_ships(g: &Game, ids: &[ShipId]) -> Vec<g::ShipId> {
 }
 
 /// Auto-plan a transfer on a snapshot of the game (runs on a worker thread for the async path).
+/// Course options (cheapest … fastest, gravity assists included) for the first hop of the route;
+/// the returned plan is the cheapest, with all options in `options`.
 fn compute_plan(g: &Game, now: f64, ship: ShipId, target: BodyId, after: f64) -> Option<m::TransferPlan> {
     let s = g.ship(lead(g, ship))?;
     let depart = if after > now + 120.0 { Some(after) } else { None };
-    let mut game = g.clone();
-    game.t = now;
-    let (p, _) = game.plan_for(s, SimBody(target), depart).ok()?;
     let from = s.parked_at()?;
-    let first = p.to;
+    let first = *sim::plan::route(&g.system, from, SimBody(target)).first()?;
+    // the fastest option must fit the thirstiest ship of a fleet
+    let budget = g.with_fleetmates(s.id).iter().filter_map(|&id| g.ship(id)).map(|m| m.dv_left()).fold(s.dv_left(), f64::min);
+    let opts = sim::plan::options(&g.system, from, first, now, depart, budget);
+    if opts.is_empty() {
+        return None;
+    }
     let span = sim::plan::search_span(&g.system, from, first);
-    let windows = sim::plan::windows(&g.system, from, first, now, span).into_iter().map(|w| w.depart_t).collect();
+    let windows: Vec<f64> = sim::plan::windows(&g.system, from, first, now, span).into_iter().map(|w| w.depart_t).collect();
+    let mut all: Vec<m::TransferPlan> = opts
+        .iter()
+        .map(|(c, p)| {
+            let mut mp = model_plan(g, s, ship, target, p, windows.clone());
+            if opts.len() > 1 {
+                mp.label = format!("{c:?}").to_uppercase();
+            }
+            mp
+        })
+        .collect();
+    let list = all.clone();
+    for p in &mut all {
+        p.options = list.clone();
+    }
+    all.into_iter().next()
+}
+
+fn model_plan(g: &Game, s: &g::Ship, ship: ShipId, target: BodyId, p: &sim::plan::TransferPlan, windows: Vec<f64>) -> m::TransferPlan {
     // fuel for every ship that flies (the whole fleet for a fleet token), judged like the server does
     let flying = g.with_fleetmates(s.id);
     let fuel_have: f64 = flying.iter().filter_map(|&id| g.ship(id)).map(|m| m.fuel).sum();
@@ -428,16 +451,17 @@ fn compute_plan(g: &Game, now: f64, ship: ShipId, target: BodyId, after: f64) ->
         .iter()
         .filter_map(|&id| g.ship(id))
         .map(|m| {
-            let dep = m.fuel_for(p.depart_dv);
+            let dep = m.fuel_for(p.depart_dv + p.mid_dv());
             dep + g::fuel_needed(m.class, (m.fuel - dep).max(0.0), p.capture_dv)
         })
         .sum();
-    Some(m::TransferPlan {
+    m::TransferPlan {
         ship,
         target,
         depart_t: p.depart_t(),
         arrive_t: p.arrive_t,
         dv_depart: p.depart_dv,
+        dv_mid: p.mid_dv(),
         dv_capture: p.capture_dv,
         fuel_needed: fuel_needed as f32,
         fuel_have: fuel_have as f32,
@@ -447,8 +471,12 @@ fn compute_plan(g: &Game, now: f64, ship: ShipId, target: BodyId, after: f64) ->
             (fuel_needed > fuel_have).then(|| format!("not enough fuel: needs {fuel_needed:.0} t, has {fuel_have:.0} t"))
         },
         path: to_model_traj(&g.system, &p.traj),
+        via: p.flybys.iter().map(|b| b.0).collect(),
+        label: String::new(),
+        options: vec![],
+        token: p.hint.and_then(|h| serde_json::to_string(&h).ok()).unwrap_or_default(),
         windows,
-    })
+    }
 }
 
 fn lobby_info(game: &Game) -> m::LobbyInfo {
@@ -524,7 +552,12 @@ pub(crate) fn to_model_traj(sys: &sim::System, tr: &SimTraj) -> m::Trajectory {
             points.push((t, arr(p)));
         }
     }
-    m::Trajectory { points }
+    let flybys = tr
+        .flybys(sys)
+        .into_iter()
+        .map(|f| m::FlybyMark { body: f.body.0, t: f.t, pos: arr(tr.abs_pos(sys, f.t).unwrap_or_default()), rp: f.rp, gain: f.gain })
+        .collect();
+    m::Trajectory { points, flybys }
 }
 
 /// Fog of war: last sightings of enemy ships that are out of sensor range now.
@@ -881,7 +914,12 @@ impl Backend for ClientBackend {
             UiAction::ScheduleTransfer(p) => {
                 if let Some(code) = code {
                     let ships = self.ship_ids(p.ship);
-                    self.send(ClientMsg::Cmd { code, cmd: Command::Transfer { ships, to: SimBody(p.target), depart_t: Some(p.depart_t) } });
+                    let to = SimBody(p.target);
+                    let cmd = match serde_json::from_str::<sim::plan::PlanHint>(&p.token) {
+                        Ok(hint) => Command::TransferPlanned { ships, to, depart_t: p.depart_t, hint },
+                        Err(_) => Command::Transfer { ships, to, depart_t: Some(p.depart_t) },
+                    };
+                    self.send(ClientMsg::Cmd { code, cmd });
                 }
             }
             UiAction::SetNodes { ship, nodes } => {

@@ -1,7 +1,7 @@
 //! Game rules: players, ships, economy, upgrades, deterministic combat and ownership by power
 //! in orbit. `Game::advance_to` is the authoritative real-time step the server runs.
 use crate::kepler::circular_speed;
-use crate::plan::{self, TransferPlan};
+use crate::plan::{self, PlanHint, TransferPlan};
 use crate::system::{generate, BodyId, BodyKind, Rng, System, SystemSize};
 use crate::traj::{predict, Burn, End, State, Trajectory};
 use crate::station::{Station, StationKind};
@@ -170,6 +170,9 @@ pub struct Departure {
     /// state relative to the departure body right after the burn
     pub state: State,
     pub dv: f64,
+    /// mid-course burns planned with the departure (gravity-assist corrections)
+    #[serde(default)]
+    pub burns: Vec<Burn>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -540,6 +543,8 @@ pub struct Game {
 pub enum Command {
     /// Auto-planned transfer (multi-leg routes are planned leg by leg on arrival).
     Transfer { ships: Vec<ShipId>, to: BodyId, depart_t: Option<f64> },
+    /// A course picked from `plan::options` (gravity assist, faster flight...), re-planned from its hint.
+    TransferPlanned { ships: Vec<ShipId>, to: BodyId, depart_t: f64, hint: PlanHint },
     CancelDeparture { ship: ShipId },
     /// Replace the manual burn list of a flying ship.
     SetBurns { ship: ShipId, burns: Vec<Burn> },
@@ -804,7 +809,8 @@ impl Game {
         let n = self.system.bodies.len() as u32;
         let bad = |b: &BodyId| b.0 >= n;
         match &cmd {
-            Command::Transfer { to, .. } if bad(to) => return Err("no such body".into()),
+            Command::Transfer { to, .. } | Command::TransferPlanned { to, .. } if bad(to) => return Err("no such body".into()),
+            Command::TransferPlanned { depart_t, hint, .. } if !depart_t.is_finite() || !hint_ok(hint) => return Err("invalid course".into()),
             Command::Build { body, .. }
             | Command::Upgrade { body, .. }
             | Command::Research { body, .. }
@@ -922,7 +928,7 @@ impl Game {
                 self.event(None, EventKind::Info, "Game extended", &format!("+{:.1} days", seconds / 86_400.0), None, None);
                 Ok(())
             }
-            Command::Transfer { ships, to, depart_t } => self.transfer(player, &ships, to, depart_t),
+            Command::Transfer { ships, to, depart_t } => self.transfer(player, &ships, to, depart_t, None),
             Command::PushAsteroid { body, burn } => {
                 let plan = Ok(crate::asteroid::plan_push(self, body, burn));
                 self.order_push(player, body, plan)
@@ -931,6 +937,7 @@ impl Game {
                 let plan = crate::asteroid::plan_impact(self, body, target, self.t).ok_or_else(|| "no collision course within reach".to_string());
                 self.order_push(player, body, plan)
             }
+            Command::TransferPlanned { ships, to, depart_t, hint } => self.transfer(player, &ships, to, Some(depart_t), Some(hint)),
             Command::CancelDeparture { ship } => {
                 self.own_ship(player, ship)?;
                 if !matches!(self.ship(ship).unwrap().state, ShipState::Parked { departure: Some(_), .. }) {
@@ -1036,17 +1043,31 @@ impl Game {
         let from = ship.parked_at().ok_or("ship must be parked in orbit to plan a transfer")?;
         let hops = plan::route(&self.system, from, to);
         let first = *hops.first().ok_or("already there")?;
-        let p = plan::plan_leg(&self.system, from, first, self.t, depart_t)?;
+        // direct legs only: this runs inside the server lock (bots, route hops). Gravity assists and
+        // fast courses are searched on the client (`plan::options`) and ordered with a hint.
+        // bots keep the cheaper planner (no departure probe): they plan inside the server lock
+        let bot = self.players.get(ship.owner as usize).is_some_and(|p| p.bot.is_some());
+        let plan_fn = if bot { plan::plan_leg_quick } else { plan::plan_leg };
+        let p = plan_fn(&self.system, from, first, self.t, depart_t)?;
         if !p.converged {
             return Err("couldn't find a working trajectory, try another departure time".into());
         }
         Ok((p, hops[1..].to_vec()))
     }
 
+    /// Re-plan a course the player picked from `plan::options` (cheap: one shooting run).
+    pub fn plan_for_hinted(&self, ship: &Ship, to: BodyId, depart_t: f64, hint: PlanHint) -> Result<(TransferPlan, Vec<BodyId>), String> {
+        let from = ship.parked_at().ok_or("ship must be parked in orbit to plan a transfer")?;
+        let hops = plan::route(&self.system, from, to);
+        let first = *hops.first().ok_or("already there")?;
+        let p = plan::plan_hinted(&self.system, from, first, depart_t.max(self.t + 30.0), hint)?;
+        Ok((p, hops[1..].to_vec()))
+    }
+
     /// Transfer order for a set of ships (expanded to whole fleets). All or nothing: every ship is
     /// checked before any is scheduled. Ships leaving the same body share one plan; fleets also
     /// need fuel for the capture burn (their tankers can cover it in flight).
-    pub(crate) fn transfer(&mut self, player: PlayerId, ships: &[ShipId], to: BodyId, depart_t: Option<f64>) -> Result<(), String> {
+    pub(crate) fn transfer(&mut self, player: PlayerId, ships: &[ShipId], to: BodyId, depart_t: Option<f64>, hint: Option<PlanHint>) -> Result<(), String> {
         let ships = self.expand_fleets(ships);
         let mut plans: Vec<(BodyId, (TransferPlan, Vec<BodyId>))> = vec![];
         let mut todo: Vec<(ShipId, usize)> = vec![];
@@ -1059,13 +1080,16 @@ impl Game {
             let k = match plans.iter().position(|p| p.0 == from) {
                 Some(k) => k,
                 None => {
-                    let p = self.plan_for(&ship.clone(), to, depart_t)?;
+                    let p = match (hint, depart_t) {
+                        (Some(h), Some(td)) => self.plan_for_hinted(&ship.clone(), to, td, h)?,
+                        _ => self.plan_for(&ship.clone(), to, depart_t)?,
+                    };
                     plans.push((from, p));
                     plans.len() - 1
                 }
             };
             let p = &plans[k].1 .0;
-            if ship.fuel_for(p.depart_dv) > ship.fuel {
+            if ship.fuel_for(p.depart_dv + p.mid_dv()) > ship.fuel {
                 return Err(format!("not enough fuel: departure needs {:.1} km/s, {} has {:.1} km/s", p.depart_dv, ship.name, ship.dv_left()));
             }
             todo.push((id, k));
@@ -1073,7 +1097,7 @@ impl Game {
         for f in self.fleets.iter().filter(|f| f.ships.iter().any(|s| ships.contains(s))) {
             let k = todo.iter().find(|t| f.ships.contains(&t.0)).unwrap().1;
             let p = &plans[k].1 .0;
-            self.fleet_fuel_check(&f.ships, p.depart_dv, p.capture_dv)?;
+            self.fleet_fuel_check(&f.ships, p.depart_dv + p.mid_dv(), p.capture_dv)?;
         }
         for (id, k) in todo {
             self.schedule(player, id, plans[k].1.clone())?;
@@ -1086,13 +1110,13 @@ impl Game {
         if ship.owner != player {
             return Err("not your ship".into());
         }
-        if ship.fuel_for(p.depart_dv) > ship.fuel {
+        if ship.fuel_for(p.depart_dv + p.mid_dv()) > ship.fuel {
             return Err(format!("not enough fuel: departure needs {:.1} km/s, {} has {:.1} km/s", p.depart_dv, ship.name, ship.dv_left()));
         }
         let s = self.ship_mut(id).unwrap();
         s.route = rest;
         if let ShipState::Parked { departure, .. } = &mut s.state {
-            *departure = Some(Departure { to: p.to, state: p.depart, dv: p.depart_dv });
+            *departure = Some(Departure { to: p.to, state: p.depart, dv: p.depart_dv, burns: p.burns.clone() });
         }
         Ok(())
     }
@@ -1186,7 +1210,7 @@ impl Game {
                 }
                 ship.fuel -= need;
                 ship.last_burn_t = d.state.t;
-                ship.state = ShipState::Flying(Flight { start: d.state, burns: vec![], dest: Some(d.to), cache: None });
+                ship.state = ShipState::Flying(Flight { start: d.state, burns: d.burns, dest: Some(d.to), cache: None });
                 let to = sys.body(d.to).name.clone();
                 self.event(Some(owner), EventKind::Info, "Departed", &format!("{name} burned {:.1} km/s for {to}", d.dv), None, Some(id));
             }
@@ -1285,11 +1309,11 @@ impl Game {
                 }
             }
             match self.plan_for(&ship, next, None) {
-                Ok((p, _)) if ship.fuel_for(p.depart_dv) <= ship.fuel => {
+                Ok((p, _)) if ship.fuel_for(p.depart_dv + p.mid_dv()) <= ship.fuel => {
                     let s = &mut self.ships[i];
                     s.route = rest;
                     if let ShipState::Parked { departure, .. } = &mut s.state {
-                        *departure = Some(Departure { to: p.to, state: p.depart, dv: p.depart_dv });
+                        *departure = Some(Departure { to: p.to, state: p.depart, dv: p.depart_dv, burns: p.burns.clone() });
                     }
                 }
                 _ => {
@@ -1389,7 +1413,7 @@ impl Game {
                         self.event(Some(j.owner), EventKind::Good, "Ship built", &format!("{} ready at {bname}", c.stats().name), Some(body), Some(id));
                         if let Some(o) = j.then {
                             let depart = o.depart_t.filter(|&t| t > self.t);
-                            if let Err(e) = self.transfer(j.owner, &[id], o.to, depart) {
+                            if let Err(e) = self.transfer(j.owner, &[id], o.to, depart, None) {
                                 self.event(Some(j.owner), EventKind::Bad, "Order failed", &format!("{}: {e}", c.stats().name), Some(body), Some(id));
                             }
                         }
@@ -1471,7 +1495,7 @@ impl Game {
                     pa.total_cmp(&pb)
                 });
             if let Some(to) = safe {
-                if self.transfer(ship.owner, &group, to, Some(self.t + 60.0)).is_ok() {
+                if self.transfer(ship.owner, &group, to, Some(self.t + 60.0), None).is_ok() {
                     let who = self.fleet_of(id).map(|f| f.name.clone()).unwrap_or(ship.name.clone());
                     self.event(Some(ship.owner), EventKind::Bad, "Retreating", &format!("{who} is pulling back"), Some(body), Some(id));
                 }
@@ -1533,6 +1557,13 @@ impl Game {
 }
 
 /// Spread players over rocky planets, skipping the scorched innermost one when possible.
+fn hint_ok(h: &PlanHint) -> bool {
+    match *h {
+        PlanHint::Direct { tof } => tof.is_finite() && tof > 0.0 && tof < 30.0 * 86_400.0,
+        PlanHint::Assist { flyby_t, arrive_t, .. } => flyby_t.is_finite() && arrive_t.is_finite() && arrive_t - flyby_t < 30.0 * 86_400.0,
+    }
+}
+
 fn pick_homes(sys: &System, n: usize) -> Vec<BodyId> {
     let mut rocky: Vec<BodyId> = sys.bodies.iter().filter(|b| b.kind == BodyKind::Planet).map(|b| b.id).collect();
     let giants: Vec<BodyId> = sys.bodies.iter().filter(|b| b.kind == BodyKind::GasGiant).map(|b| b.id).collect();
