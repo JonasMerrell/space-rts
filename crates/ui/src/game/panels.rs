@@ -115,7 +115,7 @@ pub fn hud(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
 
 fn game_menu(g: &mut GameScreen, inp: &mut Input, view: &GameView, at: Rect) {
     let host = view.host == view.me;
-    let items = if host { 5 } else { 3 };
+    let items = if host { 6 } else { 3 };
     let bh = 44.0 * s();
     let pad = 10.0 * s();
     let r = Rect::new(at.x, at.y, at.w, pad + items as f32 * (bh + pad));
@@ -133,12 +133,20 @@ fn game_menu(g: &mut GameScreen, inp: &mut Input, view: &GameView, at: Rect) {
         g.emit(UiAction::ExtendGame { days: 1 });
         g.menu_open = false;
     }
-    // Host: cycle the game speed (time multiplier) for a shorter war.
-    let speed = if view.speed > 0.0 { view.speed } else { 1.0 };
-    if host && widgets::button(inp, row(3), &format!("GAME SPEED: {speed}×"), Style::Secondary) {
-        let next = crate::screens::SPEEDS.iter().copied().find(|&k| k > speed + 1e-6).unwrap_or(crate::screens::SPEEDS[0]);
-        art::sfx("ui_click");
-        g.emit(UiAction::SetSpeed { speed: next });
+    // Host: game speed slider (time multiplier) for a shorter war; sent when the finger lifts.
+    if host {
+        use crate::screens::{real_len, SPEEDS};
+        let live = if view.speed > 0.0 { view.speed } else { 1.0 };
+        let speed = g.speed_drag.unwrap_or(live);
+        let lr = row(3);
+        text(&format!("GAME SPEED {speed}×"), lr.x + 4.0 * s(), lr.y + 14.0 * s(), 14.0, PAPER, FontKind::Title, Align::Left);
+        let real_h = (view.ends_at - view.now).max(0.0) / 3600.0 / speed;
+        text(&format!("ends in {} real", real_len(real_h)), lr.x + 4.0 * s(), lr.y + 34.0 * s(), 12.0, MUTED, FontKind::Body, Align::Left);
+        let (v, released) = widgets::log_slider(inp, row(4), speed, SPEEDS[0], SPEEDS[SPEEDS.len() - 1], &SPEEDS, false);
+        g.speed_drag = Some(v).filter(|&v| v != live || inp.held.is_some());
+        if released && v != live {
+            g.emit(UiAction::SetSpeed { speed: v });
+        }
     }
     if widgets::button(inp, row(items - 1), "LEAVE TO MENU", Style::Ghost) {
         g.menu_open = false;

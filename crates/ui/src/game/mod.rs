@@ -67,6 +67,8 @@ pub struct GameScreen {
     pub scrub_span: f64,
     /// Range picker above the scrubber is open.
     pub ranges_open: bool,
+    /// Host's game-speed slider value while dragging / until the server confirms it.
+    pub speed_drag: Option<f64>,
     /// `scrub` last frame: when it changes the camera follows the selection.
     last_scrub: f64,
     pub selected: Option<Focus>,
@@ -120,6 +122,7 @@ impl GameScreen {
             scrub: 0.0,
             scrub_span: 86_400.0,
             ranges_open: false,
+            speed_drag: None,
             last_scrub: 0.0,
             selected: None,
             mode: Mode::Idle,
