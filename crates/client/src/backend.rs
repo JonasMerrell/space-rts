@@ -800,8 +800,6 @@ impl Backend for ClientBackend {
                     self.send(ClientMsg::Cmd { code, cmd: Command::AimAsteroid { body: SimBody(body), target: SimBody(target) } });
                 }
             }
-            // needs Command::CancelJob in the sim (see COORD.md "build queue")
-            UiAction::CancelJob { .. } => {}
             UiAction::Reconnect => {
                 self.reconnect_at = 0.0;
                 self.retry_delay = 1.0;
