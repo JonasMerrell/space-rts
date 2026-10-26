@@ -4,7 +4,7 @@
 use macroquad::prelude::*;
 use std::cell::Cell;
 
-pub const GAME_TITLE: &str = "HAHMANN'S REACH";
+pub const GAME_TITLE: &str = "HOHMANN'S REACH";
 
 pub const BG: Color = hex(0x1b1340);
 pub const INK: Color = hex(0x000000);
