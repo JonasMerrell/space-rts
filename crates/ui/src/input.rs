@@ -313,6 +313,12 @@ impl Input {
         !self.script.is_empty()
     }
 
+    /// Text fields drawn this frame (screen px) and the focused one: the browser build needs them
+    /// to open the phone's keyboard (a canvas can't), see client/src/web.rs.
+    pub fn text_fields(&self) -> (&[(u32, Rect)], Option<u32>) {
+        (&self.fields, self.focused_field)
+    }
+
     /// Register a text field for focus handling (call every frame it's drawn).
     pub fn field(&mut self, id: u32, r: Rect) {
         self.fields.push((id, r));

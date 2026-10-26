@@ -78,6 +78,8 @@ async fn main() {
     be.resume();
     loop {
         ui.frame(&mut be);
+        #[cfg(target_arch = "wasm32")]
+        web::text_fields(&ui);
         next_frame().await;
     }
 }

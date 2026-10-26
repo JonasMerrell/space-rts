@@ -127,6 +127,80 @@
         window.addEventListener("keydown", once, true);
     }
 
+    // ---- on-screen keyboard. Phones only open their keyboard for a focused HTML input, and only
+    // from inside a user gesture, so: the game reports its text fields every frame; a tap that
+    // ends on one focuses a hidden input right away (in the touchend handler); what's typed there
+    // is replayed into the game as key events. A sentinel character lets us see backspaces.
+    let fields = [], fieldFocused = -1;
+    const SENTINEL = "\u200b";
+    const kbd = document.createElement("input");
+    kbd.id = "kbd";
+    kbd.type = "text";
+    kbd.autocomplete = "off";
+    kbd.autocapitalize = "off";
+    kbd.spellcheck = false;
+    kbd.setAttribute("autocorrect", "off");
+    kbd.setAttribute("aria-hidden", "true");
+    kbd.value = SENTINEL;
+    document.body.appendChild(kbd);
+
+    function inField(x, y) {
+        for (let i = 0; i + 3 < fields.length; i += 4) {
+            if (x >= fields[i] && x <= fields[i] + fields[i + 2] && y >= fields[i + 1] && y <= fields[i + 1] + fields[i + 3]) return true;
+        }
+        return false;
+    }
+
+    function pressKey(code) {
+        wasm_exports.key_down(code, 0, false);
+        wasm_exports.key_up(code, 0);
+    }
+
+    function flushInput() {
+        const v = kbd.value;
+        if (v.startsWith(SENTINEL)) {
+            for (const ch of v.slice(SENTINEL.length)) {
+                if (ch === "\n") pressKey(257);
+                else wasm_exports.key_press(ch.codePointAt(0));
+            }
+        } else {
+            // the sentinel was deleted: one backspace per missing character
+            const lost = Math.max(1, SENTINEL.length - v.length);
+            for (let i = 0; i < lost; i++) pressKey(259);
+            for (const ch of v.replace(SENTINEL, "")) wasm_exports.key_press(ch.codePointAt(0));
+        }
+        kbd.value = SENTINEL;
+        kbd.setSelectionRange(SENTINEL.length, SENTINEL.length);
+    }
+
+    let composing = false;
+    kbd.addEventListener("compositionstart", () => { composing = true; });
+    kbd.addEventListener("compositionend", () => { composing = false; flushInput(); });
+    kbd.addEventListener("input", () => { if (!composing) flushInput(); });
+    kbd.addEventListener("keydown", (e) => {
+        // keys that don't produce text; backspace arrives through the input event
+        const codes = { Enter: 257, Tab: 258, Escape: 256 };
+        if (codes[e.key]) {
+            e.preventDefault();
+            const shift = e.shiftKey ? SAPP_MODIFIER_SHIFT : 0;
+            wasm_exports.key_down(codes[e.key], shift, false);
+            wasm_exports.key_up(codes[e.key], shift);
+        }
+    });
+
+    function onTapEnd(e) {
+        const t = e.changedTouches && e.changedTouches[0];
+        if (!t) return;
+        const r = canvas.getBoundingClientRect();
+        if (inField(t.clientX - r.left, t.clientY - r.top)) {
+            kbd.value = SENTINEL;
+            kbd.focus({ preventScroll: true });
+        } else if (document.activeElement === kbd) {
+            kbd.blur();
+        }
+    }
+    canvas.addEventListener("touchend", onTapEnd, { passive: true });
+
     // ---- storage
     function lsGet(k) {
         try { return localStorage.getItem(k); } catch (e) { return null; }
@@ -172,6 +246,12 @@
             if (loadObserver) loadObserver.disconnect();
             l.classList.add("done");
             setTimeout(() => l.remove(), 400);
+        };
+        env.hr_text_fields = (ptr, n, focused) => {
+            fields = Array.from(new Float32Array(wasm_memory.buffer, ptr, n * 4));
+            fieldFocused = focused;
+            // the game dropped focus (submitted, or the field went away): put the keyboard away
+            if (focused < 0 && document.activeElement === kbd) kbd.blur();
         };
         env.hr_notify = (on) => {
             notifyOn = on !== 0;
