@@ -179,7 +179,8 @@ impl ClientBackend {
                     self.events.push(BackendEvent::LoginFailed(msg));
                     self.net = None;
                     self.creds = None;
-                } else if self.game.as_ref().is_none_or(|g| g.status == Status::Lobby) {
+                } else if self.game.is_none() {
+                    // e.g. a bad join code: back to the menu with the error
                     self.events.push(BackendEvent::LobbyFailed(msg));
                 } else {
                     self.notice(m::NoticeKind::Bad, "Server", &msg, None);
@@ -623,6 +624,8 @@ fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Tr
         players: game.players.iter().map(player_model).collect(),
         resources: res,
         chat: game.chat.iter().map(|c| m::ChatMsg { from: c.from, t: c.t, text: c.text.clone() }).collect(),
+        lobby: (game.status == Status::Lobby).then(|| lobby_info(game)),
+        home: game.players.get(me as usize).and_then(|p| p.home).map(|b| b.0),
     }
 }
 
@@ -727,6 +730,11 @@ impl Backend for ClientBackend {
             UiAction::AddBot { difficulty } => {
                 if let Some(code) = code {
                     self.send(ClientMsg::AddBot { code, difficulty });
+                }
+            }
+            UiAction::RemoveBot { player } => {
+                if let Some(code) = code {
+                    self.send(ClientMsg::RemoveBot { code, player });
                 }
             }
             UiAction::SetFaction(faction) => {
@@ -836,7 +844,8 @@ impl Backend for ClientBackend {
     }
 
     fn view(&self) -> Option<&m::GameView> {
-        self.view.as_ref().filter(|_| self.game.as_ref().is_some_and(|g| g.status != Status::Lobby))
+        // also while waiting in the lobby: the map shows the generated system (view.lobby is Some)
+        self.view.as_ref()
     }
 
     fn body_pos(&self, id: BodyId, t: f64) -> [f64; 2] {

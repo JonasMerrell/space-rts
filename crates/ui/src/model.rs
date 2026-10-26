@@ -334,6 +334,10 @@ pub struct GameView {
     pub players: Vec<Player>,
     pub resources: Resources,
     pub chat: Vec<ChatMsg>,
+    /// Some while the game waits for the host to start it (clock stopped at 0).
+    pub lobby: Option<LobbyInfo>,
+    /// Our home planet (during the lobby: where we'll start, may change as pilots join).
+    pub home: Option<BodyId>,
 }
 
 impl GameView {

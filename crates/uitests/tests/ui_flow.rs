@@ -45,7 +45,8 @@ impl T {
         match self.ui.screen {
             Screen::Login(_) => "login",
             Screen::Menu(_) => "menu",
-            Screen::Lobby(_) => "lobby",
+            // the waiting period is the game screen with the lobby overlay
+            Screen::Game(_) if self.be.view().is_some_and(|v| v.lobby.is_some()) => "lobby",
             Screen::Game(_) => "game",
         }
     }
@@ -75,11 +76,14 @@ async fn run() {
     t.be.act(UiAction::CreateGame { name: "Test War".into(), length_days: 7, speed: 1.0, bots: vec!["easy".into()] });
     t.frames(2).await;
     assert_eq!(t.screen(), "lobby");
-    let players = |t: &T| match &t.ui.screen {
-        Screen::Lobby(l) => l.info.as_ref().map(|i| (i.players.len(), i.max_players, i.code.clone())),
-        _ => None,
-    };
+    let players = |t: &T| t.be.view().and_then(|v| v.lobby.as_ref()).map(|i| (i.players.len(), i.max_players, i.code.clone()));
     assert_eq!(players(&t).map(|p| p.0), Some(2));
+    {
+        let v = t.be.view().unwrap();
+        assert!(v.ships.is_empty() && v.now == 0.0, "clock stopped and no fleets while waiting");
+        assert!(v.home.is_some(), "we see where we'll start");
+    }
+    t.ok("waiting period shows the system, paused");
     t.be.act(UiAction::AddBot { difficulty: "hard".into() });
     t.be.act(UiAction::AddBot { difficulty: "normal".into() });
     t.frames(2).await;
@@ -90,10 +94,15 @@ async fn run() {
     t.ok("create lobby, add bots up to 4 players");
     t.be.act(UiAction::SetFaction("HIVE BROOD".into()));
     t.frames(2).await;
-    if let Screen::Lobby(l) = &t.ui.screen {
-        let me = l.info.as_ref().unwrap().players.iter().find(|p| p.id == 1).unwrap();
+    {
+        let me = t.be.view().unwrap().lobby.as_ref().unwrap().players.iter().find(|p| p.id == 1).unwrap().clone();
         assert_eq!(me.faction, "HIVE BROOD");
     }
+    let bot = t.be.view().unwrap().lobby.as_ref().unwrap().players.iter().find(|p| !p.online).unwrap().id;
+    t.be.act(UiAction::RemoveBot { player: bot });
+    t.frames(2).await;
+    assert_eq!(players(&t).map(|p| p.0), Some(3), "host removes a bot");
+    t.ok("remove a bot while waiting");
     t.ok("faction choice reaches the lobby view");
 
     // -- leave and join by code
@@ -109,6 +118,7 @@ async fn run() {
     t.be.act(UiAction::StartGame);
     t.frames(2).await;
     assert_eq!(t.screen(), "game");
+    assert!(t.be.view().unwrap().lobby.is_none());
     t.be.speed = 0.0; // freeze game time so the rest is deterministic
     t.frames(1).await;
     let view = t.be.view().expect("game view").clone();

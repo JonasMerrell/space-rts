@@ -4,7 +4,6 @@ use crate::art;
 use crate::backend::{Backend, UiAction};
 use crate::cel;
 use crate::input::Input;
-use crate::model::*;
 #[allow(unused_imports)]
 use crate::model::{Body, BodyKind};
 use crate::theme::*;
@@ -303,103 +302,6 @@ impl Menu {
     }
 }
 
-#[derive(Default)]
-pub struct Lobby {
-    pub info: Option<LobbyInfo>,
-    pub me: PlayerId,
-    pub faction: usize,
-}
-
-impl Lobby {
-    pub fn draw(&mut self, inp: &mut Input, be: &mut dyn Backend) {
-        let Some(info) = self.info.clone() else {
-            inked("CONNECTING...", screen_width() / 2.0, screen_height() / 2.0, 30.0, PAPER, Align::Center);
-            return;
-        };
-        let top = 16.0 * s() + safe_top();
-        let mut col = Column::new(top);
-        inked(&info.name.to_uppercase(), screen_width() / 2.0, col.y + 20.0 * s(), 28.0, ACCENT, Align::Center);
-        col.gap(48.0);
-        // Join code, big and spaced out.
-        let r = col.row(110.0);
-        cel::panel(r, PANEL);
-        text("SHARE THIS CODE WITH FRIENDS", r.center().x, r.y + 22.0 * s(), 14.0, MUTED, FontKind::Title, Align::Center);
-        let spaced: String = info.code.chars().map(|c| format!("{c}  ")).collect();
-        text(spaced.trim_end(), r.center().x, r.y + 66.0 * s(), 52.0, ACCENT, FontKind::Title, Align::Center);
-        col.gap(10.0);
-        inked(&format!("PILOTS {}/{}", info.players.len(), info.max_players), col.x, col.y + 12.0 * s(), 22.0, PAPER, Align::Left);
-        let len = if info.speed > 1.0 {
-            format!("{} days · {}× ({} real)", info.length_days, info.speed, real_len(info.length_days as f64 * 24.0 / info.speed))
-        } else {
-            format!("{} days", info.length_days)
-        };
-        text(&len, col.x + col.w, col.y + 12.0 * s(), 18.0, MUTED, FontKind::Body, Align::Right);
-        col.gap(32.0);
-        for i in 0..info.max_players {
-            let r = col.row(56.0);
-            match info.players.get(i) {
-                Some(p) => {
-                    cel::panel(r, PANEL);
-                    let c = vec2(r.x + 30.0 * s(), r.center().y);
-                    let (l, d) = TEAMS[p.color % 4];
-                    cel::body(c, 16.0 * s(), l, d);
-                    if let Some(t) = art::tex(&format!("sprites/emblems/{}.png", art::skin_of(&p.faction))) {
-                        art::draw_centered(&t, c, vec2(26.0, 26.0) * s(), 0.0, WHITE);
-                    }
-                    let me = if p.id == self.me { "  (you)" } else { "" };
-                    let host = if p.id == info.host { "  · HOST" } else { "" };
-                    inked(&format!("{}{}", p.name.to_uppercase(), me), r.x + 56.0 * s(), r.y + 20.0 * s(), 20.0, PAPER, Align::Left);
-                    text(&format!("{}{}", p.faction, host), r.x + 56.0 * s(), r.y + 42.0 * s(), 14.0, MUTED, FontKind::Body, Align::Left);
-                }
-                None => {
-                    cel::round_rect(r, 10.0 * s(), alpha(PAPER, 0.06));
-                    text("waiting for a pilot...", r.center().x, r.center().y, 16.0, MUTED, FontKind::Body, Align::Center);
-                }
-            }
-        }
-        text("YOUR FACTION (looks only)", col.x + 4.0 * s(), col.y, 16.0, MUTED, FontKind::Title, Align::Left);
-        col.gap(14.0);
-        let r = col.row(40.0);
-        let cw = (r.w - 12.0 * s()) / 2.0;
-        let r2 = col.row(40.0);
-        for (i, f) in FACTIONS.iter().enumerate() {
-            let rr = if i < 2 { r } else { r2 };
-            let cr = Rect::new(rr.x + (i % 2) as f32 * (cw + 12.0 * s()), rr.y, cw, rr.h);
-            if widgets::chip(inp, cr, f, self.faction == i, ACCENT) {
-                self.faction = i;
-                art::sfx("menu_select");
-                be.act(UiAction::SetFaction(f.to_string()));
-            }
-        }
-        let is_host = info.host == self.me;
-        let bottom = screen_height() - safe_bottom() - 16.0 * s();
-        let bw = (col.w - 14.0 * s()) / 2.0;
-        let r = Rect::new(col.x, bottom - 60.0 * s(), col.w, 60.0 * s());
-        if is_host {
-            let full = info.players.len() >= info.max_players;
-            if info.players.len() < info.max_players
-                && widgets::button(inp, Rect::new(col.x, r.y - 64.0 * s(), bw, 50.0 * s()), "+ ADD BOT", Style::Secondary)
-            {
-                be.act(UiAction::AddBot { difficulty: "normal".into() });
-            }
-            if widgets::button(inp, Rect::new(col.x + bw + 14.0 * s(), r.y - 64.0 * s(), bw, 50.0 * s()), "LEAVE", Style::Ghost) {
-                be.act(UiAction::LeaveLobby);
-            }
-            let label = if full { "LAUNCH" } else { "LAUNCH NOW" };
-            if widgets::button(inp, r, label, Style::Primary) {
-                art::sfx("start_game");
-                be.act(UiAction::StartGame);
-            }
-        } else {
-            cel::panel(Rect::new(col.x, r.y - 64.0 * s(), col.w, 50.0 * s()), PANEL);
-            text("Waiting for the host to launch...", col.x + col.w / 2.0, r.y - 39.0 * s(), 16.0, MUTED, FontKind::Body, Align::Center);
-            if widgets::button(inp, r, "LEAVE", Style::Ghost) {
-                be.act(UiAction::LeaveLobby);
-            }
-        }
-    }
-}
-
 /// Status-bar / notch allowance. Android draws us edge-to-edge under the status bar.
 pub fn safe_top() -> f32 {
     if cfg!(target_os = "android") { 28.0 * s() } else { 0.0 }
@@ -413,7 +315,7 @@ pub fn safe_bottom() -> f32 {
 pub const SPEEDS: [f64; 7] = [1.0, 2.0, 4.0, 8.0, 24.0, 72.0, 168.0];
 
 /// "42 h" / "3.5 days" for a real-time duration in hours.
-fn real_len(hours: f64) -> String {
+pub fn real_len(hours: f64) -> String {
     if hours < 48.0 {
         format!("{:.0} h", hours)
     } else {
