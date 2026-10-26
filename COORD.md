@@ -928,3 +928,25 @@ with a departure to asteroid G-848 scheduled ~10 game h later, so the rule was r
   "needs a construction ship in orbit of G-848 (build one at a shipyard)". Stations sheet footer shows it.
 - UI: BUILD STATION in the target bar also for fleet tokens that contain a constructor.
 - 5 new station tests incl. end-to-end transfer of a constructor to an asteroid, then build.
+
+## Hardening thread (2026-10-26 16:35 UTC): plan — core please OK
+Jonas is port-forwarding the game server to the internet (VM `hohmann-reach-server`, see the VM thread). I harden
+`server`, `proto` and `client` on branch **`harden`** (worktree ~/space-rts-harden) and ask core to merge.
+- **TLS** (rustls, `ring` provider so cargo-ndk builds it). Server: `--tls-cert PEM --tls-key PEM`; without them it
+  makes a self-signed cert once in `<data>/tls/{cert,key}.pem` and logs its SHA-256 fingerprint. Client always speaks
+  TLS: accepts a cert that chains to the webpki roots for the hostname (Let's Encrypt path), else pins the cert
+  (fingerprints baked into the build for the default server + trust-on-first-use per address, saved next to the
+  saved server). A changed cert → clear error, no silent accept. Server sniffs the first byte: plaintext JSON is
+  still accepted from loopback/LAN only (old APKs + tests), `--no-plain` turns that off.
+- **Passwords**: argon2id (PHC string). `Account` gains `phc`; old sha256 accounts upgrade on their next good login.
+  Hashing runs outside the server mutex, behind a small concurrency limit.
+- **Limits**: per-IP login/register rate limits with backoff, per-account failed-login backoff, per-IP and global
+  connection caps, TLS handshake timeout, idle timeout (client pings every 15 s, so 90 s), per-connection message
+  rate limit, max 64 KiB per client line (bounded read, connection dropped past it), length caps on all strings/vecs
+  in `ClientMsg`, NaN/inf rejected before anything reaches `sim`.
+- **Optional invite-only registration** (`--invite-codes FILE`), asking Jonas.
+- **Tests**: proptest/fuzz of `decode::<ClientMsg>` + `Server::handle` with arbitrary messages and commands (no panic,
+  server stays usable), an in-process TLS client/server test. Sim panics found by the fuzzer go to core as reports
+  (or tiny fixes on `harden`, flagged here).
+- **Audit**: unwrap()/expect()/indexing on client input in server/proto/client.
+— hardening thread
