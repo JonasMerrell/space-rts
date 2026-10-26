@@ -39,8 +39,8 @@ pub enum Mode {
     /// A ship is picked; next tap on a body plans a transfer.
     Target(ShipId),
     Plan(TransferPlan),
-    /// Planner call pending: drawn for one frame ("plotting...") before the blocking call.
-    Planning { ship: ShipId, target: BodyId, after: f64, shown: bool },
+    /// Waiting on `Backend::plan_transfer_async` ("plotting course...").
+    Planning { ship: ShipId, target: BodyId, after: f64 },
     Nodes(NodeEdit),
 }
 
@@ -251,17 +251,18 @@ impl GameScreen {
             return;
         }
         self.selected = Some(Focus::Ship(ship));
-        self.mode = Mode::Planning { ship, target, after, shown: false };
+        self.mode = Mode::Planning { ship, target, after };
     }
 
-    /// Runs a pending plan once its "plotting" frame has been shown.
+    /// Picks up the pending plan once the backend has it.
     fn run_pending_plan(&mut self, be: &dyn Backend, now: f64) {
-        let Mode::Planning { ship, target, after, shown } = self.mode else { return };
-        if !shown {
-            self.mode = Mode::Planning { ship, target, after, shown: true };
-            return;
-        }
-        match be.plan_transfer(ship, target, after) {
+        let Mode::Planning { ship, target, after, .. } = self.mode else { return };
+        // Polled every frame; the client plans on a worker thread so the map keeps animating.
+        let res = match be.plan_transfer_async(ship, target, after) {
+            crate::PlanPoll::Pending => return,
+            crate::PlanPoll::Done(r) => r,
+        };
+        match res {
             Some(plan) => {
                 self.selected = Some(Focus::Ship(ship));
                 // "Next window" asks for a later departure: scrub ahead to show it.

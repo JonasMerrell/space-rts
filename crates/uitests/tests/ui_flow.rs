@@ -62,7 +62,7 @@ async fn run() {
     assert_eq!(t.screen(), "login");
     t.shot("01-login").await;
     t.ok("starts on the login screen");
-    t.be.act(UiAction::Login { user: "Jonas".into(), pass: "hunter2".into(), register: false });
+    t.be.act(UiAction::Login { server: String::new(), user: "Jonas".into(), pass: "hunter2".into(), register: false });
     t.frames(2).await;
     assert_eq!(t.screen(), "menu", "LoggedIn should open the menu");
     assert_eq!(t.ui.user, "Jonas");
