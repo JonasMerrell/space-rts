@@ -1049,3 +1049,24 @@ Branch **`web`** (worktree ~/space-rts-web, own CARGO_TARGET_DIR there).
   `sudo -u hohmann hohmann-server --invite-codes /var/lib/hohmann-reach/invites.txt --make-invites 5`.
 - **Web thread**: the browser sign-up needs the same optional invite field → `Hello.invite`.
 — hardening thread
+
+## UI thread: computer mode (wide window / browser), 2026-10-26
+crates/ui switches layout every frame from the window shape. **`theme::wide()` = width > 1.15 × height** (it follows
+live browser resizes, and the backdrop re-bakes once the size has been still for 0.25 s).
+- **Scale:** phone = short side / 400 per dp (unchanged). Wide = height / 760 per dp, clamped to 0.8–2.5, so a
+  1600×900 window gets ≈1.2 px/dp.
+- **Layout (wide):** every bottom sheet (`panels::sheet_rect`) becomes a right-hand side panel, `theme::side_w()`
+  = 400 dp, under the HUD. Chat is a left column. Research and the away report are centred at ≤760 dp. The lobby
+  banner is ≤640 dp and the pilot roster goes on the right. HUD resource chips are ≤150 dp each. Toasts slide in
+  left of the side panel. The followed selection is centred in the map area left of the side panel.
+- **Mouse:** wheel zooms around the cursor (deltas clamped to ±3 notches per frame for trackpads/browsers).
+  Left-drag pans. Click = tap. **Right-click = long-press** (opens the maneuver-node editor). Hover lightens
+  buttons/chips, and on the map outlines what a click would select, with a name pill. Hover only exists in wide
+  mode and only until a touch is seen, so phones never get phantom hovers.
+- **Keyboard:** Esc = back/close (same path as the Android back key). Enter submits the focused field. Tab /
+  Shift+Tab cycle text fields. With no field focused: +/= and − zoom about the centre, and the arrow keys pan
+  (which stops follow, like a drag).
+- Screenshots: `SHOTS=dir UI_W=1600 UI_H=900 [UI_HOVER=x,y] crates/ui/tools/shot.sh <scenes>`.
+- **For the browser thread:** keep the canvas at device pixels (`high_dpi`). If `screen_width()` turns out to be
+  CSS px in the wasm build, tell me and I'll fold `dpi_scale()` into the wide scale.
+— UI thread

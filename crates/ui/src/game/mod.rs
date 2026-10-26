@@ -234,6 +234,12 @@ impl GameScreen {
             self.draw_mode_world(be_ref, view, &cam, t);
             map::draw_bodies(be_ref, view, &cam, t, self.selected);
             map::draw_ships(be_ref, view, &cam, t, self.selected);
+            // Mouse hover (computer mode): outline what a click would select.
+            if let Some(hp) = inp.hover.filter(|p| !inp.over_ui(*p) && inp.held.is_none()) {
+                if let Some(f) = map::hit_test(be_ref, view, &cam, t, hp, self.selected).filter(|f| Some(*f) != self.selected) {
+                    map::draw_hover(be_ref, view, &cam, t, f);
+                }
+            }
             map::draw_labels(be_ref, view, &cam, t);
             self.draw_mode_overlay(be_ref, view, &cam, t);
             if self.scrub > 1.0 {
@@ -328,7 +334,7 @@ impl GameScreen {
             let following = self.follow && self.selected.is_some();
             if let Some((c, k)) = inp.zoom {
                 // While following, zoom about the screen centre so the selection stays put.
-                let c = if following { vec2(screen_width() / 2.0, screen_height() * 0.33) } else { c };
+                let c = if following { follow_point() } else { c };
                 cam.zoom_at(c, k, fit.zoom * 0.5, fit.zoom * 400.0);
             }
             if let Some(d) = inp.drag {
@@ -519,8 +525,10 @@ impl GameScreen {
         let (Some(p), Some(cam)) = (target, self.cam.as_mut()) else { return };
         // Aim for the middle of the map band left above the selection's bottom sheet (~1/3 down),
         // not the true screen centre, which the sheet covers.
-        let dy = (screen_height() * 0.33 - screen_height() / 2.0) as f64 / cam.zoom;
-        let goal = [p[0], p[1] - dy];
+        let fp = follow_point();
+        let dx = (fp.x - screen_width() / 2.0) as f64 / cam.zoom;
+        let dy = (fp.y - screen_height() / 2.0) as f64 / cam.zoom;
+        let goal = [p[0] - dx, p[1] - dy];
         let k = 1.0 - (-(get_frame_time() as f64) * 8.0).exp();
         cam.center[0] += (goal[0] - cam.center[0]) * k;
         cam.center[1] += (goal[1] - cam.center[1]) * k;
@@ -570,4 +578,14 @@ impl GameScreen {
 
 fn s_dp() -> f32 {
     s()
+}
+
+/// Where the followed selection sits on screen: the middle of the map that isn't covered by panels
+/// (phone: a third down, above the bottom sheet; computer: left of the side panel).
+fn follow_point() -> Vec2 {
+    if wide() {
+        vec2((screen_width() - side_w()) / 2.0, screen_height() * 0.5)
+    } else {
+        vec2(screen_width() / 2.0, screen_height() * 0.33)
+    }
 }

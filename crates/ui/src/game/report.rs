@@ -34,7 +34,8 @@ pub fn away_report(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: 
         art::sfx("menu_open");
     }
     let m = 12.0 * s();
-    let r = Rect::new(m, safe_top() + m, screen_width() - 2.0 * m, screen_height() - safe_top() - safe_bottom() - 2.0 * m);
+    let rw = (screen_width() - 2.0 * m).min(760.0 * s());
+    let r = Rect::new((screen_width() - rw) / 2.0, safe_top() + m, rw, screen_height() - safe_top() - safe_bottom() - 2.0 * m);
     inp.block(r);
     cel::panel(r, alpha(PANEL, 0.98));
     cel::round_rect_lines(r, 14.0 * s(), 1.0 * s(), BORDER);
