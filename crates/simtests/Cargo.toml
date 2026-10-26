@@ -9,4 +9,6 @@ description = "Cross-crate integration and property tests (owned by the tests th
 sim = { path = "../sim" }
 proto = { path = "../proto" }
 server = { path = "../server" }
+client = { path = "../client" }
+ui = { path = "../ui" }
 serde_json = { workspace = true }
