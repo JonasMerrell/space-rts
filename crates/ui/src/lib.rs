@@ -17,12 +17,11 @@ pub use backend::{Backend, BackendEvent, ImpactPoll, PlanPoll, UiAction};
 use game::GameScreen;
 use input::Input;
 use macroquad::prelude::*;
-use screens::{Lobby, Login, Menu};
+use screens::{Login, Menu};
 
 pub enum Screen {
     Login(Login),
     Menu(Menu),
-    Lobby(Lobby),
     Game(GameScreen),
 }
 
@@ -58,7 +57,6 @@ impl Ui {
         match &mut self.screen {
             Screen::Login(l) => l.draw(&mut self.input, be),
             Screen::Menu(m) => m.draw(&mut self.input, be),
-            Screen::Lobby(l) => l.draw(&mut self.input, be),
             Screen::Game(g) => {
                 g.draw(&mut self.input, be);
             }
@@ -76,7 +74,7 @@ impl Ui {
         }
     }
 
-    fn on_event(&mut self, ev: BackendEvent, be: &mut dyn Backend) {
+    fn on_event(&mut self, ev: BackendEvent, _be: &mut dyn Backend) {
         match ev {
             BackendEvent::LoggedIn { user } => {
                 self.user = user.clone();
@@ -92,17 +90,20 @@ impl Ui {
                     self.screen = Screen::Login(l);
                 }
             }
-            BackendEvent::Lobby(info) => {
-                if let Screen::Lobby(l) = &mut self.screen {
-                    if l.info.as_ref().is_some_and(|old| info.players.len() > old.players.len()) {
+            // The waiting period is shown on the game screen (map + lobby overlay), see game::lobby.
+            BackendEvent::Lobby(info) => match &mut self.screen {
+                Screen::Game(g) => {
+                    if info.players.len() > g.lobby_pilots && g.lobby_pilots > 0 {
                         art::sfx("lobby_join");
                     }
-                    l.info = Some(info);
-                } else {
-                    let me = be.view().map(|v| v.me).unwrap_or(self.me);
-                    self.screen = Screen::Lobby(Lobby { info: Some(info), me, faction: 0 });
+                    g.lobby_pilots = info.players.len();
                 }
-            }
+                _ => {
+                    let mut g = GameScreen::new();
+                    g.lobby_pilots = info.players.len();
+                    self.screen = Screen::Game(g);
+                }
+            },
             BackendEvent::LoggedOut => self.to_login(),
             BackendEvent::LobbyFailed(e) => {
                 let mut m = Menu::new(self.user.clone());

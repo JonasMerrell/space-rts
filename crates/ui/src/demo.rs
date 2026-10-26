@@ -123,6 +123,35 @@ impl DemoBackend {
     }
 
     /// Build the demo system and a mid-game state. Public so screenshots can jump straight in.
+    /// Waiting period: the system exists but nobody has ships or planets yet, and the clock is stopped.
+    pub fn enter_lobby(&mut self, info: LobbyInfo) {
+        self.start_game();
+        self.start_t = 0.0;
+        self.speed = 0.0;
+        if let Some(v) = self.view.as_mut() {
+            v.home = v.bodies.iter().find(|b| b.owner == Some(v.me) && b.kind == BodyKind::Planet).map(|b| b.id);
+            v.ships.clear();
+            for b in v.bodies.iter_mut() {
+                b.owner = None;
+                b.intel = None;
+            }
+            v.chat.clear();
+            v.resources = Resources::default();
+            v.now = 0.0;
+        }
+        self.sync_lobby(info);
+    }
+
+    fn sync_lobby(&mut self, info: LobbyInfo) {
+        if let Some(v) = self.view.as_mut() {
+            v.players = info.players.clone();
+            v.host = info.host;
+            v.lobby = Some(info.clone());
+        }
+        self.lobby = Some(info.clone());
+        self.events.push(BackendEvent::Lobby(info));
+    }
+
     pub fn start_game(&mut self) {
         let mut bodies = vec![];
         let mut kep = vec![];
@@ -224,6 +253,8 @@ impl DemoBackend {
                 ChatMsg { from: 3, t: now - 3.0 * 3600.0, text: "truce on Kraken until day 5?".into() },
                 ChatMsg { from: 1, t: now - 2.0 * 3600.0, text: "deal. Mara is building something big near Cinder".into() },
             ],
+            lobby: None,
+            home: None,
         });
         // Our Hammerhead is already en route to Gaia Nova; Mara's pack is heading for Tethys.
         let plan = self.plan_for(&ships[3], 3, now - 3.0 * 3600.0);
@@ -419,11 +450,10 @@ impl Backend for DemoBackend {
             UiAction::CreateGame { name, length_days, speed, bots } => {
                 let mut players = vec![Player { id: 1, name: self.user.clone(), color: 0, faction: "VANGUARD NAVY".into(), online: true }];
                 for (i, b) in bots.iter().enumerate() {
-                    players.push(Player { id: 10 + i as u32, name: format!("Bot ({b})"), color: i + 1, faction: "JUNKER CLANS".into(), online: true });
+                    players.push(Player { id: 10 + i as u32, name: format!("Bot ({b})"), color: i + 1, faction: "JUNKER CLANS".into(), online: false });
                 }
                 let info = LobbyInfo { code: "K7QX".into(), name, players, max_players: 4, host: 1, length_days, speed, bots };
-                self.lobby = Some(info.clone());
-                self.events.push(BackendEvent::Lobby(info));
+                self.enter_lobby(info);
             }
             UiAction::JoinGame { code } => {
                 if code == "K7QX" || code == "ZB2M" {
@@ -443,19 +473,23 @@ impl Backend for DemoBackend {
                         speed: 1.0,
                         bots: vec![],
                     };
-                    self.lobby = Some(info.clone());
-                    self.events.push(BackendEvent::Lobby(info));
+                    self.enter_lobby(info);
                 }
             }
             UiAction::OpenGame { .. } | UiAction::StartGame => {
+                // leaving the waiting period: back to the normal running demo clock
+                if self.lobby.take().is_some() {
+                    *self = DemoBackend { user: std::mem::take(&mut self.user), ..DemoBackend::new() };
+                }
                 self.start_game();
                 self.events.push(BackendEvent::GameStarted);
             }
             UiAction::AddBot { difficulty } => {
                 if let Some(l) = self.lobby.as_mut() {
                     let n = l.players.len();
-                    l.players.push(Player { id: 20 + n as u32, name: format!("Bot ({difficulty})"), color: n, faction: "PRISM COVENANT".into(), online: true });
-                    self.events.push(BackendEvent::Lobby(l.clone()));
+                    l.players.push(Player { id: 20 + n as u32, name: format!("Bot ({difficulty})"), color: n, faction: "PRISM COVENANT".into(), online: false });
+                    let l = l.clone();
+                    self.sync_lobby(l);
                 }
             }
             UiAction::SetFaction(f) => {
@@ -463,11 +497,20 @@ impl Backend for DemoBackend {
                     if let Some(p) = l.players.iter_mut().find(|p| p.id == 1) {
                         p.faction = f;
                     }
-                    self.events.push(BackendEvent::Lobby(l.clone()));
+                    let l = l.clone();
+                    self.sync_lobby(l);
+                }
+            }
+            UiAction::RemoveBot { player } => {
+                if let Some(l) = self.lobby.as_mut() {
+                    l.players.retain(|p| p.id != player || p.online);
+                    let l = l.clone();
+                    self.sync_lobby(l);
                 }
             }
             UiAction::LeaveLobby => {
                 self.lobby = None;
+                self.view = None;
                 self.events.push(BackendEvent::LoggedIn { user: self.user.clone() });
             }
             UiAction::ScheduleTransfer(p) => {

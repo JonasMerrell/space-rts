@@ -2,6 +2,7 @@
 
 pub mod details;
 pub mod fleet;
+mod lobby;
 pub mod map;
 mod panels;
 mod report;
@@ -96,6 +97,10 @@ pub struct GameScreen {
     /// Fleet sheet (group / split / merge ships parked together).
     pub fleet: Option<fleet::FleetSheet>,
     /// For sound cues: chat length and bodies we owned last frame.
+    /// Lobby: pilot roster expanded.
+    pub lobby_roster: bool,
+    /// Lobby: pilot count last seen, for the join sound.
+    pub lobby_pilots: usize,
     seen_chat: usize,
     owned: Vec<BodyId>,
     last_selected: Option<Focus>,
@@ -134,6 +139,8 @@ impl GameScreen {
             station_pick: None,
             report: Default::default(),
             fleet: None,
+            lobby_roster: true,
+            lobby_pilots: 0,
             seen_chat: usize::MAX,
             owned: vec![],
             last_selected: None,
@@ -164,13 +171,35 @@ impl GameScreen {
                 // Start zoomed on the inner system; pinch out for the whole map.
                 let mut cam = Camera::fit(view);
                 cam.zoom *= 1.8;
-                // ...centred on our home world when we have one.
-                if let Some(home) = view.bodies.iter().find(|b| b.owner == Some(view.me) && b.kind == BodyKind::Planet) {
+                // ...centred on our home world when we have one (in the lobby: where we'll start).
+                let owned = view.bodies.iter().find(|b| b.owner == Some(view.me) && b.kind == BodyKind::Planet);
+                if let Some(home) = owned.or_else(|| view.home.and_then(|h| view.body(h))) {
                     let p = be_ref.body_pos(home.id, view.now);
                     cam.center = [p[0] * 0.5, p[1] * 0.5];
+                    if view.lobby.is_some() {
+                        // the pilot roster covers the bottom half: put home in the open band under the banner
+                        let at = cam.to_screen(p);
+                        cam.pan_px(vec2(screen_width() / 2.0 - at.x, screen_height() * 0.36 - at.y));
+                    }
                 }
                 self.cam = Some(cam);
             }
+            if let Some(info) = &view.lobby {
+                // Waiting for the host: just the map (pan, zoom, tap a body) plus the lobby overlay.
+                self.scrub = 0.0;
+                let t = view.now;
+                self.handle_map_input(inp, be_ref, view, t);
+                let cam = self.cam.unwrap();
+                map::draw_orbits(be_ref, view, &cam, t);
+                map::draw_bodies(be_ref, view, &cam, t, self.selected);
+                lobby::draw_home(be_ref, view, &cam, t);
+                map::draw_labels(be_ref, view, &cam, t);
+                lobby::overlay(self, inp, view, info);
+                panels::toasts(self, inp, be_ref, view);
+                if self.chat_open {
+                    panels::chat(self, inp, view);
+                }
+            } else {
             let t = view.now + self.scrub;
             self.sound_cues(view);
             self.run_pending_plan(be_ref, view.now);
@@ -219,6 +248,7 @@ impl GameScreen {
                 research::research_screen(self, inp, be_ref, view);
             }
             report::away_report(self, inp, be_ref, view);
+            }
         }
         for a in self.out.drain(..) {
             be.act(a);

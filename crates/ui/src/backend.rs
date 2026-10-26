@@ -27,6 +27,8 @@ pub enum UiAction {
     JoinGame { code: String },
     OpenGame { code: String },
     AddBot { difficulty: String },
+    /// Host only, before the start.
+    RemoveBot { player: PlayerId },
     SetFaction(String),
     StartGame,
     LeaveLobby,

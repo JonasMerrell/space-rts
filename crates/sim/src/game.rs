@@ -633,7 +633,50 @@ impl Game {
             contacts: vec![],
             vision: Default::default(),
         });
+        self.preview_homes();
         Ok(id)
+    }
+
+    /// Lobby only: take a player (never the host) out again. Ids and colours are re-numbered,
+    /// which is safe because nothing but chat refers to players before the start.
+    pub fn remove_player(&mut self, id: PlayerId) -> Result<(), String> {
+        if self.status != Status::Lobby {
+            return Err("game already started".into());
+        }
+        if id == self.host {
+            return Err("the host can't be removed".into());
+        }
+        if id as usize >= self.players.len() {
+            return Err("no such player".into());
+        }
+        self.players.remove(id as usize);
+        for (i, p) in self.players.iter_mut().enumerate() {
+            p.id = i as PlayerId;
+            p.color = i % 4;
+        }
+        self.chat.retain(|c| c.from != id);
+        for c in &mut self.chat {
+            if c.from > id {
+                c.from -= 1;
+            }
+        }
+        if self.host > id {
+            self.host -= 1;
+        }
+        self.preview_homes();
+        Ok(())
+    }
+
+    /// While waiting in the lobby, show everyone where they'll start (no owner or fleet yet).
+    /// Same deterministic pick as `start`, so the preview is what you get if nobody else joins.
+    fn preview_homes(&mut self) {
+        if self.status != Status::Lobby {
+            return;
+        }
+        let homes = pick_homes(&self.system, self.players.len());
+        for (i, p) in self.players.iter_mut().enumerate() {
+            p.home = homes.get(i).copied();
+        }
     }
 
     /// Assign homes and starting fleets, then start the clock.
@@ -1464,6 +1507,42 @@ mod tests {
         g.add_player("bob", None).unwrap();
         g.start();
         g
+    }
+
+    #[test]
+    fn lobby_previews_homes_and_start_keeps_them() {
+        let settings = Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 86_400.0, speed: 1.0 };
+        let mut g = Game::new("ABCD".into(), settings, 5, "alice");
+        assert!(g.players[0].home.is_some());
+        g.add_player("bob", None).unwrap();
+        g.add_player("Bot 1 (normal)", Some("normal".into())).unwrap();
+        let homes: Vec<_> = g.players.iter().map(|p| p.home.unwrap()).collect();
+        assert!(homes.iter().all(|h| g.bodies[h.0 as usize].owner.is_none()) && g.ships.is_empty());
+        let mut uniq = homes.clone();
+        uniq.dedup();
+        assert_eq!(uniq.len(), 3);
+        // removing the bot re-numbers and re-picks for two players
+        assert!(g.remove_player(0).is_err());
+        g.remove_player(2).unwrap();
+        assert_eq!(g.players.len(), 2);
+        let two: Vec<_> = g.players.iter().map(|p| p.home.unwrap()).collect();
+        g.start();
+        assert_eq!(g.players.iter().map(|p| p.home.unwrap()).collect::<Vec<_>>(), two);
+        assert!(g.add_player("carol", None).is_err());
+        assert!(g.remove_player(1).is_err());
+    }
+
+    #[test]
+    fn remove_player_renumbers() {
+        let settings = Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 86_400.0, speed: 1.0 };
+        let mut g = Game::new("ABCD".into(), settings, 5, "alice");
+        g.add_player("Bot 1 (easy)", Some("easy".into())).unwrap();
+        g.add_player("bob", None).unwrap();
+        g.apply(2, Command::Chat { text: "hi".into() }).unwrap();
+        g.remove_player(1).unwrap();
+        assert_eq!(g.players[1].name, "bob");
+        assert_eq!((g.players[1].id, g.players[1].color), (1, 1));
+        assert_eq!(g.chat.last().unwrap().from, 1);
     }
 
     #[test]

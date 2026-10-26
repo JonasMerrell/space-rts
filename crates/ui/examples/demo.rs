@@ -1,13 +1,13 @@
 //! Offline UI demo on the fake backend.
 //!   cargo run -p ui --example demo
-//! Screenshot mode: UI_SCENE=<login|menu|create|lobby|map|body|owned|yard|ship|gmenu|res_energy|detail_up|detail_ship|rock|impact|target|plan|nodes|scrub|chat|toast> UI_SHOT=out.png
+//! Screenshot mode: UI_SCENE=<login|menu|create|lobby|lobby_guest|map|body|owned|yard|ship|gmenu|res_energy|detail_up|detail_ship|rock|impact|target|plan|nodes|scrub|chat|toast> UI_SHOT=out.png
 //! sets the scene up, renders a few frames, saves the PNG and exits.
 
 use macroquad::prelude::*;
 use ui::demo::DemoBackend;
 use ui::game::{GameScreen, Mode, NodeEdit};
 use ui::model::*;
-use ui::screens::{Lobby, Menu};
+use ui::screens::Menu;
 use ui::{Backend, Screen, Ui, UiAction};
 
 fn conf() -> Conf {
@@ -51,7 +51,16 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
             let mut info = info.unwrap();
             info.players.insert(1, Player { id: 2, name: "Mara".into(), color: 1, faction: "HIVE BROOD".into(), online: true });
             info.players[2].color = 2;
-            ui.screen = Screen::Lobby(Lobby { info: Some(info), me: 1, faction: 0 });
+            info.players[2].online = false;
+            be.enter_lobby(info);
+            let _ = be.poll();
+            ui.screen = Screen::Game(GameScreen::new());
+        }
+        "lobby_guest" => {
+            be.act(UiAction::Login { server: String::new(), user: "Jonas".into(), pass: "x".into(), register: false });
+            be.act(UiAction::JoinGame { code: "MX4PQ".into() });
+            let _ = be.poll();
+            ui.screen = Screen::Game(GameScreen::new());
         }
         _ => {
             game(ui, be);

@@ -13,6 +13,8 @@ pub enum ClientMsg {
     CreateGame { name: String, size: SystemSize, length_days: f64, speed: f64, max_players: usize, bots: Vec<String> },
     JoinGame { code: String },
     AddBot { code: String, difficulty: String },
+    /// Host only, while waiting for the start.
+    RemoveBot { code: String, player: PlayerId },
     SetFaction { code: String, faction: String },
     StartGame { code: String },
     /// Subscribe to a game's state (unsubscribes from the previous one).
