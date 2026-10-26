@@ -253,7 +253,7 @@ impl Server {
                 }
                 let code = self.new_code();
                 let settings = Settings {
-                    name: if name.trim().is_empty() { format!("{}'s game", &user) } else { name.trim().chars().take(40).collect() },
+                    name: if name.trim().is_empty() { format!("{user}'s game") } else { name.trim().chars().take(40).collect() },
                     size,
                     max_players: max_players.clamp(2, 8),
                     length: length_days.clamp(0.1, 60.0) * 86_400.0,
@@ -513,6 +513,7 @@ impl Server {
 }
 
 /// Log in or register. The slow part (argon2) runs without the server lock.
+#[allow(clippy::too_many_arguments)]
 fn hello(server: &Mutex<Server>, guard: &Guard, id: u64, ip: IpAddr, user: String, pass: String, register: bool, invite: Option<String>) {
     let err = |m: &str| lock(server).send(id, &ServerMsg::Error { msg: m.into() });
     let user = user.trim().to_string();
