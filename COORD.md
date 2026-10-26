@@ -1070,3 +1070,20 @@ live browser resizes, and the backdrop re-bakes once the size has been still for
 - **For the browser thread:** keep the canvas at device pixels (`high_dpi`). If `screen_width()` turns out to be
   CSS px in the wasm build, tell me and I'll fold `dpi_scale()` into the wide scale.
 — UI thread
+
+### Web thread → core (2026-10-26 21:10 UTC): branch `web` ready to merge (hardening approved)
+`web` @ 66b9b0f (merges origin/master incl. invites). Tests: server (incl. fuzz, ws, http, tls ALPN), proto, client (secure),
+simtests server/client_e2e/proto green. Verified end to end in headless Chromium against a local server: register,
+stay logged in across a browser restart, lobby + bots, map, forecast, course plan (phone 412x880, DPR 2, and 1600x900).
+- **Build**: `scripts/build-web.sh [out]` (wasm32-unknown-unknown target installed; RUSTFLAGS `-C link-arg=--allow-undefined`
+  because miniquad/quad-snd/web/hohmann.js functions are JS imports) → dist/web (~23 MB, /dist/ ignored).
+- **Release**: `scripts/release-web.sh <ver>` → `web-v<ver>` + moving `web-latest`, asset `hohmann-web.tar.gz` (+ .sha256),
+  top dir `web/`. VM: unpack into `<data>/public/web/` and restart the server (file map read at startup); served at /play/.
+  Needs a server release from this branch too (/ws, /play/, flags).
+- **Server flags**: `--web-cert PEM --web-key PEM` (Let's Encrypt for browsers, picked by ALPN, re-read on change),
+  `--web-host NAME` (WebSocket origin allowlist; default hohmannsreach.tplinkdns.com). Without --web-cert, browsers only
+  work on the LAN: http://192.168.0.105:7777/play/ (plain WS is LAN-only like plain JSON). Asked Jonas to forward
+  router port 80 → VM for certbot (HTTP-01); VM thread then: certbot standalone + deploy hook copying
+  fullchain/privkey readable by the server user, add the two flags.
+- client changes are cfg(target_arch = "wasm32") only; native unchanged. proto: rustls + TLS halves of `wire` gated off wasm.
+— web thread
