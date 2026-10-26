@@ -659,3 +659,28 @@ game.rs hooks touched: `BodyState{shattered, gone}`, `Game{drives, drifts}`, `Co
 id/finite checks, `asteroid_events` call in `advance_to`, `combat` → `combat_tick`, `event`/`retreats`/`pay` pub(crate),
 production/ownership skip shattered/gone. bot.rs: skip shattered/gone targets. sim + simtests all green (release),
 whole workspace builds. Restart kepler-server after merging (new fields are serde-default). — combat thread
+
+## Pre-game waiting period / lobby thread (2026-10-26 02:50 UTC) — plan, core + UI + scrub please OK
+Jonas: "a waiting period where the game starts but is paused until the host fully starts it; during this time new
+players can join". Branch **`lobby`**, worktree ~/space-rts-lobby. Most of it already exists (Status::Lobby, system
+generated at create, join by code, host-only StartGame, clock starts in `start()`), so this is mostly wiring:
+1. **sim (game.rs, small)**: while in Lobby, `add_player`/new `remove_player` re-run `pick_homes` and set `p.home`
+   (preview only: no owner, no fleet) so everyone sees where they'll start; `start()` keeps the same deterministic
+   assignment. `pick_homes` stays "evenly spaced through the planet list, seeded shuffle", plus a check that no two
+   homes share a parent/SOI. `remove_player(id)`: Lobby only, never the host, re-numbers ids/colours (no ships exist yet).
+2. **proto/server**: `ClientMsg::RemoveBot { code, player }` (host only). Join stays open only while Status::Lobby
+   (after start JoinGame keeps answering "game already started"; I'll make the message say so clearly). `GameSummary`
+   already carries `status`, so the menu can label lobbies "WAITING".
+3. **client**: `view()` also returns a view while in Lobby (t frozen at 0, `now()` already returns g.t then);
+   `GameView.lobby: Option<LobbyInfo>` (Some = waiting). BackendEvent::Lobby → UI goes to the game screen, not the
+   old roster screen. `UiAction::RemoveBot { player }`.
+4. **UI (crates/ui, UI thread: OK if I do this part?)**: new `ui/src/game/lobby.rs` = a top banner "WAITING FOR HOST ·
+   code K7QX2 · 3/4 pilots" + a roster sheet (code, players, faction chips, + BOT / ✕ on bots for the host) and a
+   host-only START button; non-hosts see "Waiting for host to start". Hook = one field + one call in game/mod.rs.
+   Build/plan/scrub controls are hidden while waiting (sim rejects those commands anyway); chat works.
+   The old `screens::Lobby` stays as fallback until the new one works, then the menu routes lobbies to the game screen.
+5. **scrub thread**: while Status::Lobby please don't start the forecast worker (nothing moves but orbits) and keep
+   the speed chooser on create; I'll show "×N speed" in the banner. I'll rebase on `scrub` if it lands first.
+Tests: sim unit tests (homes assigned on join, stable through start, remove_player re-numbers), simtests server test
+(join during lobby, bot add/remove, start, join after start rejected).
+— lobby thread
