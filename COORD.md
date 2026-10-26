@@ -428,3 +428,41 @@ ownership), keep the focused thing centred, let him give orders to ships that ar
    already clamps/uses `settings.speed`. Lobby/menu show real length.
 Tests: simtests forecast (built ship appears at done_t, queued order departs, forecast never invents enemy moves).
 — scrub thread
+
+### Combat + asteroid thread: ready for review (2026-10-26 02:40) — branch `combat` (pushed), 3 commits on master 226b6ee
+- `sim/src/combat.rs`: `shot(weapon, r_rel, v_rel, size, evade) -> Option<Shot{tof, hit, factor}>`, `lead_time`,
+  `resolve(&[Combatant], dt)`; `Game::combat_tick` replaces `Game::combat` (removed from game.rs). Parked fleets at the
+  same body fight as before (RPS/ordering tests unchanged); ships in flight now shoot/get shot by anything within
+  range (energy 8000 km, kinetic 4000 km); things parked at *different* bodies never fight; defense vs defense never.
+  4 sub-steps per 60 s tick. Perf: 4 hard bots, Large, 2 days = 255 s vs 266 s on master (planning dominates).
+- `sim/src/asteroid.rs`: `Command::PushAsteroid{body, burn}`, `Command::AimAsteroid{body, target}`,
+  `asteroid::plan_impact(&g, ast, target, now)` / `plan_push(&g, ast, burn)` → `ImpactPlan{burn, dv, fuel, burn_s,
+  impact: Option<Impact{body, t, v, energy, severity}>, traj}` (≈20–60 ms). Drive: 200 matter + 150 energy, 2 h install,
+  ve 100 km/s, burns 1–40 h; fuel must be at the asteroid (its stock if you own it + your tankers parked there).
+  Typical aimed impacts: Δv 4–8 km/s, 13–27 km/s at impact, severity 0.05–6 depending on asteroid size.
+- New serde-default fields: `Game.drives`, `Game.drifts`, `BodyState.shattered`, `BodyState.gone`.
+  **UI**: skip drawing `gone` bodies; show `shattered` as rubble; body panel for an asteroid could offer "Aim at…" →
+  `plan_impact` preview (impact time, km/s, severity: <1 damage %, ≥1 "wipes", ≥4 "shatters").
+- **research thread**: hooks to fill: `Game::combat_mods(p) -> (kinetic_dmg, energy_dmg, accuracy)` (combat.rs),
+  `Game::can_drive_asteroids(p)` (asteroid.rs, gate on `Tech::AsteroidDrives`), and a `// TODO(research)` spot in
+  `combat_tick` where active Defense stations join as combatants (and in `Game::impact` to destroy stations).
+- **notifications thread**: your `in_combat` transition hook now belongs in `combat::combat_tick` (bodies in `fought`).
+- **fog thread**: `System` bodies' `orbit` can change mid-game (pushed asteroids) — don't cache `system` client-side;
+  consider hiding enemy `drives` (planned pushes) in `view_for` unless scanned.
+- **bot.rs** (core): one-line filter so bots don't target shattered/gone bodies.
+- Tests: un-ignored `kinetic_accuracy_falls_with_relative_velocity`, `asteroid_impact_energy_scales_with_mass_and_velocity_squared`,
+  added `flybys_are_shot_by_energy_but_outrun_kinetic`; sim + simtests all green except `server::four_players_join_by_code_and_play`,
+  which fails identically on master (fog hides ann's ships from bob, so `find(owner == 0).unwrap()` panics) — tests thread.
+— combat thread
+
+## Core review: `combat` branch (2026-10-26 02:40) — approved with 3 asks
+Hooks are small and clean. Before merging (after research + fog):
+1. **Rebase conflict to port:** master's notify merge added "Under attack"/"Battle" events + `BodyState.in_combat`
+   inside the old `combat()`, which your branch deletes. Port that into `combat_tick` (fire once per battle per
+   body; owner gets "Under attack", other sides "Battle"); `game::tests::under_attack_fires_once_per_battle` must pass.
+2. **Perf:** run `cargo run --release -p sim --example botrun` (2 bots, 48 h) on your branch and post the worst
+   per-hour time vs master here; flyby sampling must not make server ticks noticeably slower.
+3. Server now sends fogged views: impacts/asteroid pushes are public events, but the *drive being installed* on an
+   asteroid should only be visible to players who can see that asteroid (fog thread: `drives` / `drifts` filtering
+   in `view_for` — coordinate between you two).
+— core
