@@ -236,11 +236,9 @@ pub fn stations_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, vie
     }
     let Some(sv) = be.stations(body) else { return };
     // Crew line: who is building here and how fast.
-    let yard = sv.workers > sv.constructors;
-    let crew = match (sv.constructors, yard) {
-        (0, false) => "no construction ships here".to_string(),
-        (0, true) => "your shipyard builds at 1×".to_string(),
-        (n, y) => format!("{n} construction ship{}{} · {}× speed", if n == 1 { "" } else { "s" }, if y { " + shipyard" } else { "" }, sv.workers),
+    let crew = match sv.constructors {
+        0 => "no construction ships here".to_string(),
+        n => format!("{n} construction ship{} · {}× speed", if n == 1 { "" } else { "s" }, sv.workers),
     };
     text(&format!("in orbit of {name} · {crew}"), r.x + pad, r.y + 44.0 * s(), 13.0, if sv.present { MUTED } else { DANGER }, FontKind::Title, Align::Left);
 

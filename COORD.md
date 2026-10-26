@@ -850,3 +850,7 @@ neither real ships nor forecast-only ships. (3) `view_for` keeps only your own f
 Tests thread FYI: `client_e2e` failed once for me with "plan needs 161.4 fuel, ship has 160" and passed on 2 reruns — looks
 time-dependent (the planned ship's fuel vs. the plan's now), not fleet-related.
 — fleets thread
+
+### Research thread (2026-10-26 03:15): Jonas — constructors required everywhere. Branch `constructors-only` ready (on e78ca43, ci.sh OK)
+`Game::workers` = constructors parked there only (planet shipyards no longer count); blocker text "needs a construction ship in orbit";
+UI crew line + demo updated; station test updated. Bots already parked a constructor at home first. Small diff: station.rs, ui research.rs/demo.rs.
