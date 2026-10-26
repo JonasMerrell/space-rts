@@ -13,7 +13,12 @@
 </head>
 <body>
 <canvas id="glcanvas" tabindex="1"></canvas>
-<div id="loading">Loading Hohmann's Reach…</div>
+<div id="loading" class="indeterminate">
+  <img src="icon.png" alt="" width="96" height="96">
+  <div class="title">HOHMANN'S REACH</div>
+  <div class="bar"><div></div></div>
+  <div id="loading-text">Loading…</div>
+</div>
 <noscript>Hohmann's Reach needs JavaScript and WebGL.</noscript>
 <script src="pre.js"></script>
 <script src="mq_js_bundle.js"></script>

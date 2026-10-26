@@ -16,6 +16,8 @@ mobile = "--mobile" in rest
 exe = os.environ.get("CHROMIUM", "/usr/bin/chromium")
 with sync_playwright() as pw:
     flags = ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist", "--ignore-certificate-errors"] if os.environ.get("INSECURE") else ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"]
+    # e.g. EXTRA_FLAGS='--host-resolver-rules=MAP game.example 192.168.0.105' (no hairpin NAT at home)
+    flags += [f for f in os.environ.get("EXTRA_FLAGS", "").split("\n") if f]
     opts = dict(viewport={"width": w, "height": h}, is_mobile=mobile, has_touch=mobile, device_scale_factor=float(os.environ.get("DPR", "1")))
     if os.environ.get("USERDATA"):
         # persistent profile: localStorage survives between runs ("stay logged in")

@@ -138,6 +138,22 @@
         try { localStorage.removeItem(k); } catch (e) {}
     }
 
+    // ---- loading screen: count the game's files as they arrive
+    let loadObserver = null;
+    (function loadingProgress() {
+        const box = document.getElementById("loading");
+        const text = document.getElementById("loading-text");
+        if (!box || !text || !("PerformanceObserver" in window)) return;
+        let seen = 0;
+        try {
+            loadObserver = new PerformanceObserver((list) => {
+                for (const e of list.getEntries()) if (e.name.includes("/assets/")) seen++;
+                text.textContent = "Loading game art… " + seen + " files";
+            });
+            loadObserver.observe({ type: "resource", buffered: true });
+        } catch (e) {}
+    })();
+
     function register_plugin(importObject) {
         const env = importObject.env;
         env.hr_ws_open = (ptr, len) => open(str(ptr, len));
@@ -152,7 +168,10 @@
         env.hr_page_host_len = () => stage(location.host);
         env.hr_loaded = () => {
             const l = document.getElementById("loading");
-            if (l) l.remove();
+            if (!l) return;
+            if (loadObserver) loadObserver.disconnect();
+            l.classList.add("done");
+            setTimeout(() => l.remove(), 400);
         };
         env.hr_notify = (on) => {
             notifyOn = on !== 0;

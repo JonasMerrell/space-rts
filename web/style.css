@@ -1,4 +1,13 @@
 html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0d0a20; }
 canvas { position: absolute; inset: 0; width: 100%; height: 100%; outline: none; touch-action: none; display: block; }
-#loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  color: #c9c6e8; font: 600 18px system-ui, sans-serif; letter-spacing: .04em; pointer-events: none; }
+/* Covers the canvas until the game's art is in: the game can't draw on every frame while files
+   load, and those empty frames would flicker. */
+#loading { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; gap: 18px;
+  align-items: center; justify-content: center; background: #1b1340; color: #c9c6e8;
+  font: 600 15px system-ui, sans-serif; letter-spacing: .04em; transition: opacity .3s; }
+#loading.done { opacity: 0; pointer-events: none; }
+#loading img { border-radius: 22px; }
+#loading .title { font-size: 26px; font-weight: 800; color: #fff; letter-spacing: .06em; }
+#loading .bar { width: min(260px, 70vw); height: 4px; border-radius: 2px; background: rgba(255,255,255,.12); overflow: hidden; }
+#loading .bar div { height: 100%; width: 35%; background: #ffd23f; animation: slide 1.2s ease-in-out infinite; }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
