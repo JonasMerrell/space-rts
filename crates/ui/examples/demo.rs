@@ -225,6 +225,12 @@ async fn main() {
     }
     let mut frame = 0;
     loop {
+        // UI_TAP=x,y : scripted tap after 5 frames (screenshot debugging)
+        if frame == 5 {
+            if let Some((x, y)) = std::env::var("UI_TAP").ok().and_then(|v| v.split_once(',').map(|(a, b)| (a.parse().unwrap_or(0.0), b.parse().unwrap_or(0.0)))) {
+                ui.input.inject_tap(vec2(x, y));
+            }
+        }
         ui.frame(&mut be);
         frame += 1;
         if let Some(path) = &shot {

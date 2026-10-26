@@ -43,6 +43,9 @@ pub struct Input {
     pub hover: Option<Vec2>,
     /// A touch has ever been seen: then the mouse position is just the last finger, not a hover.
     touch_seen: bool,
+    /// F3: input debug line (computer mode troubleshooting).
+    pub debug: bool,
+    debug_line: String,
     /// Test hook: pretend the mouse is here.
     pub script_hover: Option<Vec2>,
     /// Characters typed this frame and whether backspace/enter were hit.
@@ -99,6 +102,10 @@ impl Input {
             }
         } else if is_mouse_button_down(MouseButton::Left) {
             self.pointers = vec![(0, mouse_position().into())];
+        } else if is_mouse_button_pressed(MouseButton::Left) && is_mouse_button_released(MouseButton::Left) {
+            // Down and up between two frames (a quick click on a slow frame, e.g. a busy browser tab):
+            // report it like a touch that began and ended in one frame, i.e. a complete tap.
+            self.released = Some(mouse_position().into());
         }
 
         let now = get_time() + self.script_clock;
@@ -183,8 +190,14 @@ impl Input {
         self.hover = self.script_hover.or_else(|| (crate::theme::wide() && !self.touch_seen && self.script.is_empty()).then(|| mouse_position().into()));
         let (_, wy) = mouse_wheel();
         if wy != 0.0 && touches().is_empty() {
-            let notches = if wy.abs() > 3.0 { wy.signum() } else { wy };
-            self.zoom = Some((mouse_position().into(), 1.15f32.powf(notches)));
+            let notches = if wy.abs() > 3.0 || wy.abs() < 0.5 { wy.signum() } else { wy };
+            let at: Vec2 = mouse_position().into();
+            self.zoom = Some((at, 1.15f32.powf(notches)));
+            // the wheel is its own gesture: the map gets it unless the cursor is over a panel
+            // (not whatever the last click landed on)
+            if self.pointers.is_empty() {
+                self.owned_by_ui = self.blocked(at);
+            }
         }
         // Right-click = long-press (node editor) for mouse users.
         if is_mouse_button_pressed(MouseButton::Right) && touches().is_empty() {
@@ -210,9 +223,11 @@ impl Input {
             let centre = vec2(screen_width() / 2.0, screen_height() / 2.0);
             if is_key_pressed(KeyCode::Equal) || is_key_pressed(KeyCode::KpAdd) {
                 self.zoom = Some((centre, 1.25));
+                self.owned_by_ui = false;
             }
             if is_key_pressed(KeyCode::Minus) || is_key_pressed(KeyCode::KpSubtract) {
                 self.zoom = Some((centre, 1.0 / 1.25));
+                self.owned_by_ui = false;
             }
             let mut pan = Vec2::ZERO;
             for (k, d) in [(KeyCode::Left, vec2(1.0, 0.0)), (KeyCode::Right, vec2(-1.0, 0.0)), (KeyCode::Up, vec2(0.0, 1.0)), (KeyCode::Down, vec2(0.0, -1.0))] {
@@ -233,9 +248,29 @@ impl Input {
             }
         }
         self.chars.extend(self.script_text.drain(..));
+        if is_key_pressed(KeyCode::F3) {
+            self.debug = !self.debug;
+        }
+        if self.debug {
+            let (_, wy) = mouse_wheel();
+            if self.tap.is_some() || wy != 0.0 || self.pressed.is_some() || self.debug_line.is_empty() {
+                self.debug_line = format!(
+                    "touches {} ptrs {} ui-owned {} tap {:?} press {:?} wheel {wy} zoom {:?} hover {:?} t{:.1}",
+                    touches().len(), self.pointers.len(), self.owned_by_ui, self.tap, self.pressed, self.zoom.map(|z| z.1), self.hover, get_time()
+                );
+            }
+        }
         self.back = is_key_pressed(KeyCode::Back) || is_key_pressed(KeyCode::Escape) || std::mem::take(&mut self.script_back);
         self.backspace = is_key_pressed(KeyCode::Backspace);
         self.enter = is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter) || std::mem::take(&mut self.script_enter);
+    }
+
+    /// Draw the F3 debug line (call last in the frame).
+    pub fn draw_debug(&self) {
+        if self.debug {
+            draw_rectangle(0.0, screen_height() - 22.0, screen_width(), 22.0, Color::new(0.0, 0.0, 0.0, 0.8));
+            draw_text(&self.debug_line, 6.0, screen_height() - 6.0, 18.0, WHITE);
+        }
     }
 
     /// Consume the back key: true once per press, for the topmost thing that closes.
