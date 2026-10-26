@@ -14,7 +14,13 @@ fn file() -> Option<PathBuf> {
 
 /// (server, user, pass) from the last successful login, if the player hasn't logged out since.
 pub fn load() -> Option<(String, String, String)> {
-    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(file()?).ok()?).ok()?;
+    let p = file()?;
+    // desktop: pick up a session saved before the rename (Android can't: the old package's files are private)
+    let text = std::fs::read_to_string(&p).ok().or_else(|| {
+        let old = p.to_string_lossy().replace("hohmanns-reach", "hahmanns-reach");
+        std::fs::read_to_string(old).ok()
+    })?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
     let get = |k: &str| v.get(k).and_then(|x| x.as_str()).map(str::to_string).filter(|s| !s.is_empty());
     Some((get("server")?, get("user")?, get("pass")?))
 }
