@@ -171,6 +171,14 @@ pub struct Ship {
     /// research refits (engines, tanks, armor)
     #[serde(default)]
     pub tech: ShipTech,
+    /// game time of the last engine burn (plumes make the ship easier to detect, see fog.rs)
+    #[serde(default = "no_burn")]
+    pub last_burn_t: f64,
+}
+
+/// `last_burn_t` of a ship that never burned (finite so it survives JSON).
+pub fn no_burn() -> f64 {
+    -1e12
 }
 
 /// Multipliers research applies to a ship's class stats.
@@ -349,6 +357,12 @@ pub struct Player {
     /// projects running at labs (one per lab body)
     #[serde(default)]
     pub research: Vec<Research>,
+    /// fog of war: last sightings of enemy ships
+    #[serde(default)]
+    pub contacts: Vec<crate::fog::Contact>,
+    /// fog of war: what this player detects right now (recomputed every tick, so not saved or sent)
+    #[serde(skip)]
+    pub vision: crate::fog::Vision,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -505,6 +519,8 @@ impl Game {
             intel: vec![],
             techs: vec![],
             research: vec![],
+            contacts: vec![],
+            vision: Default::default(),
         });
         Ok(id)
     }
@@ -558,6 +574,7 @@ impl Game {
             route: vec![],
             state: ShipState::Parked { body: at, departure: None },
             tech: ShipTech::default(),
+            last_burn_t: no_burn(),
         });
         self.refit(owner);
         let s = self.ships.last_mut().unwrap();
@@ -868,6 +885,7 @@ impl Game {
                     return;
                 }
                 ship.fuel -= need;
+                ship.last_burn_t = d.state.t;
                 ship.state = ShipState::Flying(Flight { start: d.state, burns: vec![], dest: Some(d.to), cache: None });
                 let to = sys.body(d.to).name.clone();
                 self.event(Some(owner), EventKind::Info, "Departed", &format!("{name} burned {:.1} km/s for {to}", d.dv), None, Some(id));
@@ -892,6 +910,7 @@ impl Game {
                         ship.fuel -= need;
                     }
                     let dv = b.vector(st.r, st.v);
+                    ship.last_burn_t = b.t;
                     f.start = State { v: st.v + dv, ..st };
                     f.cache = None;
                     return;
@@ -903,6 +922,7 @@ impl Game {
                         let bname = sys.body(body).name.clone();
                         if need <= ship.fuel {
                             ship.fuel -= need;
+                            ship.last_burn_t = te;
                             ship.state = ShipState::Parked { body, departure: None };
                             self.event(Some(owner), EventKind::Good, "Arrived", &format!("{name} is in orbit of {bname}"), Some(body), Some(id));
                             self.continue_route(i);

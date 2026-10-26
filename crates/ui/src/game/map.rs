@@ -228,6 +228,18 @@ pub fn draw_ships(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64, selec
         }
         let player = view.player(sh.owner);
         let skin = player.map(|p| art::skin_of(&p.faction)).unwrap_or("vanguard");
+        if let Some(seen) = sh.seen_at {
+            // fog of war: last known position, fading over a day
+            let age = ((view.now - seen) / 86_400.0).clamp(0.0, 1.0) as f32;
+            let a = 0.45 - 0.25 * age;
+            if let Some(t) = art::ship_tex(sh.class, skin, player.map(|p| p.color)) {
+                let px = size * 2.8;
+                art::draw_centered(&t, p, vec2(px, px), dir.y.atan2(dir.x), Color::new(1.0, 1.0, 1.0, a));
+            }
+            draw_circle_lines(p.x, p.y, size + 5.0 * s(), 1.5 * s(), Color::new(l.r, l.g, l.b, a));
+            text("?", p.x + size, p.y - size, 13.0, Color::new(1.0, 1.0, 1.0, a + 0.2), FontKind::Title, Align::Center);
+            continue;
+        }
         if let Some(t) = art::ship_tex(sh.class, skin, player.map(|p| p.color)) {
             let px = size * 2.8;
             art::draw_centered(&t, p, vec2(px, px), dir.y.atan2(dir.x), WHITE);

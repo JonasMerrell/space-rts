@@ -22,6 +22,7 @@ fn ship_at(g: &mut Game, owner: PlayerId, class: ShipClass, at: BodyId) -> ShipI
     g.ships.push(Ship {
         id, owner, class, name: format!("t{}", id.0), hp: st.hp, fuel: st.fuel_cap,
         order: StandingOrder::Hold, route: vec![], state: ShipState::Parked { body: at, departure: None },
+        last_burn_t: sim::game::no_burn(), tech: Default::default(),
     });
     id
 }
@@ -89,7 +90,7 @@ fn big_ships_are_seen_from_further_than_small_ones() {
     // a single observing scout of player 0 at a distance between the two detection ranges
     let r = ship_sensor(ShipClass::Scout);
     let dist = r * (s_sig + d_sig) / 2.0;
-    let sensors = vec![(at + V2::from_angle(0.3) * dist, r)];
+    let sensors = vec![sim::fog::Sensor { pos: at + V2::from_angle(0.3) * dist, range: r, kind: sim::fog::SensorKind::Passive }];
     assert!(g.sees_ship(&sensors, g.ship(dread).unwrap()), "dreadnought not seen at {dist:.0} km");
     assert!(!g.sees_ship(&sensors, g.ship(scout).unwrap()), "scout seen at {dist:.0} km");
     // and in the real view (no observer there) neither is visible

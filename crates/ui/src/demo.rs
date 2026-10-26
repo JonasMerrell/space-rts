@@ -185,6 +185,7 @@ impl DemoBackend {
             nodes: vec![],
             destination: None,
             retreat: false,
+            seen_at: None,
         };
         let mut ships = vec![
             ship(1, "Red Fang", ShipClass::Gunship, 1, 3, Some(2)),
@@ -195,6 +196,8 @@ impl DemoBackend {
             ship(11, "Choir", ShipClass::Gunship, 3, 2, Some(4)),
             ship(12, "Miner swarm", ShipClass::Bomber, 4, 6, Some(5)),
         ];
+        // fog of war: an enemy dreadnought last seen 5 h ago (drawn as a fading ghost)
+        ships.push(Ship { seen_at: Some(now - 5.0 * 3600.0), ..ship(13, "Dreadnought", ShipClass::Dreadnought, 2, 1, Some(2)) });
         self.view = Some(GameView {
             me: 1,
             host: 1,
@@ -385,7 +388,7 @@ impl Backend for DemoBackend {
         if let Some(v) = self.view.as_mut() {
             for (body, label, _, class) in done {
                 let id = v.ships.iter().map(|s| s.id).max().unwrap_or(0) + 1;
-                v.ships.push(Ship { id, name: format!("New {label}"), class, owner: v.me, count: 1, fuel: 200.0, fuel_max: 400.0, parked_at: Some(body), trajectory: None, nodes: vec![], destination: None, retreat: false });
+                v.ships.push(Ship { id, name: format!("New {label}"), class, owner: v.me, count: 1, fuel: 200.0, fuel_max: 400.0, parked_at: Some(body), trajectory: None, nodes: vec![], destination: None, retreat: false, seen_at: None });
                 self.events.push(BackendEvent::Notice(Notice { kind: NoticeKind::Good, title: format!("{label} ready"), body: "Fresh from the shipyard".into(), focus: Some(Focus::Ship(id)) }));
             }
         }
@@ -684,6 +687,7 @@ impl Backend for DemoBackend {
         }
         // Pretend the rock is a parked ship and reuse the Hohmann planner for the path.
         let rock = Ship {
+            seen_at: None,
             id: u32::MAX,
             name: String::new(),
             class: ShipClass::Tanker,
