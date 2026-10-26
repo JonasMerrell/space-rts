@@ -274,12 +274,14 @@ impl Game {
             }
             let cap = s.fuel_for_with(s.fuel - dep, capture_dv);
             let left = s.fuel - dep - cap;
-            if s.class == ShipClass::Tanker {
+            if s.class == ShipClass::Tanker && left >= 0.0 {
                 spare += (left - TANKER_RESERVE * s.stats().fuel_cap).max(0.0);
             } else if left < 0.0 {
-                deficit += -left;
-                if worst.as_ref().is_none_or(|w| -left > w.0) {
-                    worst = Some((-left, s.name.clone()));
+                // pumped fuel is itself extra mass to brake: each tonne received nets e^(-dv/ve)
+                let short = -left * (capture_dv / s.stats().ve).exp();
+                deficit += short;
+                if worst.as_ref().is_none_or(|w| short > w.0) {
+                    worst = Some((short, s.name.clone()));
                 }
             }
         }
@@ -288,6 +290,16 @@ impl Game {
             return Err(format!("not enough fuel: {name} is {short:.0} t short for the capture burn (fleet tankers can spare {spare:.0} t)"));
         }
         Ok(())
+    }
+
+    /// Fuel ship `i` (flying) needs for the capture burn at the end of its current course.
+    fn capture_fuel(&self, i: usize) -> f64 {
+        let s = &self.ships[i];
+        let ShipState::Flying(f) = &s.state else { return 0.0 };
+        match f.compute(&self.system).end {
+            crate::traj::End::Capture { body, rp, vp, .. } => s.fuel_for((vp - crate::kepler::circular_speed(self.system.body(body).mu, rp)).max(0.0)),
+            _ => 0.0,
+        }
     }
 
     /// Once a tick: forget dead ships, split off separated members, and let tankers in flying
@@ -326,9 +338,11 @@ impl Game {
                 .collect();
             let (tankers, others): (Vec<usize>, Vec<usize>) = members.iter().partition(|&&i| self.ships[i].class == ShipClass::Tanker);
             for &t in &tankers {
+                // a tanker keeps its reserve plus what it needs to brake at the destination
+                let keep = TANKER_RESERVE * self.ships[t].stats().fuel_cap + self.capture_fuel(t);
                 for &j in &others {
                     let room = self.ships[j].stats().fuel_cap - self.ships[j].fuel;
-                    let spare = (self.ships[t].fuel - TANKER_RESERVE * self.ships[t].stats().fuel_cap).max(0.0);
+                    let spare = (self.ships[t].fuel - keep).max(0.0);
                     let x = room.min(spare).min(PUMP_RATE * h).max(0.0);
                     self.ships[t].fuel -= x;
                     self.ships[j].fuel += x;
@@ -470,6 +484,37 @@ mod tests {
         g.advance_to(p.depart_t() + 3.0 * 3600.0);
         let after_burn = fuel - s.fuel_for_with(fuel, p.depart_dv);
         assert!(g.ship(gs).unwrap().fuel > after_burn + 100.0, "tanker pumped fuel in flight");
+    }
+
+    #[test]
+    fn tankers_keep_their_own_capture_fuel_when_pumping() {
+        let mut g = game();
+        let target = near_planet(&g);
+        let gs = mine(&g, ShipClass::Gunship)[0];
+        let tk = mine(&g, ShipClass::Tanker)[0];
+        form(&mut g, vec![gs, tk]);
+        g.apply(0, Command::Transfer { ships: vec![gs], to: target, depart_t: None }).unwrap();
+        // drain the gunship after departure so it pulls everything the tanker will give
+        let dep = match &g.ship(gs).unwrap().state {
+            ShipState::Parked { departure: Some(d), .. } => d.state.t,
+            _ => panic!(),
+        };
+        g.advance_to(dep + 120.0);
+        g.ship_mut(gs).unwrap().fuel = 0.0;
+        g.advance_to(dep + 6.0 * 86_400.0);
+        assert_eq!(g.ship(tk).unwrap().parked_at(), Some(target), "tanker kept enough to brake");
+    }
+
+    #[test]
+    fn a_tanker_short_of_capture_fuel_counts_as_short() {
+        let mut g = game();
+        let target = near_planet(&g);
+        let gs = mine(&g, ShipClass::Gunship)[0];
+        let tk = mine(&g, ShipClass::Tanker)[0];
+        let (p, _) = g.plan_for(&g.ship(tk).unwrap().clone(), target, None).unwrap();
+        let t = g.ship(tk).unwrap().clone();
+        g.ship_mut(tk).unwrap().fuel = t.fuel_for_with(0.0, p.depart_dv) * 1.3;
+        assert!(g.fleet_fuel_check(&[gs, tk], p.depart_dv, p.capture_dv).is_err());
     }
 
     #[test]

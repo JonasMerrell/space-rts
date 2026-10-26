@@ -301,7 +301,7 @@ impl DemoBackend {
                     })
                     .collect(),
             };
-            return Some(TransferPlan { ship: s.id, target, depart_t, arrive_t, dv_depart: 0.4, dv_capture: 0.2, fuel_needed: 12.0, path, windows: vec![depart_t] });
+            return Some(TransferPlan { ship: s.id, target, depart_t, arrive_t, dv_depart: 0.4, dv_capture: 0.2, fuel_needed: 12.0, fuel_have: 0.0, fuel_problem: None, path, windows: vec![depart_t] });
         }
         let at = (r1 + r2) / 2.0;
         let tof = PI * (at.powi(3) / MU).sqrt();
@@ -356,6 +356,8 @@ impl DemoBackend {
         let va = (MU * (2.0 / r2 - 1.0 / at)).sqrt();
         let dv1 = (vp - v1).abs();
         let dv2 = (v2 - va).abs();
+        let need = ((dv1 + dv2) * 2.0) as f32 * s.count as f32;
+        let have = if s.is_fleet() { s.members.iter().map(|m| m.fuel).sum() } else { s.fuel * s.count as f32 };
         Some(TransferPlan {
             ship: s.id,
             target,
@@ -363,7 +365,9 @@ impl DemoBackend {
             arrive_t: depart_t + tof,
             dv_depart: dv1,
             dv_capture: dv2,
-            fuel_needed: ((dv1 + dv2) * 2.0) as f32 * s.count as f32,
+            fuel_needed: need,
+            fuel_have: have,
+            fuel_problem: (need > have).then(|| format!("not enough fuel: needs {need:.0} t, has {have:.0} t")),
             path: Trajectory { points },
             windows,
         })

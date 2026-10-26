@@ -309,7 +309,13 @@ pub struct TransferPlan {
     pub arrive_t: f64,
     pub dv_depart: f64,
     pub dv_capture: f64,
+    /// Fuel every ship that flies needs (the whole fleet for a fleet token).
     pub fuel_needed: f32,
+    /// Fuel those ships carry between them.
+    pub fuel_have: f32,
+    /// Why the fuel doesn't work out (None = it does). For fleets this is the sim's own rule: every
+    /// ship pays its departure, the weakest decides, fleet tankers can cover capture burns.
+    pub fuel_problem: Option<String>,
     pub path: Trajectory,
     /// Upcoming good departure times (seconds), best first is not required.
     pub windows: Vec<f64>,
