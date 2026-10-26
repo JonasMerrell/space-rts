@@ -12,6 +12,8 @@ VER="${1:?usage: release-server.sh <version>}"
 export PATH="$HOME/.cargo/bin:$PATH"
 REPO=JonasMerrell/space-rts
 TARGET=x86_64-unknown-linux-musl
+# ring (TLS) has C code; the host gcc builds it fine for musl
+export CC_x86_64_unknown_linux_musl="${CC_x86_64_unknown_linux_musl:-gcc}"
 rustup target add "$TARGET" >/dev/null
 cargo build --release -p server --target "$TARGET"
 OUT="$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys;print(json.load(sys.stdin)["target_directory"])')/$TARGET/release"
