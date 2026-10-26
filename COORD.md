@@ -1078,7 +1078,7 @@ stay logged in across a browser restart, lobby + bots, map, forecast, course pla
 - **Build**: `scripts/build-web.sh [out]` (wasm32-unknown-unknown target installed; RUSTFLAGS `-C link-arg=--allow-undefined`
   because miniquad/quad-snd/web/hohmann.js functions are JS imports) → dist/web (~23 MB, /dist/ ignored).
 - **Release**: `scripts/release-web.sh <ver>` → `web-v<ver>` + moving `web-latest`, asset `hohmann-web.tar.gz` (+ .sha256),
-  top dir `web/`. VM: unpack into `<data>/public/web/` and restart the server (file map read at startup); served at /play/.
+  top dir `web/`. VM: `tar -C <data>/public -xzf hohmann-web.tar.gz` (→ `<data>/public/web/`) and restart the server (file map read at startup); served at /play/.
   Needs a server release from this branch too (/ws, /play/, flags).
 - **Server flags**: `--web-cert PEM --web-key PEM` (Let's Encrypt for browsers, picked by ALPN, re-read on change),
   `--web-host NAME` (WebSocket origin allowlist; default hohmannsreach.tplinkdns.com). Without --web-cert, browsers only
