@@ -10,3 +10,4 @@ android/app/src/main/res/mipmap-*/
 android/local.properties
 data/
 android/build/
+/dist/

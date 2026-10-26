@@ -3,7 +3,8 @@
 //! map keeps moving smoothly; every snapshot replaces it.
 use crate::forecast::{self, Forecaster, PLANNED_BASE};
 use crate::net::{Net, NetEvent};
-use proto::{unix_now, ClientMsg, GameSummary as WireSummary, ServerMsg};
+use crate::unix_now;
+use proto::{ClientMsg, GameSummary as WireSummary, ServerMsg};
 use sim::game::{self as g, Command, Game, ShipState, Status};
 use sim::station::StationKind;
 use sim::tech::{Branch, Tech};
@@ -16,6 +17,46 @@ use std::rc::Rc;
 use std::sync::Arc;
 use ui::model::{self as m, BodyId, ShipId};
 use ui::{Backend, BackendEvent, UiAction};
+
+/// Slow work (course planning, impact previews) kept off the render loop: a worker thread natively.
+/// The browser has no threads, so there it runs inside a later `try_recv`, after the UI has had a
+/// couple of frames to show its "plotting course" state.
+#[cfg(not(target_arch = "wasm32"))]
+struct Job<T>(std::sync::mpsc::Receiver<T>);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Send + 'static> Job<T> {
+    fn spawn(f: impl FnOnce() -> T + Send + 'static) -> Job<T> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(f());
+        });
+        Job(rx)
+    }
+    fn try_recv(&self) -> Result<T, std::sync::mpsc::TryRecvError> {
+        self.0.try_recv()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+struct Job<T> {
+    f: RefCell<Option<Box<dyn FnOnce() -> T>>>,
+    waits: std::cell::Cell<u8>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<T: 'static> Job<T> {
+    fn spawn(f: impl FnOnce() -> T + 'static) -> Job<T> {
+        Job { f: RefCell::new(Some(Box::new(f))), waits: std::cell::Cell::new(2) }
+    }
+    fn try_recv(&self) -> Result<T, std::sync::mpsc::TryRecvError> {
+        if self.waits.get() > 0 {
+            self.waits.set(self.waits.get() - 1);
+            return Err(std::sync::mpsc::TryRecvError::Empty);
+        }
+        self.f.borrow_mut().take().map(|f| f()).ok_or(std::sync::mpsc::TryRecvError::Disconnected)
+    }
+}
 
 pub struct ClientBackend {
     server: String,
@@ -37,10 +78,10 @@ pub struct ClientBackend {
     was_running: bool,
     plan_cache: RefCell<HashMap<(ShipId, BodyId, i64), Option<m::TransferPlan>>>,
     /// background planner jobs keyed like `plan_cache`
-    plan_jobs: RefCell<HashMap<(ShipId, BodyId, i64), std::sync::mpsc::Receiver<Option<m::TransferPlan>>>>,
+    plan_jobs: RefCell<HashMap<(ShipId, BodyId, i64), Job<Option<m::TransferPlan>>>>,
     /// asteroid impact previews keyed by (asteroid, target), and their background jobs
     impact_cache: RefCell<HashMap<(BodyId, BodyId), Option<m::ImpactPreview>>>,
-    impact_jobs: RefCell<HashMap<(BodyId, BodyId), std::sync::mpsc::Receiver<Option<m::ImpactPreview>>>>,
+    impact_jobs: RefCell<HashMap<(BodyId, BodyId), Job<Option<m::ImpactPreview>>>>,
     reconnect_at: f64,
     /// Signing in from the saved session (shown by the login screen instead of the form).
     auto_user: Option<String>,
@@ -64,7 +105,7 @@ impl ClientBackend {
     /// Log back in with the saved session, if there is one (stay logged in across launches).
     pub fn resume(&mut self) {
         if let Some((server, user, pass)) = crate::notify::load() {
-            if std::env::var("SPACE_RTS_SERVER").is_err() {
+            if crate::env_server().is_err() {
                 self.server = crate::migrate_server(server);
             }
             self.auto_user = Some(user.clone());
@@ -776,6 +817,8 @@ fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Tr
 impl Backend for ClientBackend {
     fn poll(&mut self) -> Vec<BackendEvent> {
         let incoming = self.net.as_ref().map(|n| n.poll()).unwrap_or_default();
+        #[cfg(target_arch = "wasm32")]
+        self.forecast.pump(0.006);
         let wall = unix_now();
         for e in incoming {
             match e {
@@ -1084,11 +1127,7 @@ impl Backend for ClientBackend {
         }
         let Some(game) = self.game.clone() else { return ui::ImpactPoll::Done(None) };
         let (now, me) = (self.now(), self.me);
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(compute_impact(&game, me, now, asteroid, target));
-        });
-        jobs.insert(key, rx);
+        jobs.insert(key, Job::spawn(move || compute_impact(&game, me, now, asteroid, target)));
         ui::ImpactPoll::Pending
     }
 
@@ -1113,11 +1152,7 @@ impl Backend for ClientBackend {
             };
         }
         let Some((game, now)) = self.plan_input(ship) else { return ui::PlanPoll::Done(None) };
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = tx.send(compute_plan(&game, now, ship, target, after.max(now)));
-        });
-        jobs.insert(key, rx);
+        jobs.insert(key, Job::spawn(move || compute_plan(&game, now, ship, target, after.max(now))));
         ui::PlanPoll::Pending
     }
 

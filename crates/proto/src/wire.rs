@@ -1,8 +1,6 @@
 //! Transport shared by client and server: bounded line reads, and a TLS connection split into a
 //! reader and a writer half so each can live on its own thread (like `TcpStream::try_clone`).
-use std::io::{self, BufRead, Read, Write};
-use std::net::TcpStream;
-use std::sync::{Arc, Mutex};
+use std::io::{self, BufRead};
 
 /// Most a client may send in one line. Commands are tiny; this leaves lots of headroom.
 pub const MAX_CLIENT_LINE: usize = 64 * 1024;
@@ -41,108 +39,119 @@ pub fn read_line<R: BufRead>(r: &mut R, max: usize) -> io::Result<Option<String>
     }
 }
 
-/// A TLS session over a TCP socket, shared by a `TlsReader` and a `TlsWriter`.
-type Shared = Arc<Mutex<rustls::Connection>>;
+#[cfg(not(target_arch = "wasm32"))]
+pub use tls::*;
 
-fn lock(c: &Shared) -> std::sync::MutexGuard<'_, rustls::Connection> {
-    c.lock().unwrap_or_else(|e| e.into_inner())
-}
+/// TLS halves (not in the browser build, which talks WebSocket and has no rustls).
+#[cfg(not(target_arch = "wasm32"))]
+mod tls {
+    use std::io::{self, Read, Write};
+    use std::net::TcpStream;
+    use std::sync::{Arc, Mutex};
 
-fn tls_err(e: rustls::Error) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, e)
-}
+    /// A TLS session over a TCP socket, shared by a `TlsReader` and a `TlsWriter`.
+    type Shared = Arc<Mutex<rustls::Connection>>;
 
-/// Run the handshake to completion on `sock` (which should have read/write timeouts set), then
-/// split. Call `.0` for reads and `.1` for writes from different threads.
-pub fn split<C: Into<rustls::Connection>>(conn: C, sock: TcpStream) -> io::Result<(TlsReader, TlsWriter)> {
-    let mut conn: rustls::Connection = conn.into();
-    let mut s = &sock;
-    while conn.is_handshaking() {
-        conn.complete_io(&mut s)?;
+    fn lock(c: &Shared) -> std::sync::MutexGuard<'_, rustls::Connection> {
+        c.lock().unwrap_or_else(|e| e.into_inner())
     }
-    // flush whatever the handshake left (e.g. TLS 1.3 session tickets)
-    while conn.wants_write() {
-        conn.write_tls(&mut s)?;
+
+    fn tls_err(e: rustls::Error) -> io::Error {
+        io::Error::new(io::ErrorKind::InvalidData, e)
     }
-    let shared = Arc::new(Mutex::new(conn));
-    let w = TlsWriter { conn: shared.clone(), sock: sock.try_clone()? };
-    Ok((TlsReader { conn: shared, sock, raw: vec![0; 16 * 1024] }, w))
-}
 
-pub struct TlsReader {
-    conn: Shared,
-    sock: TcpStream,
-    raw: Vec<u8>,
-}
-
-impl TlsReader {
-    /// Send whatever the session wants to send (alerts, key updates) after processing input.
-    fn flush(&self, c: &mut rustls::Connection) -> io::Result<()> {
-        let mut s = &self.sock;
-        while c.wants_write() {
-            c.write_tls(&mut s)?;
+    /// Run the handshake to completion on `sock` (which should have read/write timeouts set), then
+    /// split. Call `.0` for reads and `.1` for writes from different threads.
+    pub fn split<C: Into<rustls::Connection>>(conn: C, sock: TcpStream) -> io::Result<(TlsReader, TlsWriter)> {
+        let mut conn: rustls::Connection = conn.into();
+        let mut s = &sock;
+        while conn.is_handshaking() {
+            conn.complete_io(&mut s)?;
         }
-        Ok(())
+        // flush whatever the handshake left (e.g. TLS 1.3 session tickets)
+        while conn.wants_write() {
+            conn.write_tls(&mut s)?;
+        }
+        let shared = Arc::new(Mutex::new(conn));
+        let w = TlsWriter { conn: shared.clone(), sock: sock.try_clone()? };
+        Ok((TlsReader { conn: shared, sock, raw: vec![0; 16 * 1024] }, w))
     }
-}
 
-impl Read for TlsReader {
-    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-        loop {
-            {
+    pub struct TlsReader {
+        conn: Shared,
+        sock: TcpStream,
+        raw: Vec<u8>,
+    }
+
+    impl TlsReader {
+        /// Send whatever the session wants to send (alerts, key updates) after processing input.
+        fn flush(&self, c: &mut rustls::Connection) -> io::Result<()> {
+            let mut s = &self.sock;
+            while c.wants_write() {
+                c.write_tls(&mut s)?;
+            }
+            Ok(())
+        }
+    }
+
+    impl Read for TlsReader {
+        fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+            loop {
+                {
+                    let mut c = lock(&self.conn);
+                    match c.reader().read(out) {
+                        Ok(n) => return Ok(n), // 0 = peer sent close_notify
+                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                        Err(e) => return Err(e),
+                    }
+                }
+                // block on the socket without holding the lock, so the writer keeps going
+                let n = (&self.sock).read(&mut self.raw)?;
+                if n == 0 {
+                    return Ok(0);
+                }
                 let mut c = lock(&self.conn);
-                match c.reader().read(out) {
-                    Ok(n) => return Ok(n), // 0 = peer sent close_notify
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
-                    Err(e) => return Err(e),
+                let mut fed = &self.raw[..n];
+                while !fed.is_empty() {
+                    c.read_tls(&mut fed)?;
+                    if let Err(e) = c.process_new_packets() {
+                        let _ = self.flush(&mut c); // send the alert
+                        return Err(tls_err(e));
+                    }
                 }
+                self.flush(&mut c)?;
             }
-            // block on the socket without holding the lock, so the writer keeps going
-            let n = (&self.sock).read(&mut self.raw)?;
-            if n == 0 {
-                return Ok(0);
-            }
+        }
+    }
+
+    pub struct TlsWriter {
+        conn: Shared,
+        sock: TcpStream,
+    }
+
+    impl TlsWriter {
+        pub fn shutdown(&self) {
             let mut c = lock(&self.conn);
-            let mut fed = &self.raw[..n];
-            while !fed.is_empty() {
-                c.read_tls(&mut fed)?;
-                if let Err(e) = c.process_new_packets() {
-                    let _ = self.flush(&mut c); // send the alert
-                    return Err(tls_err(e));
-                }
+            c.send_close_notify();
+            let mut s = &self.sock;
+            let _ = c.write_tls(&mut s);
+            let _ = self.sock.shutdown(std::net::Shutdown::Both);
+        }
+    }
+
+    impl Write for TlsWriter {
+        fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+            let mut c = lock(&self.conn);
+            let n = c.writer().write(data)?;
+            let mut s = &self.sock;
+            while c.wants_write() {
+                c.write_tls(&mut s)?;
             }
-            self.flush(&mut c)?;
+            Ok(n)
         }
-    }
-}
-
-pub struct TlsWriter {
-    conn: Shared,
-    sock: TcpStream,
-}
-
-impl TlsWriter {
-    pub fn shutdown(&self) {
-        let mut c = lock(&self.conn);
-        c.send_close_notify();
-        let mut s = &self.sock;
-        let _ = c.write_tls(&mut s);
-        let _ = self.sock.shutdown(std::net::Shutdown::Both);
-    }
-}
-
-impl Write for TlsWriter {
-    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
-        let mut c = lock(&self.conn);
-        let n = c.writer().write(data)?;
-        let mut s = &self.sock;
-        while c.wants_write() {
-            c.write_tls(&mut s)?;
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
         }
-        Ok(n)
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
     }
 }
 
