@@ -922,7 +922,7 @@ fn ship_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship, t
 }
 
 fn plan_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView, p: &TransferPlan) {
-    let r = sheet_rect(178.0);
+    let r = sheet_rect(if p.fuel_problem.is_some() { 198.0 } else { 178.0 });
     inp.block(r);
     cel::panel(r, PANEL);
     let target = view.body(p.target).map(|b| b.name.to_uppercase()).unwrap_or_default();
@@ -938,12 +938,20 @@ fn plan_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
         text(k, x, r.y + 52.0 * s(), 13.0, MUTED, FontKind::Title, Align::Left);
         inked(v, x, r.y + 74.0 * s(), 19.0, PAPER, Align::Left);
     }
-    let fuel = view.ship(p.ship).map(|s| s.fuel).unwrap_or(0.0);
-    let ok = fuel >= p.fuel_needed;
+    let fuel = p.fuel_have;
+    let ok = p.fuel_problem.is_none();
     let fr = Rect::new(r.x + 16.0 * s(), r.y + 96.0 * s(), r.w - 180.0 * s(), 10.0 * s());
     widgets::bar(fr, p.fuel_needed / fuel.max(1.0), if ok { SUN_SHADE } else { DANGER });
     let fl = if ok { format!("FUEL {:.0} of {:.0}", p.fuel_needed, fuel) } else { format!("NEED {:.0} FUEL, HAVE {:.0}", p.fuel_needed, fuel) };
     text(&fl, fr.x + fr.w + 10.0 * s(), fr.center().y, 13.0, if ok { PAPER } else { DANGER }, FontKind::Title, Align::Left);
+    if let Some(why) = &p.fuel_problem {
+        let why = why.strip_prefix("not enough fuel: ").unwrap_or(why);
+        let mut why: String = why.chars().take(70).collect();
+        if let Some(c) = why.get_mut(0..1) {
+            c.make_ascii_uppercase();
+        }
+        text(&why, fr.x, fr.y + 26.0 * s(), 13.0, DANGER, FontKind::Body, Align::Left);
+    }
 
     let by = r.y + r.h - 58.0 * s();
     let bw = (r.w - 4.0 * 12.0 * s()) / 3.0;

@@ -421,9 +421,10 @@ fn compute_plan(g: &Game, now: f64, ship: ShipId, target: BodyId, after: f64) ->
     let first = p.to;
     let span = sim::plan::search_span(&g.system, from, first);
     let windows = sim::plan::windows(&g.system, from, first, now, span).into_iter().map(|w| w.depart_t).collect();
-    // fuel for every ship that flies (the whole fleet for a fleet token)
-    let fuel_needed: f64 = g
-        .with_fleetmates(s.id)
+    // fuel for every ship that flies (the whole fleet for a fleet token), judged like the server does
+    let flying = g.with_fleetmates(s.id);
+    let fuel_have: f64 = flying.iter().filter_map(|&id| g.ship(id)).map(|m| m.fuel).sum();
+    let fuel_needed: f64 = flying
         .iter()
         .filter_map(|&id| g.ship(id))
         .map(|m| {
@@ -439,6 +440,12 @@ fn compute_plan(g: &Game, now: f64, ship: ShipId, target: BodyId, after: f64) ->
         dv_depart: p.depart_dv,
         dv_capture: p.capture_dv,
         fuel_needed: fuel_needed as f32,
+        fuel_have: fuel_have as f32,
+        fuel_problem: if flying.len() > 1 {
+            g.fleet_fuel_check(&flying, p.depart_dv, p.capture_dv).err()
+        } else {
+            (fuel_needed > fuel_have).then(|| format!("not enough fuel: needs {fuel_needed:.0} t, has {fuel_have:.0} t"))
+        },
         path: to_model_traj(&g.system, &p.traj),
         windows,
     })
@@ -1339,6 +1346,16 @@ mod tests {
         assert!(v.ships.iter().all(|s| gs.iter().all(|g| g.0 != s.id)), "members aren't drawn on their own");
         assert_eq!(lead(&game, tok.id), gs[0]);
         assert_eq!(real_ships(&game, &[tok.id]), gs);
+        // the plan sheet compares the fleet's total need with the fleet's total fuel, and agrees
+        // with the server's verdict (it used to compare the sum against one ship's tank)
+        let home = game.players[0].home.unwrap();
+        let target = game.system.bodies.iter().find(|b| b.kind == SimKind::Planet && b.id != home && game.bodies[b.id.0 as usize].owner.is_none()).unwrap().id;
+        let plan = compute_plan(&game, game.t, tok.id, target.0, game.t).expect("fleet plan");
+        let total: f64 = gs.iter().map(|&id| game.ship(id).unwrap().fuel).sum();
+        assert!((plan.fuel_have as f64 - total).abs() < 1.0);
+        assert!(plan.fuel_needed > tok.fuel, "a fleet needs more than one tank");
+        let server = game.clone().apply(0, Command::Transfer { ships: vec![gs[0]], to: target, depart_t: Some(plan.depart_t) });
+        assert_eq!(plan.fuel_problem.is_none(), server.is_ok(), "{:?} vs {:?}", plan.fuel_problem, server);
         // other players see neither the fleet nor its name
         let bob = game.view_for(1);
         assert!(build_view(&bob, 1, game.t, &HashMap::new()).ships.iter().all(|s| !s.is_fleet()));
