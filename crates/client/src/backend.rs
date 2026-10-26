@@ -1141,6 +1141,50 @@ impl Backend for ClientBackend {
         Some(m::StationsView { here, options, present, constructors: g.constructors_at(me, b), workers })
     }
 
+    fn node_outcome(&self, ship: ShipId, nodes: &[m::ManeuverNode]) -> Option<m::NodeOutcome> {
+        let g = self.game.as_ref()?;
+        let s = g.ship(g::ShipId(ship))?;
+        let ShipState::Flying(f) = &s.state else { return None };
+        let sys = &g.system;
+        let mut burns: Vec<Burn> = nodes.iter().map(|n| Burn { t: n.t, prograde: n.prograde, radial: n.radial }).collect();
+        burns.sort_by(|a, b| a.t.total_cmp(&b.t));
+        let tr = sim::traj::predict(sys, f.start, &burns, f.dest, f.start.t + g::Flight::HORIZON);
+        let end_t = tr.end.t();
+        let end_pos = tr.abs_pos(sys, end_t).map(arr).unwrap_or([0.0, 0.0]);
+        // fuel: every applied burn, then the capture burn if the path ends captured
+        let mut fuel = s.fuel;
+        for b in &tr.burns {
+            fuel -= s.fuel_for_with(fuel.max(0.0), b.dv());
+        }
+        let captured = match tr.end {
+            sim::traj::End::Capture { body, rp, vp, .. } => {
+                let dv = vp - sim::kepler::circular_speed(sys.body(body).mu, rp);
+                fuel -= s.fuel_for_with(fuel.max(0.0), dv);
+                Some(body.0)
+            }
+            _ => None,
+        };
+        // encounter: first SOI entered after the first burn, else the closest pass to any body
+        let after = burns.first().map(|b| b.t).unwrap_or(f.start.t);
+        let start_parent = tr.seg_at(after).map(|seg| seg.parent);
+        let entered = tr.segs.iter().find(|seg| seg.t0 >= after && Some(seg.parent) != start_parent && !sys.body(seg.parent).is_star());
+        let encounter = match entered {
+            Some(seg) => {
+                let rp = sim::kepler::Conic::from_state(sys.body(seg.parent).mu, seg.r0, seg.v0).rp;
+                Some(m::Encounter { body: seg.parent.0, t: seg.t0, distance: rp, inside_soi: true })
+            }
+            None => sys
+                .bodies
+                .iter()
+                .filter(|b| !b.is_star() && Some(b.id) != start_parent)
+                .map(|b| (b, tr.closest_approach(sys, b.id)))
+                .filter(|(_, (_, t))| *t >= after)
+                .min_by(|a, b| (a.1 .0 / a.0.soi).total_cmp(&(b.1 .0 / b.0.soi)))
+                .map(|(b, (d, t))| m::Encounter { body: b.id.0, t, distance: d, inside_soi: d < b.soi }),
+        };
+        Some(m::NodeOutcome { end_t, end_pos, captured, encounter, fuel_left: Some(fuel) })
+    }
+
     fn preview_nodes(&self, ship: ShipId, nodes: &[m::ManeuverNode]) -> Option<m::Trajectory> {
         let g = self.game.as_ref()?;
         let s = g.ship(g::ShipId(ship))?;
