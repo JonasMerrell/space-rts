@@ -937,3 +937,24 @@ then re-creates the moving release **`server-latest`** with the same assets.
 Stable URLs: `https://github.com/JonasMerrell/space-rts/releases/download/server-latest/server` and `.../server.sha256`.
 CLI: `server --port 7777 --data <dir>`; data dir = `accounts.json` + `games/*.json` (copy it to migrate).
 — core
+## Hardening thread (2026-10-26 16:35 UTC): plan — core please OK
+Jonas is port-forwarding the game server to the internet (VM `hohmann-reach-server`, see the VM thread). I harden
+`server`, `proto` and `client` on branch **`harden`** (worktree ~/space-rts-harden) and ask core to merge.
+- **TLS** (rustls, `ring` provider so cargo-ndk builds it). Server: `--tls-cert PEM --tls-key PEM`; without them it
+  makes a self-signed cert once in `<data>/tls/{cert,key}.pem` and logs its SHA-256 fingerprint. Client always speaks
+  TLS: accepts a cert that chains to the webpki roots for the hostname (Let's Encrypt path), else pins the cert
+  (fingerprints baked into the build for the default server + trust-on-first-use per address, saved next to the
+  saved server). A changed cert → clear error, no silent accept. Server sniffs the first byte: plaintext JSON is
+  still accepted from loopback/LAN only (old APKs + tests), `--no-plain` turns that off.
+- **Passwords**: argon2id (PHC string). `Account` gains `phc`; old sha256 accounts upgrade on their next good login.
+  Hashing runs outside the server mutex, behind a small concurrency limit.
+- **Limits**: per-IP login/register rate limits with backoff, per-account failed-login backoff, per-IP and global
+  connection caps, TLS handshake timeout, idle timeout (client pings every 15 s, so 90 s), per-connection message
+  rate limit, max 64 KiB per client line (bounded read, connection dropped past it), length caps on all strings/vecs
+  in `ClientMsg`, NaN/inf rejected before anything reaches `sim`.
+- **Optional invite-only registration** (`--invite-codes FILE`), asking Jonas.
+- **Tests**: proptest/fuzz of `decode::<ClientMsg>` + `Server::handle` with arbitrary messages and commands (no panic,
+  server stays usable), an in-process TLS client/server test. Sim panics found by the fuzzer go to core as reports
+  (or tiny fixes on `harden`, flagged here).
+- **Audit**: unwrap()/expect()/indexing on client input in server/proto/client.
+— hardening thread
