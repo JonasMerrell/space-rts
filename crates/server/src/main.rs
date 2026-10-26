@@ -7,6 +7,7 @@ const USAGE: &str = "usage: server [--port 7777] [--data DIR] [--tls-cert PEM --
                         default: a self-signed cert made once in DIR/tls/
   --no-plain            refuse unencrypted connections even from the LAN
   --invite-codes FILE   registering needs a code from FILE (one per line, each works once)
+  --make-invites N      append N new random codes to the --invite-codes FILE, print them and exit
   --web-cert/--web-key  CA-signed cert + key for browsers (Let's Encrypt fullchain.pem/privkey.pem),
                         used when a browser connects (ALPN); the app keeps the pinned cert.
                         Re-read when the file changes. The browser build is served at /play/
@@ -16,6 +17,7 @@ const USAGE: &str = "usage: server [--port 7777] [--data DIR] [--tls-cert PEM --
 fn main() {
     let mut port = proto::DEFAULT_PORT;
     let mut cfg = server::Config::new(PathBuf::from("data"));
+    let mut make = None;
     let mut args = std::env::args().skip(1);
     let usage = || -> ! {
         eprintln!("{USAGE}");
@@ -33,8 +35,20 @@ fn main() {
             "--web-cert" => cfg.web_cert = Some(path()),
             "--web-key" => cfg.web_key = Some(path()),
             "--web-host" => cfg.web_hosts.push(path().to_string_lossy().to_string()),
+            "--make-invites" => make = Some(path().to_str().and_then(|n| n.parse::<usize>().ok()).unwrap_or_else(|| usage())),
             _ => usage(),
         }
+    }
+    if let Some(n) = make {
+        let Some(file) = &cfg.invites else { usage() };
+        match server::make_invites(file, n) {
+            Ok(codes) => codes.iter().for_each(|c| println!("{c}")),
+            Err(e) => {
+                eprintln!("{}: {e}", file.display());
+                std::process::exit(1);
+            }
+        }
+        return;
     }
     if cfg.web_hosts.is_empty() {
         cfg.web_hosts.push("hohmannsreach.tplinkdns.com".into());

@@ -146,11 +146,45 @@ fn legacy_hash(salt: &str, pass: &str) -> String {
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// From the OS CSPRNG: join codes, game seeds and invite codes must not be guessable.
 fn random_u64() -> u64 {
-    use std::hash::{BuildHasher, Hasher};
-    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-    h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
-    h.finish()
+    let mut b = [0u8; 8];
+    if rustls::crypto::ring::default_provider().secure_random.fill(&mut b).is_err() {
+        use std::hash::{BuildHasher, Hasher};
+        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
+        return h.finish();
+    }
+    u64::from_le_bytes(b)
+}
+
+/// `n` fresh invite codes like `K7QM-2XPA` (40 bits each), appended to `path`; returns them.
+pub fn make_invites(path: &Path, n: usize) -> std::io::Result<Vec<String>> {
+    const A: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let codes: Vec<String> = (0..n)
+        .map(|_| {
+            let mut x = random_u64();
+            let mut c: String = (0..8)
+                .map(|_| {
+                    let ch = A[(x % 32) as usize] as char;
+                    x /= 32;
+                    ch
+                })
+                .collect();
+            c.insert(4, '-');
+            c
+        })
+        .collect();
+    let mut text = std::fs::read_to_string(path).unwrap_or_default();
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    for c in &codes {
+        text.push_str(c);
+        text.push('\n');
+    }
+    std::fs::write(path, text)?;
+    Ok(codes)
 }
 
 fn write_atomic(path: &Path, data: &str) {
@@ -528,7 +562,7 @@ impl Server {
         let rest: Vec<&str> = text
             .lines()
             .filter(|l| {
-                let hit = !found && l.trim() == code;
+                let hit = !found && !l.trim().is_empty() && l.trim().eq_ignore_ascii_case(code);
                 found |= hit;
                 !hit
             })

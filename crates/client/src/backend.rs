@@ -61,6 +61,8 @@ impl<T: 'static> Job<T> {
 pub struct ClientBackend {
     server: String,
     creds: Option<(String, String)>,
+    /// invite code typed with Register (invite-only servers)
+    invite: Option<String>,
     net: Option<Net>,
     logged_in: bool,
     events: Vec<BackendEvent>,
@@ -117,6 +119,7 @@ impl ClientBackend {
         ClientBackend {
             server,
             creds: None,
+            invite: None,
             net: None,
             logged_in: false,
             events: vec![],
@@ -173,7 +176,7 @@ impl ClientBackend {
 
     fn connect(&mut self, register: bool) {
         if let Some((u, p)) = &self.creds {
-            self.net = Some(Net::connect(self.server.clone(), ClientMsg::Hello { user: u.clone(), pass: p.clone(), register, invite: None }));
+            self.net = Some(Net::connect(self.server.clone(), ClientMsg::Hello { user: u.clone(), pass: p.clone(), register, invite: if register { self.invite.clone() } else { None } }));
         }
     }
 
@@ -869,7 +872,8 @@ impl Backend for ClientBackend {
     fn act(&mut self, action: UiAction) {
         let code = self.code();
         match action {
-            UiAction::Login { server, user, pass, register } => {
+            UiAction::Login { server, user, pass, register, invite } => {
+                self.invite = Some(invite).filter(|c| !c.is_empty());
                 if !server.trim().is_empty() {
                     self.server = server.trim().to_string();
                     crate::save_server(&self.server);

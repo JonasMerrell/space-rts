@@ -64,13 +64,14 @@ pub struct Login {
     pub user: TextField,
     pub pass: TextField,
     pub server: TextField,
+    pub invite: TextField,
     pub error: Option<String>,
     pub busy: bool,
 }
 
 impl Login {
     pub fn new() -> Self {
-        Login { user: TextField::new(false), pass: TextField::new(true), server: TextField::new(false), ..Default::default() }
+        Login { user: TextField::new(false), pass: TextField::new(true), server: TextField::new(false), invite: TextField::invite(), ..Default::default() }
     }
 
     pub fn draw(&mut self, inp: &mut Input, be: &mut dyn Backend) {
@@ -113,6 +114,10 @@ impl Login {
         col.gap(14.0);
         let r = col.row(44.0);
         go |= widgets::text_field(inp, r, &mut self.server, "host:port");
+        text("INVITE CODE (NEW PILOTS)", col.x + 4.0 * s(), col.y, 18.0, MUTED, FontKind::Title, Align::Left);
+        col.gap(14.0);
+        let r = col.row(44.0);
+        widgets::text_field(inp, r, &mut self.invite, "only if the server asks");
         col.gap(6.0);
         let r = col.row(60.0);
         go |= widgets::button(inp, r, if self.busy { "LAUNCHING..." } else { "LOG IN" }, Style::Primary);
@@ -131,6 +136,7 @@ impl Login {
                     user: self.user.text.trim().to_string(),
                     pass: self.pass.text.clone(),
                     register: reg,
+                    invite: if reg { self.invite.text.trim().to_string() } else { String::new() },
                 });
             }
         }
