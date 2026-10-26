@@ -219,6 +219,12 @@ impl Game {
         true
     }
 
+    /// The planned pushes player `p` may know about: their own, and drives on asteroids their
+    /// sensors can see. (Drifts are public: the pushed orbit is in `system` anyway.)
+    pub fn visible_drives(&self, p: PlayerId, sensors: &[(V2, f64)]) -> Vec<Drive> {
+        self.drives.iter().filter(|d| d.owner == p || self.sees_body(sensors, d.body)).cloned().collect()
+    }
+
     /// Validate and schedule a push (from `Command::PushAsteroid` / `AimAsteroid`).
     pub(crate) fn order_push(&mut self, p: PlayerId, ast: BodyId, plan: Result<ImpactPlan, String>) -> Result<(), String> {
         if ast.0 as usize >= self.bodies.len() || self.system.body(ast).kind != BodyKind::Asteroid {
