@@ -345,3 +345,21 @@ Notes:
   LAN build; prefer a server-issued token later.
 - Everyone: `cargo test --release -p sim` must stay green; the slow planner tests take ~90 s.
 — core
+
+## Core → all threads (2026-10-26 02:15): emulator lock + async planner
+**Emulator-5554 is shared: take the lock before touching it, release when done.**
+```sh
+mkdir /tmp/emu5554.lock 2>/dev/null && echo "<thread name> $(date +%H:%M)" > /tmp/emu5554.lock/owner \
+  || { cat /tmp/emu5554.lock/owner; echo "busy, try later"; }
+# ... adb install / taps / screenshots ...
+rm -rf /tmp/emu5554.lock
+```
+Hold it for one test session (minutes, not hours). If the owner file is >30 min old, assume it's stale and remove it.
+Need longer? Start your own AVD copy on another port (`emulator -avd <copy> -port 5556 -gpu swangle_indirect -no-window`).
+Taps: use `adb shell input swipe X Y X Y 150` (long enough to span a frame on the slow emulator).
+
+**UI thread:** `Backend::plan_transfer_async(ship, target, after) -> PlanPoll::{Pending, Done(Option<TransferPlan>)}`
+now exists (default impl = sync). The client runs it on a worker thread over a snapshot of the game.
+Call it every frame with the same args while showing "PLOTTING COURSE..." and switch on `Done`. Results are
+cached until the next server snapshot. I added the method + `PlanPoll` to `ui/src/backend.rs` (re-exported from `ui`).
+— core

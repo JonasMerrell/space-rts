@@ -29,6 +29,8 @@ pub struct ClientBackend {
     last_event_seq: u64,
     was_running: bool,
     plan_cache: RefCell<HashMap<(ShipId, BodyId, i64), Option<m::TransferPlan>>>,
+    /// background planner jobs keyed like `plan_cache`
+    plan_jobs: RefCell<HashMap<(ShipId, BodyId, i64), std::sync::mpsc::Receiver<Option<m::TransferPlan>>>>,
     reconnect_at: f64,
 }
 
@@ -49,6 +51,7 @@ impl ClientBackend {
             last_event_seq: 0,
             was_running: false,
             plan_cache: RefCell::new(HashMap::new()),
+            plan_jobs: RefCell::new(HashMap::new()),
             reconnect_at: 0.0,
         }
     }
@@ -178,6 +181,31 @@ impl ClientBackend {
     fn ship_ids(&self, id: ShipId) -> Vec<g::ShipId> {
         vec![g::ShipId(id)]
     }
+}
+
+/// Auto-plan a transfer on a snapshot of the game (runs on a worker thread for the async path).
+fn compute_plan(g: &Game, now: f64, ship: ShipId, target: BodyId, after: f64) -> Option<m::TransferPlan> {
+    let s = g.ship(g::ShipId(ship))?;
+    let depart = if after > now + 120.0 { Some(after) } else { None };
+    let mut game = g.clone();
+    game.t = now;
+    let (p, _) = game.plan_for(s, SimBody(target), depart).ok()?;
+    let from = s.parked_at()?;
+    let first = p.to;
+    let span = sim::plan::search_span(&g.system, from, first);
+    let windows = sim::plan::windows(&g.system, from, first, now, span).into_iter().map(|w| w.depart_t).collect();
+    let dep_fuel = s.fuel_for(p.depart_dv);
+    Some(m::TransferPlan {
+        ship,
+        target,
+        depart_t: p.depart_t(),
+        arrive_t: p.arrive_t,
+        dv_depart: p.depart_dv,
+        dv_capture: p.capture_dv,
+        fuel_needed: (dep_fuel + g::fuel_needed(s.class, (s.fuel - dep_fuel).max(0.0), p.capture_dv)) as f32,
+        path: to_model_traj(&g.system, &p.traj),
+        windows,
+    })
 }
 
 fn lobby_info(game: &Game) -> m::LobbyInfo {
@@ -521,32 +549,39 @@ impl Backend for ClientBackend {
         if let Some(p) = self.plan_cache.borrow().get(&key) {
             return p.clone();
         }
-        let res = (|| {
-            let g = self.game.as_ref()?;
-            let s = g.ship(g::ShipId(ship))?;
-            let now = self.now();
-            let depart = if after > now + 120.0 { Some(after) } else { None };
-            let mut game = g.clone();
-            game.t = now;
-            let (p, _) = game.plan_for(s, SimBody(target), depart).ok()?;
-            let from = s.parked_at()?;
-            let first = p.to;
-            let span = sim::plan::search_span(&g.system, from, first);
-            let windows = sim::plan::windows(&g.system, from, first, now, span).into_iter().map(|w| w.depart_t).collect();
-            Some(m::TransferPlan {
-                ship,
-                target,
-                depart_t: p.depart_t(),
-                arrive_t: p.arrive_t,
-                dv_depart: p.depart_dv,
-                dv_capture: p.capture_dv,
-                fuel_needed: (s.fuel_for(p.depart_dv) + g::fuel_needed(s.class, (s.fuel - s.fuel_for(p.depart_dv)).max(0.0), p.capture_dv)) as f32,
-                path: to_model_traj(&g.system, &p.traj),
-                windows,
-            })
-        })();
+        let res = compute_plan(self.game.as_ref()?, self.now(), ship, target, after);
         self.plan_cache.borrow_mut().insert(key, res.clone());
         res
+    }
+
+    fn plan_transfer_async(&self, ship: ShipId, target: BodyId, after: f64) -> ui::PlanPoll {
+        let key = (ship, target, (after / 60.0) as i64);
+        if let Some(p) = self.plan_cache.borrow().get(&key) {
+            return ui::PlanPoll::Done(p.clone());
+        }
+        let mut jobs = self.plan_jobs.borrow_mut();
+        if let Some(rx) = jobs.get(&key) {
+            return match rx.try_recv() {
+                Ok(res) => {
+                    jobs.remove(&key);
+                    self.plan_cache.borrow_mut().insert(key, res.clone());
+                    ui::PlanPoll::Done(res)
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => ui::PlanPoll::Pending,
+                Err(_) => {
+                    jobs.remove(&key);
+                    ui::PlanPoll::Done(None)
+                }
+            };
+        }
+        let Some(game) = self.game.clone() else { return ui::PlanPoll::Done(None) };
+        let now = self.now();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(compute_plan(&game, now, ship, target, after));
+        });
+        jobs.insert(key, rx);
+        ui::PlanPoll::Pending
     }
 
     fn default_server(&self) -> String {

@@ -40,6 +40,13 @@ pub enum UiAction {
     ExtendGame { days: u32 },
 }
 
+/// Result of polling `Backend::plan_transfer_async`.
+#[derive(Clone, Debug)]
+pub enum PlanPoll {
+    Pending,
+    Done(Option<TransferPlan>),
+}
+
 pub trait Backend {
     /// Drain events since the last frame.
     fn poll(&mut self) -> Vec<BackendEvent>;
@@ -57,6 +64,11 @@ pub trait Backend {
 
     /// Auto-planner: best transfer for `ship` to `target` departing at or after `after`.
     fn plan_transfer(&self, ship: ShipId, target: BodyId, after: f64) -> Option<TransferPlan>;
+    /// Non-blocking planner: call every frame with the same arguments until it stops returning
+    /// `Pending`. The default just runs `plan_transfer` synchronously.
+    fn plan_transfer_async(&self, ship: ShipId, target: BodyId, after: f64) -> PlanPoll {
+        PlanPoll::Done(self.plan_transfer(ship, target, after))
+    }
     /// Trajectory the ship would fly with these manual nodes (for the node editor preview).
     fn preview_nodes(&self, ship: ShipId, nodes: &[ManeuverNode]) -> Option<Trajectory>;
 
