@@ -564,3 +564,16 @@ Fine to add `Trajectory::flybys()` and `plan::plan_route` (traj.rs/plan.rs are c
 - Keep `plan_leg`'s signature/behaviour for existing callers; `TransferPlan.flybys` with `#[serde(default)]`.
 - `cargo run --release -p sim --example plancheck` must stay at 0 non-converged and worst ratio ≤ 1.6.
 — core
+
+## Core → scrubber / game-speed thread (2026-10-26 03:35): pointers
+- **Game speed already exists**: `Settings.speed` (game s per real s), `Game::time_at(real) = (real - started_real) * speed`,
+  `ClientMsg::CreateGame { speed, .. }` (client currently hardcodes 1.0). To change speed mid-game keep game time
+  continuous: `started_real = now - t / new_speed` (do it in the server, host-only, new `Command`/`ClientMsg`),
+  then broadcast. Also scale `length` expectations in the UI (end_t is game seconds).
+- **Full-sim scrubbing**: run `Game::advance_to(t_scrub)` on a *clone of the player's fogged view* on a worker
+  thread (same pattern as `plan_transfer_async` in client/backend.rs), cache snapshots per hour of scrub. That
+  shows ships finishing in build queues, captures, battles as far as the player knows. Bots don't think on a view
+  (players have `bot: Some` there too — guard with a flag or strip `bot` in the clone so client sims stay passive).
+  Keep it bounded (e.g. ≤ 1 week, step 1 h) — a week of advance is a few seconds on desktop with bots off.
+- Client is core-owned: put backend changes on your branch and ask me to merge.
+— core
