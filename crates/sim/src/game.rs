@@ -4,6 +4,8 @@ use crate::kepler::circular_speed;
 use crate::plan::{self, TransferPlan};
 use crate::system::{generate, BodyId, BodyKind, Rng, System, SystemSize};
 use crate::traj::{predict, Burn, End, State, Trajectory};
+use crate::station::{Station, StationKind};
+use crate::tech::{Research, Tech};
 use crate::v2::V2;
 use serde::{Deserialize, Serialize};
 
@@ -166,11 +168,33 @@ pub struct Ship {
     /// remaining hops after the current leg (multi-leg routes)
     pub route: Vec<BodyId>,
     pub state: ShipState,
+    /// research refits (engines, tanks, armor)
+    #[serde(default)]
+    pub tech: ShipTech,
+}
+
+/// Multipliers research applies to a ship's class stats.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ShipTech {
+    pub ve: f64,
+    pub fuel_cap: f64,
+    pub hp: f64,
+}
+
+impl Default for ShipTech {
+    fn default() -> ShipTech {
+        ShipTech { ve: 1.0, fuel_cap: 1.0, hp: 1.0 }
+    }
 }
 
 impl Ship {
+    /// Class stats with research refits applied.
     pub fn stats(&self) -> ClassStats {
-        self.class.stats()
+        let mut s = self.class.stats();
+        s.ve *= self.tech.ve;
+        s.fuel_cap *= self.tech.fuel_cap;
+        s.hp *= self.tech.hp;
+        s
     }
     pub fn mass(&self) -> f64 {
         self.stats().dry_mass + self.fuel
@@ -182,7 +206,12 @@ impl Ship {
     }
     /// Fuel needed for a burn of `dv` km/s with the current mass.
     pub fn fuel_for(&self, dv: f64) -> f64 {
-        fuel_needed(self.class, self.fuel, dv)
+        self.fuel_for_with(self.fuel, dv)
+    }
+    /// Fuel needed for a burn of `dv` km/s if the ship carried `fuel` tonnes.
+    pub fn fuel_for_with(&self, fuel: f64, dv: f64) -> f64 {
+        let s = self.stats();
+        (s.dry_mass + fuel) * (1.0 - (-dv / s.ve).exp())
     }
     pub fn parked_at(&self) -> Option<BodyId> {
         match self.state {
@@ -314,6 +343,12 @@ pub struct Player {
     /// fog of war: last sensor reading per body (index = body id)
     #[serde(default)]
     pub intel: Vec<Option<crate::fog::Intel>>,
+    /// researched techs, in the order they finished
+    #[serde(default)]
+    pub techs: Vec<Tech>,
+    /// projects running at labs (one per lab body)
+    #[serde(default)]
+    pub research: Vec<Research>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -385,6 +420,10 @@ pub struct Game {
     /// unix time (s) at which game time 0 happened, set when the game starts
     #[serde(default)]
     pub started_real: f64,
+    #[serde(default)]
+    pub stations: Vec<Station>,
+    #[serde(default)]
+    pub next_station: u32,
 }
 
 /// Commands players send. Applied at the current game time.
@@ -398,6 +437,9 @@ pub enum Command {
     Build { body: BodyId, class: ShipClass },
     Upgrade { body: BodyId, upgrade: Upgrade },
     SetOrder { ship: ShipId, order: StandingOrder },
+    /// Start researching `tech` at a body with a research lab.
+    Research { body: BodyId, tech: Tech },
+    BuildStation { body: BodyId, kind: StationKind },
     Chat { text: String },
     Extend { seconds: f64 },
 }
@@ -428,6 +470,8 @@ impl Game {
             last_tick: 0.0,
             winner: None,
             started_real: 0.0,
+            stations: vec![],
+            next_station: 0,
         };
         let _ = g.add_player(host_name, None);
         g
@@ -459,6 +503,8 @@ impl Game {
             home: None,
             bot_avoid: vec![],
             intel: vec![],
+            techs: vec![],
+            research: vec![],
         });
         Ok(id)
     }
@@ -511,8 +557,34 @@ impl Game {
             order: StandingOrder::Hold,
             route: vec![],
             state: ShipState::Parked { body: at, departure: None },
+            tech: ShipTech::default(),
         });
+        self.refit(owner);
+        let s = self.ships.last_mut().unwrap();
+        s.hp = s.stats().hp;
+        s.fuel = s.stats().fuel_cap;
         id
+    }
+
+    /// Apply the owner's ship research to all their ships (hull and fuel scale with the new caps).
+    pub(crate) fn refit(&mut self, owner: PlayerId) {
+        let m = self.mods(owner);
+        let tech = ShipTech { ve: m.ve, fuel_cap: m.fuel_cap, hp: m.hp };
+        for s in self.ships.iter_mut().filter(|s| s.owner == owner && s.tech != tech) {
+            s.hp *= tech.hp / s.tech.hp;
+            s.tech = tech;
+        }
+    }
+
+    /// Damage per hour of a body's planetary defenses, with the owner's research.
+    pub fn def_attack(&self, body: BodyId) -> f64 {
+        let b = &self.bodies[body.0 as usize];
+        b.def_attack() * b.owner.map(|o| self.mods(o).def_attack).unwrap_or(1.0)
+    }
+    /// Max hit points of a body's planetary defenses, with the owner's research.
+    pub fn def_max(&self, body: BodyId) -> f64 {
+        let b = &self.bodies[body.0 as usize];
+        b.def_max() * b.owner.map(|o| self.mods(o).def_hp).unwrap_or(1.0)
     }
 
     pub fn ship(&self, id: ShipId) -> Option<&Ship> {
@@ -522,7 +594,7 @@ impl Game {
         self.ships.iter_mut().find(|s| s.id == id)
     }
 
-    fn event(&mut self, to: Option<PlayerId>, kind: EventKind, title: &str, body: &str, body_ref: Option<BodyId>, ship_ref: Option<ShipId>) {
+    pub(crate) fn event(&mut self, to: Option<PlayerId>, kind: EventKind, title: &str, body: &str, body_ref: Option<BodyId>, ship_ref: Option<ShipId>) {
         let seq = self.next_event;
         self.next_event += 1;
         self.events.push(Event { seq, t: self.t, to, kind, title: title.into(), body: body.into(), body_ref, ship_ref });
@@ -558,7 +630,9 @@ impl Game {
         let bad = |b: &BodyId| b.0 >= n;
         match &cmd {
             Command::Transfer { to, .. } if bad(to) => return Err("no such body".into()),
-            Command::Build { body, .. } | Command::Upgrade { body, .. } if bad(body) => return Err("no such body".into()),
+            Command::Build { body, .. } | Command::Upgrade { body, .. } | Command::Research { body, .. } | Command::BuildStation { body, .. } if bad(body) => {
+                return Err("no such body".into())
+            }
             Command::SetBurns { burns, .. } if burns.iter().any(|b| !b.t.is_finite() || !b.prograde.is_finite() || !b.radial.is_finite() || b.dv() > 1000.0) => {
                 return Err("invalid burn".into())
             }
@@ -619,22 +693,25 @@ impl Game {
                 f.cache = None;
                 Ok(())
             }
+            Command::Research { body, tech } => self.start_research(player, body, tech),
+            Command::BuildStation { body, kind } => self.build_station(player, body, kind).map(|_| ()),
             Command::SetOrder { ship, order } => {
                 self.own_ship(player, ship)?.order = order;
                 Ok(())
             }
             Command::Build { body, class } => {
                 let st = class.stats();
-                let b = &self.bodies[body.0 as usize];
-                if b.owner != Some(player) {
-                    return Err("you don't own that body".into());
+                let yard = self.yard_level(player, body);
+                if yard == 0 {
+                    return Err("you need the body or a shipyard station there".into());
                 }
-                if b.level(Upgrade::Shipyard) < st.min_shipyard {
+                if yard < st.min_shipyard {
                     return Err(format!("needs shipyard level {}", st.min_shipyard));
                 }
-                let busy_until = b.queue.iter().map(|j| j.done_t).fold(self.t, f64::max);
+                let b = &self.bodies[body.0 as usize];
+                let busy_until = b.queue.iter().filter(|j| j.owner == player).map(|j| j.done_t).fold(self.t, f64::max);
                 self.pay(player, st.matter, st.energy)?;
-                let speed = 1.0 + 0.5 * (self.bodies[body.0 as usize].level(Upgrade::Shipyard) as f64 - 1.0);
+                let speed = (1.0 + 0.5 * (yard as f64 - 1.0)) * self.mods(player).build_speed;
                 self.bodies[body.0 as usize].queue.push(Job { kind: JobKind::Ship(class), owner: player, done_t: busy_until + st.build_time / speed });
                 Ok(())
             }
@@ -657,6 +734,13 @@ impl Game {
         }
     }
 
+    /// Shipyard level `p` can build at: the body's own shipyard if theirs, or a shipyard station.
+    pub fn yard_level(&self, p: PlayerId, body: BodyId) -> u8 {
+        let b = &self.bodies[body.0 as usize];
+        let own = if b.owner == Some(p) { b.level(Upgrade::Shipyard) } else { 0 };
+        own.max(self.station_yard_level(p, body))
+    }
+
     fn own_ship(&mut self, player: PlayerId, id: ShipId) -> Result<&mut Ship, String> {
         let s = self.ship_mut(id).ok_or("no such ship")?;
         if s.owner != player {
@@ -665,7 +749,7 @@ impl Game {
         Ok(s)
     }
 
-    fn pay(&mut self, player: PlayerId, m: f64, e: f64) -> Result<(), String> {
+    pub(crate) fn pay(&mut self, player: PlayerId, m: f64, e: f64) -> Result<(), String> {
         let p = &mut self.players[player as usize];
         if p.matter < m || p.energy < e {
             return Err(format!("needs {m:.0} matter and {e:.0} energy"));
@@ -725,6 +809,8 @@ impl Game {
                 self.last_tick = next_tick;
                 self.economy(TICK);
                 self.jobs();
+                self.research_tick();
+                self.stations_tick(TICK);
                 self.combat(TICK);
                 self.ownership();
                 self.update_intel();
@@ -769,10 +855,12 @@ impl Game {
         let sys = &self.system;
         let ship = &mut self.ships[i];
         let (id, owner, name) = (ship.id, ship.owner, ship.name.clone());
+        let cs = ship.stats();
+        let rocket = |fuel: f64, dv: f64| (cs.dry_mass + fuel) * (1.0 - (-dv / cs.ve).exp());
         match &mut ship.state {
             ShipState::Parked { body, departure } => {
                 let d = departure.take().unwrap();
-                let need = fuel_needed(ship.class, ship.fuel, d.dv);
+                let need = rocket(ship.fuel, d.dv);
                 if need > ship.fuel {
                     let body = *body;
                     ship.route.clear();
@@ -790,12 +878,12 @@ impl Game {
                 if burn_due {
                     let mut b = f.burns.remove(0);
                     let st = tr.state_at(sys, b.t).unwrap();
-                    let mass = ship.class.stats().dry_mass + ship.fuel;
-                    let ve = ship.class.stats().ve;
+                    let mass = cs.dry_mass + ship.fuel;
+                    let ve = cs.ve;
                     let need = mass * (1.0 - (-b.dv() / ve).exp());
                     if need > ship.fuel {
                         // burn what we have
-                        let dv_av = ve * (mass / ship.class.stats().dry_mass).ln();
+                        let dv_av = ve * (mass / cs.dry_mass).ln();
                         let k = if b.dv() > 0.0 { dv_av / b.dv() } else { 0.0 };
                         b.prograde *= k;
                         b.radial *= k;
@@ -811,7 +899,7 @@ impl Game {
                 match tr.end {
                     End::Capture { body, rp, vp, .. } => {
                         let dv = vp - circular_speed(sys.body(body).mu, rp);
-                        let need = fuel_needed(ship.class, ship.fuel, dv);
+                        let need = rocket(ship.fuel, dv);
                         let bname = sys.body(body).name.clone();
                         if need <= ship.fuel {
                             ship.fuel -= need;
@@ -893,7 +981,8 @@ impl Game {
         let matter = base_m * (1.0 + b.level(Upgrade::Mining) as f64);
         let energy = 20.0 + 60.0 * b.level(Upgrade::Solar) as f64 * self.solar_factor(body) + 60.0 * b.level(Upgrade::Reactor) as f64;
         let fuel = 120.0 * b.level(Upgrade::Refinery) as f64;
-        (matter, energy, fuel)
+        let m = self.mods(b.owner.unwrap());
+        (matter * m.matter, energy * m.energy, fuel * m.fuel)
     }
 
     fn economy(&mut self, dt: f64) {
@@ -901,6 +990,7 @@ impl Game {
         for i in 0..self.bodies.len() {
             let Some(o) = self.bodies[i].owner else { continue };
             let (m, e, f) = self.production(BodyId(i as u32));
+            let def_k = self.mods(o).def_hp;
             let p = &mut self.players[o as usize];
             p.matter += m * h;
             p.energy += e * h;
@@ -910,7 +1000,8 @@ impl Game {
             p.energy -= made * 0.5;
             let b = &mut self.bodies[i];
             b.fuel += made;
-            b.def_hp = (b.def_hp + b.def_max() * 0.1 * h).min(b.def_max());
+            let max = b.def_max() * def_k;
+            b.def_hp = (b.def_hp + max * 0.1 * h).min(max);
         }
         // refuelling: ships parked at a friendly body draw from its stock; tankers top up friends
         for i in 0..self.ships.len() {
@@ -918,7 +1009,7 @@ impl Game {
             let owner = self.ships[i].owner;
             let bs = &mut self.bodies[body.0 as usize];
             let s = &mut self.ships[i];
-            let room = s.class.stats().fuel_cap - s.fuel;
+            let room = s.stats().fuel_cap - s.fuel;
             if bs.owner == Some(owner) && room > 0.0 {
                 let take = room.min(bs.fuel).min(200.0 * h);
                 s.fuel += take;
@@ -932,7 +1023,7 @@ impl Game {
                 if j == t || self.ships[j].owner != owner || self.ships[j].parked_at() != Some(body) || self.ships[j].class == ShipClass::Tanker {
                     continue;
                 }
-                let room = self.ships[j].class.stats().fuel_cap - self.ships[j].fuel;
+                let room = self.ships[j].stats().fuel_cap - self.ships[j].fuel;
                 // a tanker keeps a reserve for its own trip home
                 let spare = (self.ships[t].fuel - 0.3 * ShipClass::Tanker.stats().fuel_cap).max(0.0);
                 let x = room.min(spare).min(300.0 * h);
@@ -948,8 +1039,8 @@ impl Game {
             let (done, keep): (Vec<Job>, Vec<Job>) = std::mem::take(&mut self.bodies[i].queue).into_iter().partition(|j| j.done_t <= now);
             self.bodies[i].queue = keep;
             for j in done {
-                if self.bodies[i].owner != Some(j.owner) {
-                    continue; // lost the body while building
+                if self.bodies[i].owner != Some(j.owner) && self.station_yard_level(j.owner, BodyId(i as u32)) == 0 {
+                    continue; // lost the body (and has no shipyard station) while building
                 }
                 let body = BodyId(i as u32);
                 let bname = self.system.body(body).name.clone();
@@ -958,11 +1049,13 @@ impl Game {
                         let id = self.spawn(j.owner, c, body);
                         self.event(Some(j.owner), EventKind::Good, "Ship built", &format!("{} ready at {bname}", c.stats().name), Some(body), Some(id));
                     }
+                    JobKind::Upgrade(_) if self.bodies[i].owner != Some(j.owner) => {}
                     JobKind::Upgrade(u) => {
+                        let def_k = self.mods(j.owner).def_hp;
                         let b = &mut self.bodies[i];
                         b.levels[u.index()] = (b.levels[u.index()] + 1).min(Upgrade::MAX_LEVEL);
                         if u == Upgrade::Defense {
-                            b.def_hp = b.def_max();
+                            b.def_hp = b.def_max() * def_k;
                         }
                         let lvl = b.level(u);
                         self.event(Some(j.owner), EventKind::Good, "Upgrade done", &format!("{} level {lvl} at {bname}", u.label()), Some(body), None);
@@ -981,13 +1074,18 @@ impl Game {
         };
         for s in &self.ships {
             if s.parked_at() == Some(body) && s.class.stats().attack > 0.0 {
-                add(s.owner, s.class.stats().attack * (s.hp / s.class.stats().hp).max(0.2));
+                add(s.owner, s.class.stats().attack * (s.hp / s.stats().hp).max(0.2));
+            }
+        }
+        for st in self.stations_at(body) {
+            if st.kind.attack() > 0.0 {
+                add(st.owner, st.kind.attack() * (st.hp / st.kind.max_hp()).max(0.2));
             }
         }
         let b = &self.bodies[body.0 as usize];
         if let Some(o) = b.owner {
             if b.def_hp > 0.0 {
-                add(o, b.def_attack());
+                add(o, self.def_attack(body));
             }
         }
         out
@@ -1026,7 +1124,7 @@ impl Game {
                     let kin = if st.weapon == Weapon::Kinetic { 1.25 } else { 1.0 };
                     (s.owner, Some(s.class), st.attack * kin * h)
                 })
-                .chain(owner.filter(|_| self.bodies[bi].def_hp > 0.0).map(|o| (o, None, self.bodies[bi].def_attack() * h)))
+                .chain(owner.filter(|_| self.bodies[bi].def_hp > 0.0).map(|o| (o, None, self.def_attack(body) * h)))
                 .filter(|a| a.2 > 0.0)
                 .collect();
             for (who, class, dmg_amount) in attackers {

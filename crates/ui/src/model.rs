@@ -281,3 +281,85 @@ impl GameView {
         owner.and_then(|o| self.player(o)).map(|p| p.color)
     }
 }
+
+// ---------------------------------------------------------------- research + stations
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum TechState {
+    Done,
+    /// Being researched at a lab, finishes at t.
+    Running { lab: BodyId, done_t: f64 },
+    /// Can start now at this lab (the best idle one that qualifies).
+    Ready { lab: BodyId },
+    /// Can't start yet; human-readable reason ("needs Hardened slugs", "needs lab level 2", ...).
+    Locked(String),
+}
+
+#[derive(Clone, Debug)]
+pub struct TechInfo {
+    /// Stable id (sim enum name), sent back in `UiAction::Research`.
+    pub id: String,
+    pub name: String,
+    /// One of `TECH_BRANCHES`.
+    pub branch: String,
+    /// 1..=4
+    pub tier: u8,
+    pub desc: String,
+    pub cost: Cost,
+    pub min_lab: u8,
+    pub state: TechState,
+}
+
+#[derive(Clone, Debug)]
+pub struct LabInfo {
+    pub body: BodyId,
+    pub name: String,
+    pub level: u8,
+    /// (tech name, finishes at t)
+    pub busy: Option<(String, f64)>,
+}
+
+/// Everything the research screen shows (`Backend::research`).
+#[derive(Clone, Debug, Default)]
+pub struct ResearchView {
+    /// All techs, branch-major, tier order.
+    pub techs: Vec<TechInfo>,
+    pub labs: Vec<LabInfo>,
+}
+
+pub const TECH_BRANCHES: [&str; 5] = ["Weapons", "Engines", "Industry", "Defense", "Scanning"];
+
+#[derive(Clone, Debug)]
+pub struct StationInfo {
+    /// One of `STATION_KINDS`.
+    pub kind: String,
+    pub owner: PlayerId,
+    /// Under construction until then.
+    pub building_until: Option<f64>,
+    /// 0..1
+    pub hp: f32,
+}
+
+#[derive(Clone, Debug)]
+pub struct StationOption {
+    /// One of `STATION_KINDS`, sent back in `UiAction::BuildStation`.
+    pub kind: String,
+    pub name: String,
+    pub desc: String,
+    pub cost: Cost,
+    /// Why it can't be built here now; None = can build.
+    pub blocker: Option<String>,
+}
+
+/// Stations at a body and what we could build there (`Backend::stations`).
+#[derive(Clone, Debug, Default)]
+pub struct StationsView {
+    /// Stations we know of in orbit here (ours always, others when sensors see them).
+    pub here: Vec<StationInfo>,
+    pub options: Vec<StationOption>,
+    /// We own the body or have a ship parked there, so building is possible at all.
+    pub present: bool,
+}
+
+/// Station kinds (= sim `StationKind`), also the icon names `station_<lowercase>`.
+pub const STATION_KINDS: [&str; 6] = ["Shipyard", "FuelDepot", "Telescope", "Scanner", "Defense", "Relay"];

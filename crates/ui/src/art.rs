@@ -20,7 +20,12 @@ const ASTEROIDS: [&str; 8] = [
     "asteroid_ice2",
 ];
 const STARS: [&str; 5] = ["star_yellow", "star_orange", "star_red", "star_blue", "star_white"];
-pub const ICONS: [&str; 12] = ["matter", "energy", "fuel", "chat", "menu", "power", "telescope", "time", "alert", "fleet", "maneuver_node", "close"];
+pub const ICONS: [&str; 24] = [
+    "matter", "energy", "fuel", "chat", "menu", "power", "telescope", "time", "alert", "fleet", "maneuver_node", "close",
+    // research + stations
+    "research", "check", "lock", "shield", "weapon_kinetic", "extraction",
+    "station_shipyard", "station_fuel_depot", "station_telescope", "station_scanner", "station_defense", "station_relay",
+];
 const SFX: &[&str] = &[
     "ui_click", "ui_tap", "ui_confirm", "ui_back", "ui_error", "notification", "chat_message", "transfer_scheduled", "alert_enemy",
     "capture", "scan_ping", "alert_ping", "menu_open", "menu_close", "menu_select", "menu_tab", "toggle_on", "toggle_off",

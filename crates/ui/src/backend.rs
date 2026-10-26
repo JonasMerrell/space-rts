@@ -40,6 +40,10 @@ pub enum UiAction {
     ExtendGame { days: u32 },
     /// Retry the server connection now instead of waiting for the backoff.
     Reconnect,
+    /// Start `tech` (a `TechInfo::id`) at a lab body.
+    Research { body: BodyId, tech: String },
+    /// `kind` is one of `model::STATION_KINDS`.
+    BuildStation { body: BodyId, kind: String },
 }
 
 /// Result of polling `Backend::plan_transfer_async`.
@@ -76,6 +80,14 @@ pub trait Backend {
 
     /// Owner-side detail (upgrades, shipyard, queue) for a body; None if not ours / unknown.
     fn body_info(&self, _id: BodyId) -> Option<BodyInfo> {
+        None
+    }
+    /// Tech tree state for the research screen.
+    fn research(&self) -> Option<ResearchView> {
+        None
+    }
+    /// Stations at a body and what we could build there.
+    fn stations(&self, _id: BodyId) -> Option<StationsView> {
         None
     }
     /// Signing back in from a saved session as this user (login screen shows a splash, not the form).

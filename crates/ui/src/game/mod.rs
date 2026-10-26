@@ -2,6 +2,7 @@
 
 pub mod map;
 mod panels;
+mod research;
 
 use crate::backend::{Backend, UiAction};
 use crate::input::Input;
@@ -64,6 +65,12 @@ pub struct GameScreen {
     pub body_tab: usize,
     /// In-game menu popover open.
     pub menu_open: bool,
+    /// Research overlay open, and which branch tab it shows.
+    pub research_open: bool,
+    pub research_branch: usize,
+    /// Station picker open for this body, and the highlighted kind.
+    pub stations_for: Option<BodyId>,
+    pub station_pick: Option<String>,
     /// For sound cues: chat length and bodies we owned last frame.
     seen_chat: usize,
     owned: Vec<BodyId>,
@@ -91,6 +98,10 @@ impl GameScreen {
             hint: None,
             body_tab: 0,
             menu_open: false,
+            research_open: false,
+            research_branch: 0,
+            stations_for: None,
+            station_pick: None,
             seen_chat: usize::MAX,
             owned: vec![],
             last_selected: None,
@@ -155,6 +166,9 @@ impl GameScreen {
             panels::hint(self);
             if self.chat_open {
                 panels::chat(self, inp, view);
+            }
+            if self.research_open {
+                research::research_screen(self, inp, be_ref, view);
             }
         }
         for a in self.out.drain(..) {

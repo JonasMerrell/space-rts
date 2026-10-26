@@ -107,7 +107,7 @@ pub fn hud(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
 
 fn game_menu(g: &mut GameScreen, inp: &mut Input, view: &GameView, at: Rect) {
     let host = view.host == view.me;
-    let items = if host { 3 } else { 2 };
+    let items = if host { 4 } else { 3 };
     let bh = 44.0 * s();
     let pad = 10.0 * s();
     let r = Rect::new(at.x, at.y, at.w, pad + items as f32 * (bh + pad));
@@ -117,7 +117,11 @@ fn game_menu(g: &mut GameScreen, inp: &mut Input, view: &GameView, at: Rect) {
     if widgets::button(inp, row(0), if art::muted() { "SOUND: OFF" } else { "SOUND: ON" }, Style::Secondary) {
         art::set_muted(!art::muted());
     }
-    if host && widgets::button(inp, row(1), "EXTEND WAR +1 DAY", Style::Secondary) {
+    if widgets::button(inp, row(1), "RESEARCH", Style::Secondary) {
+        g.research_open = true;
+        g.menu_open = false;
+    }
+    if host && widgets::button(inp, row(2), "EXTEND WAR +1 DAY", Style::Secondary) {
         g.emit(UiAction::ExtendGame { days: 1 });
         g.menu_open = false;
     }
@@ -243,6 +247,14 @@ pub fn sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameV
             cel::round_rect_lines(r, r.h / 2.0, 1.5 * s(), ACCENT);
             text(&label, r.center().x, r.center().y + s(), 16.0, ACCENT, FontKind::Title, Align::Center);
         }
+        Mode::Idle if g.stations_for.is_some() => {
+            let body = g.stations_for.unwrap();
+            if g.selected != Some(Focus::Body(body)) {
+                g.stations_for = None;
+            } else {
+                super::research::stations_sheet(g, inp, be, view, body, sheet_rect(332.0));
+            }
+        }
         Mode::Idle => match g.selected {
             Some(Focus::Ship(id)) => {
                 if let Some(sh) = view.ship(id) {
@@ -253,11 +265,18 @@ pub fn sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameV
                 if let Some(b) = view.body(id) {
                     match be.body_info(id).filter(|_| b.owner == Some(view.me)) {
                         Some(info) => owned_body_sheet(g, inp, view, b, &info),
-                        None => body_sheet(g, inp, view, b),
+                        None => body_sheet(g, inp, view, b, be.stations(id).is_some_and(|v| v.present)),
                     }
                 }
             }
-            None => {}
+            None => {
+                // Research shortcut floating above the scrubber.
+                let c = vec2(screen_width() - margin() - 24.0 * s(), scrub_top() - 34.0 * s());
+                if widgets::round_button(inp, c, 22.0 * s(), "@research", ACCENT, 0) {
+                    g.research_open = true;
+                    art::sfx("menu_open");
+                }
+            }
         },
     }
 }
@@ -294,11 +313,16 @@ fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Bo
 
     // Tabs.
     let ty = r.y + 82.0 * s();
-    let tw = 116.0 * s();
-    for (i, label) in ["UPGRADES", "SHIPYARD"].iter().enumerate() {
+    let tw = ((r.w - 32.0 * s() - 20.0 * s()) / 3.0).min(116.0 * s());
+    for (i, label) in ["UPGRADES", "SHIPYARD", "STATIONS"].iter().enumerate() {
         let tr = Rect::new(r.x + 16.0 * s() + i as f32 * (tw + 10.0 * s()), ty, tw, 30.0 * s());
         if widgets::chip(inp, tr, label, g.body_tab == i, ACCENT) && g.body_tab != i {
-            g.body_tab = i;
+            if i == 2 {
+                // Stations open their own sheet (shared with bodies we don't own).
+                g.stations_for = Some(b.id);
+            } else {
+                g.body_tab = i;
+            }
             art::sfx("menu_tab");
         }
     }
@@ -378,7 +402,7 @@ fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Bo
     text(&q, r.x + 16.0 * s(), qy, 13.0, if info.queue.is_empty() { MUTED } else { PAPER }, FontKind::Body, Align::Left);
 }
 
-fn body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Body) {
+fn body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Body, can_build_station: bool) {
     let r = sheet_rect(150.0);
     inp.block(r);
     cel::panel(r, PANEL);
@@ -414,6 +438,12 @@ fn body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Body) {
         }
         None => {
             text("Contents unknown. Build a telescope to see inside.", body_r.x, body_r.y + 12.0 * s(), 15.0, MUTED, FontKind::Body, Align::Left);
+        }
+    }
+    if can_build_station {
+        let br = Rect::new(r.x + r.w - 128.0 * s(), r.y + 36.0 * s(), 112.0 * s(), 30.0 * s());
+        if widgets::button(inp, br, "STATIONS", Style::Secondary) {
+            g.stations_for = Some(b.id);
         }
     }
     if close_x(inp, r) {

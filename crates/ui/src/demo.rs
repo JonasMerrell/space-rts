@@ -51,6 +51,11 @@ pub struct DemoBackend {
     queue: Vec<(BodyId, String, f64, ShipClass)>,
     user: String,
     games: Vec<GameSummary>,
+    /// Research: indices into DEMO_TECHS done, and (tech, lab, done_t) running.
+    techs_done: Vec<usize>,
+    research_run: Vec<(usize, BodyId, f64)>,
+    /// (body, kind, owner, done_t)
+    stations: Vec<(BodyId, String, PlayerId, f64)>,
 }
 
 impl Default for DemoBackend {
@@ -72,6 +77,9 @@ impl DemoBackend {
             levels: std::collections::HashMap::new(),
             queue: vec![],
             user: String::new(),
+            techs_done: vec![0, 4, 8, 9, 16],
+            research_run: vec![],
+            stations: vec![],
             games: vec![
                 GameSummary { code: "K7QX".into(), name: "Friday Night War".into(), day: 3, length_days: 7, players: 4, unread: 3 },
                 GameSummary { code: "ZB2M".into(), name: "Bots practice".into(), day: 1, length_days: 5, players: 3, unread: 0 },
@@ -511,7 +519,7 @@ impl Backend for DemoBackend {
             }
             UiAction::Upgrade { body, upgrade } => {
                 if let Some(i) = UPGRADES.iter().position(|u| *u == upgrade) {
-                    let lv = self.levels.entry(body).or_insert([1, 1, 0, 1, 1, 0, 0, 0]);
+                    let lv = self.levels.entry(body).or_insert([1, 1, 0, 1, 1, 0, 0, 2]);
                     let c = upgrade_cost(lv[i] + 1);
                     if lv[i] < 3 {
                         lv[i] += 1;
@@ -527,6 +535,28 @@ impl Backend for DemoBackend {
                     s.retreat = retreat;
                 }
             }
+            UiAction::Research { body, tech } => {
+                let now = self.now();
+                if let Some(i) = DEMO_TECHS.iter().position(|t| t.0 == tech) {
+                    let c = demo_tech_cost(i);
+                    if let Some(v) = self.view.as_mut() {
+                        v.resources.matter -= c.matter;
+                        v.resources.energy -= c.energy;
+                    }
+                    self.research_run.push((i, body, now + c.seconds / 1.5));
+                }
+            }
+            UiAction::BuildStation { body, kind } => {
+                let now = self.now();
+                if let Some(i) = STATION_KINDS.iter().position(|k| *k == kind) {
+                    let c = demo_station_cost(i);
+                    if let Some(v) = self.view.as_mut() {
+                        v.resources.matter -= c.matter;
+                        v.resources.energy -= c.energy;
+                        self.stations.push((body, kind, v.me, now + c.seconds));
+                    }
+                }
+            }
             UiAction::ExtendGame { days } => {
                 if let Some(v) = self.view.as_mut() {
                     v.ends_at += days as f64 * 86400.0;
@@ -540,7 +570,7 @@ impl Backend for DemoBackend {
         if v.body(id)?.owner != Some(v.me) {
             return None;
         }
-        let lv = self.levels.get(&id).copied().unwrap_or([1, 1, 0, 1, 1, 0, 0, 0]);
+        let lv = self.levels.get(&id).copied().unwrap_or([1, 1, 0, 1, 1, 0, 0, 2]);
         let upgrades = UPGRADES
             .iter()
             .zip(lv)
@@ -565,6 +595,78 @@ impl Backend for DemoBackend {
             energy_rate: 20.0 + 60.0 * (lv[1] + lv[2]) as f64,
             fuel_rate: 120.0 * lv[3] as f64,
         })
+    }
+
+    fn research(&self) -> Option<ResearchView> {
+        let v = self.view.as_ref()?;
+        let now = self.now();
+        let labs: Vec<LabInfo> = v
+            .bodies
+            .iter()
+            .filter(|b| b.owner == Some(v.me))
+            .filter_map(|b| {
+                let level = self.levels.get(&b.id).copied().unwrap_or([1, 1, 0, 1, 1, 0, 0, 2])[7];
+                let busy = self.research_run.iter().find(|r| r.1 == b.id && r.2 > now).map(|r| (DEMO_TECHS[r.0].1.to_string(), r.2));
+                (level > 0).then(|| LabInfo { body: b.id, name: b.name.clone(), level, busy })
+            })
+            .collect();
+        let done = |i: usize| self.techs_done.contains(&i) || self.research_run.iter().any(|r| r.0 == i && r.2 <= now);
+        let techs = DEMO_TECHS
+            .iter()
+            .enumerate()
+            .map(|(i, (id, name, desc))| {
+                let tier = (i % 4) as u8 + 1;
+                let min_lab = [1, 1, 2, 3][i % 4];
+                let state = if done(i) {
+                    TechState::Done
+                } else if let Some(r) = self.research_run.iter().find(|r| r.0 == i) {
+                    TechState::Running { lab: r.1, done_t: r.2 }
+                } else if i % 4 != 0 && !done(i - 1) {
+                    TechState::Locked(format!("needs {}", DEMO_TECHS[i - 1].1))
+                } else {
+                    match labs.iter().filter(|l| l.busy.is_none() && l.level >= min_lab).max_by_key(|l| l.level) {
+                        Some(l) => TechState::Ready { lab: l.body },
+                        None if labs.iter().any(|l| l.level >= min_lab) => TechState::Locked("all labs busy".into()),
+                        None => TechState::Locked(format!("needs lab level {min_lab}")),
+                    }
+                };
+                TechInfo { id: id.to_string(), name: name.to_string(), branch: TECH_BRANCHES[i / 4].to_string(), tier, desc: desc.to_string(), cost: demo_tech_cost(i), min_lab, state }
+            })
+            .collect();
+        Some(ResearchView { techs, labs })
+    }
+
+    fn stations(&self, id: BodyId) -> Option<StationsView> {
+        let v = self.view.as_ref()?;
+        let now = self.now();
+        let present = v.body(id)?.owner == Some(v.me) || v.ships.iter().any(|s| s.owner == v.me && s.parked_at == Some(id) && s.trajectory.is_none());
+        let here = self
+            .stations
+            .iter()
+            .filter(|s| s.0 == id)
+            .map(|s| StationInfo { kind: s.1.clone(), owner: s.2, building_until: (s.3 > now).then_some(s.3), hp: 1.0 })
+            .collect();
+        let scanning = self.techs_done.contains(&17);
+        let platforms = self.techs_done.contains(&15);
+        let options = STATION_KINDS
+            .iter()
+            .enumerate()
+            .map(|(i, k)| {
+                let blocker = if !present {
+                    Some("needs a ship in orbit".to_string())
+                } else if (*k == "Scanner" || *k == "Relay") && !scanning {
+                    Some("needs Scanning stations".to_string())
+                } else if *k == "Defense" && !platforms {
+                    Some("needs Defense platforms".to_string())
+                } else if self.stations.iter().any(|s| s.0 == id && s.1 == *k && s.2 == v.me) {
+                    Some("already built here".to_string())
+                } else {
+                    None
+                };
+                StationOption { kind: k.to_string(), name: DEMO_STATIONS[i].0.to_string(), desc: DEMO_STATIONS[i].1.to_string(), cost: demo_station_cost(i), blocker }
+            })
+            .collect();
+        Some(StationsView { here, options, present })
     }
 
     fn default_server(&self) -> String {
@@ -638,4 +740,47 @@ impl Backend for DemoBackend {
         }
         Some(Trajectory { points: out })
     }
+}
+
+/// Mirror of sim's tech tree for offline demo (id, name, description), branch-major.
+const DEMO_TECHS: [(&str, &str, &str); 20] = [
+    ("HardenedSlugs", "Hardened slugs", "Kinetic weapons deal 15% more damage."),
+    ("FocusedLasers", "Focused lasers", "Energy weapons deal 15% more damage."),
+    ("FireControl", "Fire control", "Kinetic slugs lead fast targets better: +25% accuracy."),
+    ("SpinalLance", "Spinal lance", "All weapons deal 20% more damage."),
+    ("EfficientNozzles", "Efficient nozzles", "Engine exhaust velocity +10%: more Δv per tonne of fuel."),
+    ("ExpandedTanks", "Expanded tanks", "Ship fuel tanks hold 25% more."),
+    ("IonDrives", "Ion drives", "Exhaust velocity +20% more."),
+    ("AsteroidDrives", "Asteroid drives", "Attach drives to asteroids to push them onto new orbits."),
+    ("DeepCoreMining", "Deep-core mining", "Matter production +25%."),
+    ("FusionPlants", "Fusion plants", "Energy production +25%."),
+    ("ModularYards", "Modular yards", "Ships build 30% faster."),
+    ("AutoRefineries", "Auto refineries", "Fuel refineries produce 50% more."),
+    ("ArmorPlating", "Armor plating", "Ships have 20% more hull."),
+    ("PlanetaryShields", "Planetary shields", "Planetary defenses have 50% more hit points."),
+    ("PointDefense", "Point defense", "Planetary defenses fire 50% harder."),
+    ("DefensePlatforms", "Defense platforms", "Unlocks armed defense platform stations."),
+    ("BetterOptics", "Better optics", "Telescope and sensor range +30%."),
+    ("ScanningStations", "Scanning stations", "Unlocks scanning stations and sensor relays."),
+    ("SignatureDamping", "Signature damping", "Your ships are 30% harder to see."),
+    ("DeepSpaceArray", "Deep-space array", "Sensor range +40% more."),
+];
+
+fn demo_tech_cost(i: usize) -> Cost {
+    let k = (i % 4) as f64 + 1.0;
+    Cost { matter: 150.0 * k, energy: 200.0 * k, seconds: [2.0, 4.0, 8.0, 12.0][i % 4] * 3600.0 }
+}
+
+const DEMO_STATIONS: [(&str, &str); 6] = [
+    ("Shipyard", "Builds ships here, even if you don't hold the body."),
+    ("Fuel depot", "Refines and stores fuel here and refuels your ships, even on asteroids."),
+    ("Telescope", "Long-range passive sensor."),
+    ("Scanning station", "Sees every ship in range and reads enemy flight plans."),
+    ("Defense platform", "Armed platform. Fights for the orbit and counts toward control."),
+    ("Sensor relay", "Your other sensors within its range reach 50% farther."),
+];
+
+fn demo_station_cost(i: usize) -> Cost {
+    let (m, e, h) = [(300.0, 150.0, 4.0), (150.0, 80.0, 2.0), (120.0, 120.0, 2.0), (200.0, 200.0, 3.0), (250.0, 150.0, 3.0), (150.0, 150.0, 2.0)][i];
+    Cost { matter: m, energy: e, seconds: h * 3600.0 }
 }
