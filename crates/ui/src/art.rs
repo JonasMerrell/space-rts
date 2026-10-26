@@ -42,6 +42,8 @@ thread_local! {
     // Leaked like theme::FONTS (GL objects must not drop in TLS destructors).
     static ART: Cell<Option<&'static Art>> = const { Cell::new(None) };
     static MUSIC_ON: RefCell<Option<&'static str>> = const { RefCell::new(None) };
+    /// Music beds, keyed by track name. Filled after the first frames on the web (see `load`).
+    static MUSIC_SND: RefCell<HashMap<&'static str, Sound>> = RefCell::new(HashMap::new());
     static MUTED: Cell<bool> = const { Cell::new(false) };
     static LAST_TICK: Cell<f64> = const { Cell::new(0.0) };
 }
@@ -72,24 +74,61 @@ pub async fn load(root: &str) {
     for s in SKINS {
         paths.push(format!("sprites/emblems/{s}.png"));
     }
+    let total = (paths.len() + SFX.len()) as f32;
+    let mut done = 0.0;
+    let mut last_frame = get_time();
     for p in paths {
         if let Ok(t) = load_texture(&format!("{root}/{p}")).await {
             t.set_filter(FilterMode::Linear);
             tex.insert(p, t);
         }
+        done += 1.0;
+        loading_frame(done / total, &mut last_frame).await;
     }
     let mut sfx = HashMap::new();
     for s in SFX {
         if let Ok(snd) = load_sound(&format!("{root}/audio/sfx/{s}.wav")).await {
             sfx.insert(s.to_string(), snd);
         }
-    }
-    for m in MUSIC {
-        if let Ok(snd) = load_sound(&format!("{root}/audio/music/{m}.wav")).await {
-            sfx.insert(format!("music/{m}"), snd);
-        }
+        done += 1.0;
+        loading_frame(done / total, &mut last_frame).await;
     }
     ART.with(|a| a.set(Some(Box::leak(Box::new(Art { tex, sfx })))));
+    // Music is the bulk of the download/decoding (≈9 s in a browser): the game starts without it
+    // and the beds slot in when ready (`music()` picks them up).
+    let root = root.to_string();
+    let load_music = async move {
+        for m in MUSIC {
+            if let Ok(snd) = load_sound(&format!("{root}/audio/music/{m}.wav")).await {
+                MUSIC_SND.with(|ms| ms.borrow_mut().insert(m, snd));
+            }
+        }
+    };
+    if cfg!(target_arch = "wasm32") {
+        macroquad::experimental::coroutines::start_coroutine(load_music);
+    } else {
+        load_music.await;
+    }
+}
+
+/// Progress screen while assets load (at most ~10 redraws a second so loading isn't slowed down).
+async fn loading_frame(frac: f32, last: &mut f64) {
+    if get_time() - *last < 0.1 {
+        return;
+    }
+    *last = get_time();
+    crate::theme::update_scale();
+    clear_background(crate::theme::BG);
+    let (w, h) = (screen_width(), screen_height());
+    let bw = (w * 0.5).min(420.0 * crate::theme::s());
+    let r = Rect::new((w - bw) / 2.0, h * 0.55, bw, 6.0 * crate::theme::s());
+    draw_rectangle(r.x, r.y, r.w, r.h, Color::new(1.0, 1.0, 1.0, 0.12));
+    draw_rectangle(r.x, r.y, r.w * frac.clamp(0.0, 1.0), r.h, crate::theme::ACCENT);
+    let t = "HOHMANN'S REACH";
+    let fs = (28.0 * crate::theme::s()) as u16;
+    let d = measure_text(t, None, fs, 1.0);
+    draw_text(t, (w - d.width) / 2.0, h * 0.55 - 24.0 * crate::theme::s(), fs as f32, WHITE);
+    next_frame().await;
 }
 
 fn get() -> Option<&'static Art> {
@@ -180,14 +219,20 @@ pub fn music(track: Option<&'static str>) {
         if *cur == track {
             return;
         }
-        let Some(a) = get() else { return };
-        if let Some(old) = cur.and_then(|o| a.sfx.get(&format!("music/{o}"))) {
-            stop_sound(old);
-        }
-        if let Some(new) = track.and_then(|t| a.sfx.get(&format!("music/{t}"))) {
-            play_sound(new, PlaySoundParams { looped: true, volume: 0.45 });
-        }
-        *cur = track;
+        MUSIC_SND.with(|ms| {
+            let ms = ms.borrow();
+            // wanted track not loaded yet (web): keep the old state and try again next call
+            if track.is_some_and(|t| !ms.contains_key(t)) {
+                return;
+            }
+            if let Some(old) = cur.and_then(|o| ms.get(o)) {
+                stop_sound(old);
+            }
+            if let Some(new) = track.and_then(|t| ms.get(t)) {
+                play_sound(new, PlaySoundParams { looped: true, volume: 0.45 });
+            }
+            *cur = track;
+        });
     });
 }
 
