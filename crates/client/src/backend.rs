@@ -762,7 +762,7 @@ impl Backend for ClientBackend {
     fn body_info(&self, id: BodyId) -> Option<m::BodyInfo> {
         let g = self.game.as_ref()?;
         let b = SimBody(id);
-        g.bodies.get(id as usize)?;
+        let st = g.bodies.get(id as usize)?;
         let mine = st.owner == Some(self.me);
         let pending = |u: g::Upgrade| st.queue.iter().filter(|j| matches!(j.kind, g::JobKind::Upgrade(x) if x == u)).count() as u8;
         let upgrades = g::Upgrade::ALL

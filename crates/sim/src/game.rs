@@ -122,7 +122,7 @@ impl ShipClass {
     /// Player-facing description generated from the live stats, so UI text follows balance changes.
     pub fn describe(self) -> String {
         let s = self.stats();
-        let strong: Vec<&str> = ShipClass::ALL.iter().filter(|&&c| self.vs(c) > 1.0 && c != ShipClass::Tanker).map(|c| c.stats().name).collect();
+        let strong: Vec<&str> = ShipClass::ALL.iter().filter(|&&c| self.vs(c) > 1.0 && c != ShipClass::Tanker && c != ShipClass::Constructor).map(|c| c.stats().name).collect();
         let weak: Vec<&str> = ShipClass::ALL.iter().filter(|&&c| self.vs(c) < 1.0).map(|c| c.stats().name).collect();
         let weapon = match s.weapon {
             Weapon::Kinetic => "kinetic slugs (hard-hitting, slow projectiles)",
@@ -145,6 +145,9 @@ impl ShipClass {
         }
         if self == ShipClass::Tanker {
             out += " Refuels friendly ships parked with it.";
+        }
+        if self == ShipClass::Constructor {
+            out += &format!(" Builds space stations where it is parked; each one adds a worker (up to {}).", crate::station::MAX_WORKERS);
         }
         if s.min_shipyard > 1 {
             out += &format!(" Needs shipyard level {}.", s.min_shipyard);
