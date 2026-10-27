@@ -60,11 +60,11 @@ fn icon_fuel(c: Vec2, r: f32) {
     draw_circle(c.x - r * 0.3, c.y + r * 0.1, r * 0.2, Color::new(1.0, 1.0, 1.0, 0.6));
 }
 
-pub fn hud(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
+pub fn hud(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView) {
     let w = screen_width();
     let top = safe_top() + margin();
     let res = view.resources;
-    let btn_space = 2.0 * 52.0 * s();
+    let btn_space = 3.0 * 52.0 * s();
     let avail = w - 2.0 * margin() - btn_space;
     let cw = ((avail - 2.0 * 8.0 * s()) / 3.0).min(if wide() { 150.0 * s() } else { f32::MAX });
     let ch = 44.0 * s();
@@ -98,6 +98,7 @@ pub fn hud(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
         art::sfx(if g.chat_open { "menu_open" } else { "menu_close" });
         g.chat_seen = view.chat.len();
     }
+    super::report::hud_button(g, inp, be, vec2(bx - 100.0 * s(), top + ch / 2.0));
     if widgets::round_button(inp, vec2(bx, top + ch / 2.0), 21.0 * s(), "@menu", ACCENT, 0) {
         g.menu_open = !g.menu_open;
         art::sfx(if g.menu_open { "menu_open" } else { "menu_close" });

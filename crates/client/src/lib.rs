@@ -3,6 +3,7 @@ pub mod backend;
 pub mod forecast;
 pub mod net;
 pub mod notify;
+pub mod sensors;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tls;
 #[cfg(target_arch = "wasm32")]

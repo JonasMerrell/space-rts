@@ -99,8 +99,11 @@ pub struct ClientBackend {
     forecast: Forecaster,
     /// last `predicted` answer: (run gen, frame index, view)
     predicted: RefCell<Option<(u64, usize, Rc<m::GameView>)>>,
-    /// "While you were away" report waiting to be shown / dismissed.
-    report: Option<m::AwayReport>,
+    /// Sensors report for the open game, rebuilt with the view.
+    sensors: Option<m::SensorsReport>,
+    /// (game code, game time) up to which the player has seen the report's log: the server's
+    /// last-active time on open, then whenever the report is closed.
+    sensors_seen: Option<(String, f64)>,
 }
 
 impl ClientBackend {
@@ -147,7 +150,8 @@ impl ClientBackend {
             last_error: None,
             forecast: Forecaster::default(),
             predicted: RefCell::new(None),
-            report: None,
+            sensors: None,
+            sensors_seen: None,
         }
     }
 
@@ -250,10 +254,11 @@ impl ClientBackend {
                     self.notice(m::NoticeKind::Bad, "Can't do that", &msg, None);
                 }
             }
-            ServerMsg::Report { code, since, now, events } => {
-                // only worth a sheet after a real absence (not a reconnect blip)
-                if self.code().as_deref() == Some(code.as_str()) && now - since >= REPORT_MIN_AWAY && !events.is_empty() {
-                    self.report = Some(away_report(since, now, &events));
+            ServerMsg::Report { code, since, .. } => {
+                // sent on Open, before the State: what happened since is "new" in the sensors
+                // report (a reconnect keeps what the player already looked at)
+                if self.sensors_seen.as_ref().is_none_or(|s| s.0 != code) {
+                    self.sensors_seen = Some((code, since));
                 }
             }
             ServerMsg::Events(_) | ServerMsg::Pong => {}
@@ -370,7 +375,17 @@ impl ClientBackend {
             }
         }
         let game = self.game.as_ref().unwrap();
-        self.view = Some(build_view(game, self.me, self.now(), &self.paths));
+        let now = self.now();
+        self.view = Some(build_view(game, self.me, now, &self.paths));
+        let seen = match &self.sensors_seen {
+            Some((code, t)) if *code == game.code => *t,
+            // no Report for this game (lobby, or just created): nothing counts as new
+            _ => {
+                self.sensors_seen = Some((game.code.clone(), now));
+                now
+            }
+        };
+        self.sensors = (game.status != Status::Lobby).then(|| crate::sensors::report(game, self.me, now, seen));
     }
 
     fn ship_ids(&self, id: ShipId) -> Vec<g::ShipId> {
@@ -437,7 +452,7 @@ fn compute_impact(g: &Game, me: g::PlayerId, now: f64, ast: BodyId, target: Body
 /// with ship ids (those count up from 1) or forecast-only ships (from `PLANNED_BASE` up).
 const FLEET_TOKEN: u32 = 0x4000_0000;
 
-fn fleet_token(f: &sim::fleet::Fleet) -> ShipId {
+pub(crate) fn fleet_token(f: &sim::fleet::Fleet) -> ShipId {
     FLEET_TOKEN + f.id.0
 }
 
@@ -649,40 +664,6 @@ pub(crate) fn ship_model(s: &g::Ship, trajectory: Option<m::Trajectory>) -> m::S
         planned: None,
         members: vec![],
     }
-}
-
-/// Game seconds away before the report sheet is worth showing.
-const REPORT_MIN_AWAY: f64 = 900.0;
-
-fn away_report(since: f64, now: f64, events: &[g::Event]) -> m::AwayReport {
-    let items = events
-        .iter()
-        .map(|e| {
-            let territory = e.title.starts_with("Territory") || e.title == "Battle sighted";
-            let section = match e.kind {
-                g::EventKind::Battle => m::ReportSection::Battles,
-                _ if territory => m::ReportSection::Battles,
-                g::EventKind::Sensor => m::ReportSection::Contacts,
-                _ => m::ReportSection::Empire,
-            };
-            let tone = match e.kind {
-                g::EventKind::Good => 1,
-                g::EventKind::Bad | g::EventKind::Battle => -1,
-                g::EventKind::Sensor if e.title == "Contact" || e.title == "Engine burn" => -1,
-                _ => 0,
-            };
-            m::ReportItem {
-                t: e.t,
-                section,
-                title: e.title.clone(),
-                text: e.body.clone(),
-                focus: e.ship_ref.map(|s| m::Focus::Ship(s.0)).or(e.body_ref.map(|b| m::Focus::Body(b.0))),
-                fallback: e.body_ref.map(|b| m::Focus::Body(b.0)),
-                tone,
-            }
-        })
-        .collect();
-    m::AwayReport { since, now, items }
 }
 
 /// Replace our fleets' ship models with one token per fleet (models of other ships pass through).
@@ -999,7 +980,12 @@ impl Backend for ClientBackend {
                     self.send(ClientMsg::Cmd { code, cmd: Command::CancelDeparture { ship: self.lead(ship) } });
                 }
             }
-            UiAction::DismissReport => self.report = None,
+            UiAction::SensorsSeen => {
+                if let Some(code) = self.code() {
+                    self.sensors_seen = Some((code, self.now()));
+                    self.rebuild();
+                }
+            }
             UiAction::MoveJob { body, from, to } => {
                 if let Some(code) = code.clone() {
                     self.send(ClientMsg::Cmd { code, cmd: Command::MoveJob { body: SimBody(body), from, to } });
@@ -1335,8 +1321,8 @@ impl Backend for ClientBackend {
         Some(m::ResearchView { techs, labs })
     }
 
-    fn away_report(&self) -> Option<&m::AwayReport> {
-        self.report.as_ref()
+    fn sensors(&self) -> Option<&m::SensorsReport> {
+        self.sensors.as_ref()
     }
 
     fn stations(&self, id: BodyId) -> Option<m::StationsView> {
