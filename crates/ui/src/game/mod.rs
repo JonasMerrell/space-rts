@@ -1,6 +1,7 @@
 //! In-game screen: map + HUD + time scrubber + selection sheet + planner/node editor + chat + toasts.
 
 pub mod details;
+pub mod endgame;
 pub mod fleet;
 mod lobby;
 pub mod map;
@@ -96,6 +97,15 @@ pub struct GameScreen {
     /// easing to the star (system view) instead of following the selection. Manual pan/zoom cancels.
     pub zoom_goal: Option<f64>,
     pub system_view: bool,
+    /// Results sheet: sound played / player chose to look at the map instead.
+    pub results_seen: bool,
+    pub results_hidden: bool,
+    /// Bug report / feature request form, when open.
+    pub feedback: Option<endgame::FeedbackForm>,
+    /// Host pressed DELETE WAR once; the menu asks to confirm.
+    pub confirm_delete: bool,
+    /// Constructor "leave when done": (ship, depart after this game time).
+    pub leave_after: Option<(ShipId, f64)>,
     /// Chat list scroll, px up from the newest message (0 = pinned to the newest).
     pub chat_scroll: f32,
     /// Resource breakdown sheet (0 matter, 1 energy, 2 fuel) opened from the top bar.
@@ -153,6 +163,11 @@ impl GameScreen {
             detail: None,
             res_open: None,
             chat_scroll: 0.0,
+            results_seen: false,
+            results_hidden: false,
+            feedback: None,
+            confirm_delete: false,
+            leave_after: None,
             zoom_goal: None,
             system_view: false,
             follow: true,
@@ -268,7 +283,9 @@ impl GameScreen {
             // Full-screen overlays (away report, research) cover everything and must get the input
             // first, so the HUD/sheets underneath aren't drawn or tapped while they're open. Before this,
             // the HUD menu button under the research X ate the tap and the screen wouldn't close.
-            if be_ref.away_report().is_some() {
+            if endgame::results(self, inp, be_ref, view) || endgame::feedback(self, inp) {
+                // covers the screen
+            } else if be_ref.away_report().is_some() {
                 report::away_report(self, inp, be_ref, view);
             } else if self.research_open {
                 if inp.take_back() {
@@ -343,7 +360,12 @@ impl GameScreen {
     fn handle_map_input(&mut self, inp: &mut Input, be: &dyn Backend, view: &GameView, t: f64) {
         let mut cam = self.cam.unwrap();
         let fit = Camera::fit(view);
-        let on_map = inp.for_map() && !self.chat_open && !self.research_open && be.away_report().is_none();
+        let on_map = inp.for_map()
+            && !self.chat_open
+            && !self.research_open
+            && self.feedback.is_none()
+            && (be.results().is_none() || self.results_hidden)
+            && be.away_report().is_none();
 
         // Node handles get first dibs on drags.
         let node_dragging = if let Mode::Nodes(ne) = &mut self.mode {
@@ -392,7 +414,9 @@ impl GameScreen {
         match (&self.mode, hit) {
             (Mode::Target(ship), Some(Focus::Body(b))) => {
                 let ship = *ship;
-                self.plan(be, view, ship, b, view.now);
+                // "leave when done": plan the departure for after the station work finishes
+                let after = self.leave_after.filter(|l| l.0 == ship).map(|l| l.1.max(view.now)).unwrap_or(view.now);
+                self.plan(be, view, ship, b, after);
             }
             (Mode::Target(_), Some(Focus::Ship(s))) => self.pick_ship(view, s),
             (Mode::Target(_), None) => {

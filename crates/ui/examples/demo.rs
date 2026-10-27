@@ -97,6 +97,33 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                 }
                 "report" => be.report = Some(ui::demo::demo_report(v.now)),
                 "rock" => g.selected = Some(Focus::Body(9)),
+                "results" => {
+                    be.results = Some(GameResults { winner: Some(1), scores: vec![(1, 7), (3, 5), (2, 3), (4, 1)], ended_at: v.now });
+                }
+                "feedback" => {
+                    let mut f = ui::game::endgame::FeedbackForm::new();
+                    f.text.text = "The ships list at Tethys doesn't scroll on my tablet".into();
+                    g.feedback = Some(f);
+                }
+                "gmenu_delete" => {
+                    g.menu_open = true;
+                    g.confirm_delete = true;
+                }
+                "leave" => {
+                    // a constructor at Tethys with a station going up
+                    be.act(UiAction::BuildStation { body: 2, kind: "Telescope".into() });
+                    if let Some(vw) = be.view.as_mut() {
+                        if let Some(sh) = vw.ships.iter_mut().find(|s| s.id == 2) {
+                            sh.class = ShipClass::Constructor;
+                            sh.name = "Builder".into();
+                            sh.count = 1;
+                        }
+                    }
+                    g.selected = Some(Focus::Ship(2));
+                    g.mode = Mode::Target(2);
+                    let t = be.construction_done(2).unwrap_or(v.now + 7200.0);
+                    g.leave_after = Some((2, t));
+                }
                 "queue" => {
                     for c in [ShipClass::Gunship, ShipClass::Scout, ShipClass::Bomber] {
                         be.act(UiAction::Build { body: 2, class: c });

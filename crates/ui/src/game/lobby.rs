@@ -84,13 +84,22 @@ pub fn overlay(g: &mut GameScreen, inp: &mut Input, view: &GameView, info: &Lobb
     if g.menu_open {
         let pad = 10.0 * s();
         let bh = 44.0 * s();
-        let r = Rect::new(w - margin() - 290.0 * s(), banner.y + banner.h + 8.0 * s(), 290.0 * s(), 2.0 * bh + 3.0 * pad);
+        let host = info.host == view.me;
+        let n = if host { 3.0 } else { 2.0 };
+        let r = Rect::new(w - margin() - 290.0 * s(), banner.y + banner.h + 8.0 * s(), 290.0 * s(), n * bh + (n + 1.0) * pad);
         inp.block(r);
         cel::panel(r, alpha(PANEL, 0.97));
-        art::sound_toggles(inp, Rect::new(r.x + pad, r.y + pad, r.w - 2.0 * pad, bh));
-        if widgets::button(inp, Rect::new(r.x + pad, r.y + 2.0 * pad + bh, r.w - 2.0 * pad, bh), "LEAVE TO MENU", Style::Ghost) {
+        let row = |i: f32| Rect::new(r.x + pad, r.y + pad + i * (bh + pad), r.w - 2.0 * pad, bh);
+        art::sound_toggles(inp, row(0.0));
+        if host {
+            super::endgame::delete_row(g, inp, view, row(1.0));
+        }
+        if widgets::button(inp, row(n - 1.0), "LEAVE TO MENU", Style::Ghost) {
             g.menu_open = false;
             g.emit(UiAction::BackToMenu);
+        }
+        if inp.tap.is_some_and(|p| !r.contains(p)) {
+            g.confirm_delete = false;
         }
     }
     if g.chat_open {

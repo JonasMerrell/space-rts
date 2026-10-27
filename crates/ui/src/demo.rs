@@ -58,6 +58,8 @@ pub struct DemoBackend {
     stations: Vec<(BodyId, String, PlayerId, f64)>,
     /// "While you were away" report to show (scene `report`).
     pub report: Option<AwayReport>,
+    /// Scene `results`: the war has ended.
+    pub results: Option<GameResults>,
 }
 
 impl Default for DemoBackend {
@@ -83,6 +85,7 @@ impl DemoBackend {
             research_run: vec![],
             stations: vec![],
             report: None,
+            results: None,
             games: vec![
                 GameSummary { code: "K7QX".into(), name: "Friday Night War".into(), day: 3, length_days: 7, players: 4, unread: 3 },
                 GameSummary { code: "ZB2M".into(), name: "Bots practice".into(), day: 1, length_days: 5, players: 3, unread: 0 },
@@ -239,6 +242,7 @@ impl DemoBackend {
         // fog of war: an enemy dreadnought last seen 5 h ago (drawn as a fading ghost)
         ships.push(Ship { seen_at: Some(now - 5.0 * 3600.0), ..ship(13, "Dreadnought", ShipClass::Dreadnought, 2, 1, Some(2)) });
         self.view = Some(GameView {
+            code: "K7QX".into(),
             me: 1,
             host: 1,
             now,
@@ -861,6 +865,16 @@ impl Backend for DemoBackend {
             }
         });
         crate::ImpactPoll::Done(res)
+    }
+
+    fn results(&self) -> Option<GameResults> {
+        self.results.clone()
+    }
+
+    fn construction_done(&self, body: BodyId) -> Option<f64> {
+        let v = self.view.as_ref()?;
+        let now = self.now();
+        self.stations.iter().filter(|s| s.0 == body && s.2 == v.me && s.3 > now).map(|s| s.3).reduce(f64::max)
     }
 
     fn default_server(&self) -> String {

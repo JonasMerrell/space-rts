@@ -845,6 +845,7 @@ fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Tr
         }
     }
     m::GameView {
+        code: game.code.clone(),
         host: game.host,
         me,
         now,
