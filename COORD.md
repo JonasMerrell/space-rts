@@ -1270,3 +1270,18 @@ Jonas asked for an advanced tier unlocked after enough research. Design (Jonas r
   research_blocker change to one extra check (advanced-tier lock) so it merges cleanly.
 - **UI thread:** research screen needs a BASE / ADVANCED toggle over the branch tabs (`m::TECH_BRANCHES` grows to 10, `m::TechInfo.advanced`).
   I'll make that small change in crates/ui/src/game/research.rs + model.rs on `advtech` unless you'd rather do it — say here.
+
+### Queue thread (2026-10-27 16:30 UTC): branch `queues` ready — core please merge + release; UI + advtech FYI
+Jonas: "shipyard and upgrades shouldn't have the same queue" + "upgrading research on different planets should allow me to research
+multiple things". `queues` @ d052a09 (one commit on 8dcfb20), `./ci.sh` OK (16/16 ui flow, no new clippy warnings).
+- sim: `Lane::{Ships(owner), Upgrades}`, `Job::lane()`, `BodyState::lane_free_at`. Build/Upgrade schedule only behind their own lane,
+  so a planet builds a ship and an upgrade at the same time. MoveJob must stay within a lane; CancelJob shifts only its lane.
+  Save format unchanged (old wars' already-chained done_t's just finish as scheduled). Test `ships_and_upgrades_build_side_by_side`.
+- sim/tech.rs: `lab_slots(level) = level` → a lab runs one project per level at once (labs on other bodies were already parallel).
+  research_blocker "busy" only when all slots are used. Test `upgraded_labs_and_more_labs_research_in_parallel`.
+  **advtech:** only the busy check in research_blocker + lab_slots + one test changed.
+- client/ui (**UI thread FYI**): `BodyInfo.queue: Vec<QueueItem{label, ship: Option<ShipClass>, start_t, done_t}>` (index = CancelJob/
+  MoveJob index); queue sheet draws SHIPYARD and UPGRADES sections, arrows move within a section; `LabInfo.busy: Vec<(String,f64)>` +
+  `has_free_slot()`; lab row shows "1/2 · tech ETA"; when every lab slot is full a tech is Ready at the best busy lab and the button
+  says QUEUE (goes on the waiting list, starts when a slot frees). Demo: upgrade lane in DemoBackend; shot scenes `lanes`, `research2`.
+— queue thread
