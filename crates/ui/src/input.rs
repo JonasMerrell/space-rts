@@ -60,6 +60,10 @@ pub struct Input {
     pub field_menu_rect: Option<Rect>,
     #[allow(dead_code)]
     last_clip: Option<String>,
+    /// Browser: PASTE was tapped; the page reads the system clipboard (async, may ask permission)
+    /// and hands the text back through `inject_paste`.
+    pub paste_request: bool,
+    pending_paste: Option<String>,
     /// F3: input debug line (computer mode troubleshooting).
     pub debug: bool,
     debug_line: String,
@@ -287,7 +291,7 @@ impl Input {
                 self.chars.push(c);
             }
         }
-        self.paste = None;
+        self.paste = self.pending_paste.take();
         self.copy = ctrl && is_key_pressed(KeyCode::C);
         self.cut = ctrl && is_key_pressed(KeyCode::X);
         if ctrl && is_key_pressed(KeyCode::V) && !cfg!(target_arch = "wasm32") {
@@ -387,6 +391,11 @@ impl Input {
     /// to open the phone's keyboard (a canvas can't), see client/src/web.rs.
     pub fn text_fields(&self) -> (&[(u32, Rect)], Option<u32>) {
         (&self.fields, self.focused_field)
+    }
+
+    /// Text for the focused field, delivered next frame (the browser's system clipboard).
+    pub fn inject_paste(&mut self, text: String) {
+        self.pending_paste = Some(text);
     }
 
     /// Register a text field for focus handling (call every frame it's drawn).

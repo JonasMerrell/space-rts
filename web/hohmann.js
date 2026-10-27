@@ -255,6 +255,23 @@
             // Not right after our tap: the game may only see it a frame or two later.
             if (focused < 0 && document.activeElement === kbd && performance.now() - focusedAt > 600) kbd.blur();
         };
+        // PASTE in a field's menu: read the system clipboard (asks permission the first time)
+        env.hr_paste = () => {
+            if (!navigator.clipboard || !navigator.clipboard.readText) return;
+            navigator.clipboard.readText().then((t) => {
+                if (!t) return;
+                const bytes = enc.encode(t);
+                const ptr = wasm_exports.allocate_vec_u8(bytes.length);
+                mem().set(bytes, ptr);
+                wasm_exports.hohmann_paste(ptr, bytes.length);
+            }).catch(() => {});
+        };
+        // COPY: miniquad only keeps the text for a Ctrl+C; also put it on the system clipboard
+        const setClipboard = env.sapp_set_clipboard;
+        env.sapp_set_clipboard = (ptr, len) => {
+            setClipboard(ptr, len);
+            if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(str(ptr, len)).catch(() => {});
+        };
         env.hr_notify = (on) => {
             notifyOn = on !== 0;
             if (notifyOn) askPermission();
