@@ -65,12 +65,23 @@ fn think(g: &mut Game, me: PlayerId, d: Difficulty) {
             break;
         }
     }
+    // hard bots push their lab to level 3 for the advanced tier
+    if d == Difficulty::Hard && g.bodies[home.0 as usize].queue.is_empty() && g.bodies[home.0 as usize].level(Upgrade::Research) < 3 {
+        let _ = g.apply(me, Command::Upgrade { body: home, upgrade: Upgrade::Research });
+    }
     // research: industry and weapons first, scanning last; easy bots don't research
     if d != Difficulty::Easy {
         let order = [Branch::Industry, Branch::Weapons, Branch::Defense, Branch::Engines, Branch::Scanning];
         let next = (1..=4u8)
             .flat_map(|tier| order.iter().flat_map(move |&b| Tech::ALL.into_iter().filter(move |t| t.branch() == b && t.tier() == tier)))
             .find(|&t| g.research_blocker(me, home, t).is_none());
+        // then the advanced tier (wars that have it): defenses and sensors before weapons
+        let adv = [Branch::Bastion, Branch::Sight, Branch::Strike, Branch::Transit, Branch::Shadow];
+        let next = next.or_else(|| {
+            (1..=3u8)
+                .flat_map(|tier| adv.iter().flat_map(move |&b| Tech::ADVANCED.into_iter().filter(move |t| t.branch() == b && t.tier() == tier)))
+                .find(|&t| g.research_blocker(me, home, t).is_none())
+        });
         if let Some(t) = next {
             let _ = g.apply(me, Command::Research { body: home, tech: t });
         }
@@ -86,11 +97,23 @@ fn think(g: &mut Game, me: PlayerId, d: Difficulty) {
     }
     // stations at home: sensors and fuel first, guns once researched
     if g.constructors_at(me, home) > 0 && !g.stations.iter().any(|s| s.owner == me && s.building()) {
-        for kind in [StationKind::Telescope, StationKind::FuelDepot, StationKind::Defense, StationKind::Shipyard] {
+        for kind in [
+            StationKind::Telescope,
+            StationKind::FuelDepot,
+            StationKind::Defense,
+            StationKind::Shipyard,
+            StationKind::Interdiction,
+            StationKind::Gravimetric,
+            StationKind::LaserBattery,
+        ] {
             if g.station_blocker(me, home, kind).is_none() && g.apply(me, Command::BuildStation { body: home, kind }).is_ok() {
                 break;
             }
         }
+    }
+    // mine the home orbit once researched
+    if g.mines_at(me, home) == 0 && g.mines_blocker(me, home).is_none() {
+        let _ = g.apply(me, Command::LayMines { body: home });
     }
     // expansion / attack: idle armed ships at home go out in squads
     let idle: Vec<_> = g

@@ -57,7 +57,8 @@ fn big_ships_are_seen_farther_than_small_ones() {
     assert!(!detects(&s, v2(210_000.0, 0.0), sig(ShipClass::Dreadnought)).0);
     assert!(!detects(&s, v2(60_000.0, 0.0), sig(ShipClass::Scout)).0, "scout (sig 0.3) at 0.6 R");
     assert!(detects(&s, v2(50_000.0, 0.0), sig(ShipClass::Scout)).0);
-    let mut by_sig = ShipClass::ALL.to_vec();
+    // crewed hulls (ordnance is smaller still)
+    let mut by_sig: Vec<ShipClass> = ShipClass::ALL.into_iter().filter(|c| !sim::ordnance::is_ordnance(*c)).collect();
     by_sig.sort_by(|a, b| sig(*a).total_cmp(&sig(*b)));
     assert_eq!(by_sig.first(), Some(&ShipClass::Scout));
     assert_eq!(by_sig.last(), Some(&ShipClass::Dreadnought));
