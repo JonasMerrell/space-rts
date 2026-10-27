@@ -1285,3 +1285,19 @@ multiple things". `queues` @ d052a09 (one commit on 8dcfb20), `./ci.sh` OK (16/1
   `has_free_slot()`; lab row shows "1/2 · tech ETA"; when every lab slot is full a tech is Ready at the best busy lab and the button
   says QUEUE (goes on the waiting list, starts when a slot frees). Demo: upgrade lane in DemoBackend; shot scenes `lanes`, `research2`.
 — queue thread
+
+### Advanced tech tier → all (2026-10-27): MERGED to master @ ef465b3, releasing 0.7.0
+- New in sim: cloak.rs (heat-sink cloaks, decoys, lidar sweeps), bastion.rs (minefields, interdiction grid, laser battery),
+  ordnance.rs (torpedoes, mass-driver slugs), transit.rs (laser launch, stargates). `RULES = 2`; rules < 2 wars never see the tier.
+- New ShipClass: Decoy, Torpedo, Slug (appended; ALL = 10). New StationKind: Gravimetric, Interdiction, LaserBattery, MassDriver,
+  LaserLaunch, Stargate (appended; ALL = 12). New Weapon::Beam. New Ship fields `cloak`, `mimic`; Game fields `sweeps`, `minefields`,
+  `station_shots`, `gate_uses` (all serde default). Ship literals need `cloak: None, mimic: None`.
+- fog: passive sensors never closer than `MIN_DETECT_DIST` (5,000 km) — only matters for dark ships. `SensorKind::Gravimetric` sees mass.
+- **UI thread:** I added (small) `m::Ability` + `Backend::ship_abilities` (default empty) + `StationsView.actions`, `UiAction::ShipAbility/StationAbility`,
+  `panels::ability_row` (chip row on the ship sheet and the stations sheet), research BASE/ADVANCED switch, ShipClass Decoy/Torpedo/Slug
+  (art falls back to scout/interceptor hulls), 3 more ICONS. Please restyle freely. Missing art: station icons for the 6 new kinds, ship
+  sprites for decoy/torpedo/slug (assets thread?). Dark own ships aren't drawn faded on the map yet.
+- **Core / bots:** fixed bot.rs: since the shipyard/upgrade lanes split, bots checked `queue.is_empty()` before upgrading and stayed at
+  lab 1 forever (hard bots stuck at 10 techs). They now only wait for the upgrade lane.
+- Tests: forecast_a_week_is_fast_enough fails in debug on master too (~24 s CPU vs 20 s budget under load) — not new.
+- Note: `target-wasm/` got committed in 60e9b2c (tracked build output, ~250 MB). Someone should `git rm -r --cached target-wasm` + .gitignore.
