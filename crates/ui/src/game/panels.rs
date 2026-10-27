@@ -159,17 +159,57 @@ fn game_menu(g: &mut GameScreen, inp: &mut Input, view: &GameView, at: Rect) {
 // ---------------------------------------------------------------- Scrubber
 
 /// RE-CENTRE pill under the HUD when the camera stopped following the selection.
-pub fn recenter_button(g: &mut GameScreen, inp: &mut Input) {
-    if g.follow || g.selected.is_none() {
-        return;
-    }
-    let label = "RE-CENTRE";
-    let w = measure(label, FontKind::Title, 14.0).x + 28.0 * s();
-    // top left under the clock: the bottom is usually covered by the selection's sheet
-    let r = Rect::new(margin(), hud_bottom() + 6.0 * s(), w, 32.0 * s());
-    if widgets::button(inp, r, label, Style::Secondary) {
+/// Camera pills under the HUD (top left): RE-CENTRE when the camera stopped following the
+/// selection, ZOOM TO when a body is selected, SYSTEM VIEW when zoomed in past the whole system.
+pub fn camera_buttons(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView) {
+    let Some(cam) = g.cam else { return };
+    let fit = map::Camera::fit(view);
+    let mut x = margin();
+    let y = hud_bottom() + 6.0 * s();
+    let mut pill = |inp: &mut Input, label: &str| {
+        let w = measure(label, FontKind::Title, 14.0).x + 28.0 * s();
+        let r = Rect::new(x, y, w, 32.0 * s());
+        x += w + 8.0 * s();
+        widgets::button(inp, r, label, Style::Secondary)
+    };
+    if !g.follow && g.selected.is_some() && pill(inp, "RE-CENTRE") {
         g.follow = true;
+        g.system_view = false;
     }
+    if let Some(Focus::Body(id)) = g.selected {
+        if let Some(b) = view.body(id) {
+            let goal = zoom_to_body(view, b);
+            // only offer it when it would actually zoom (not already about there)
+            if (cam.zoom / goal - 1.0).abs() > 0.15 && pill(inp, &format!("ZOOM TO {}", b.name.to_uppercase())) {
+                g.zoom_goal = Some(goal);
+                g.follow = true;
+                g.system_view = false;
+                art::sfx("menu_select");
+            }
+        }
+    }
+    if cam.zoom > fit.zoom * 1.6 && pill(inp, "SYSTEM VIEW") {
+        g.zoom_goal = Some(fit.zoom);
+        g.system_view = true;
+        g.follow = false;
+        art::sfx("menu_select");
+    }
+    let _ = be;
+}
+
+/// px per km that frames `b` with its moons (or its sphere of influence) in the free map area.
+fn zoom_to_body(view: &GameView, b: &Body) -> f64 {
+    let moons = view
+        .bodies
+        .iter()
+        .filter(|m| m.parent == Some(b.id))
+        .flat_map(|m| m.orbit_path.iter())
+        .map(|p| p[0].hypot(p[1]))
+        .fold(0.0f64, f64::max);
+    let reach = if moons > 0.0 { moons * 1.25 } else { b.soi.max(b.radius * 20.0) * 0.8 };
+    // room: the map band not covered by panels (phone: above the bottom sheet; computer: left of the side panel)
+    let room = if wide() { (screen_width() - side_w()).min(screen_height()) } else { screen_width().min(screen_height() * 0.5) };
+    (room as f64 * 0.42) / reach.max(1.0)
 }
 
 pub fn scrubber(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView) {
