@@ -185,10 +185,28 @@ pub fn draw_labels(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64) {
     }
 }
 
+thread_local! {
+    static ENEMY_PATHS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+/// Map layer switch (game menu): draw other players' predicted courses. The client may persist it.
+pub fn enemy_paths() -> bool {
+    ENEMY_PATHS.with(|c| c.get())
+}
+
+pub fn set_enemy_paths(on: bool) {
+    ENEMY_PATHS.with(|c| c.set(on));
+}
+
 pub fn draw_trajectories(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64, highlight: Option<ShipId>) {
+    let show_enemy = enemy_paths();
     for sh in &view.ships {
         let Some(tr) = &sh.trajectory else { continue };
         let mine = sh.owner == view.me;
+        // hidden enemy courses still show for the one you've selected
+        if !mine && !show_enemy && highlight != Some(sh.id) {
+            continue;
+        }
         let (l, _) = team(view.color_of(Some(sh.owner)));
         let (past, future): (Vec<&(f64, [f64; 2])>, Vec<_>) = tr.points.iter().partition(|p| p.0 < t);
         let past: Vec<Vec2> = past.iter().map(|p| cam.to_screen(p.1)).collect();

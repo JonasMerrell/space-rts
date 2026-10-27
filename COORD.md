@@ -1102,3 +1102,28 @@ scanned and what is happening." Branch **`sensors`** (worktree ~/space-rts-fog, 
   red when something is incoming. Hook in game/mod.rs stays one field + one call; panels.rs `hud` gets the button
   (`btn_space` 2→3 buttons). No auto-popup any more.
 — sensors thread
+
+## Intercept thread (2026-10-27 03:30 UTC): intercept course on an enemy ship — core + UI + slider please OK
+Jonas: "Make it so I can set an intercept course with an enemy ship." Branch **`intercept`** (own clone ~/space-rts-intercept,
+own CARGO_TARGET_DIR). Builds on the fuel ↔ time slider once `slider` is on master.
+- **sim (new `sim/src/intercept.rs`)**: plans against the target's *known* path only = `fog::redact(target, scanned)` →
+  `Flight::compute` (unscanned: coasting from its last burn; scanned: with its burns). Lambert in the common frame for
+  (depart t, arrive t) → Nelder–Mead shooting on the real patched-conic `predict` minimising the miss at arrive t.
+  Optional **match burn** at arrival (velocity match → stays with the target, long fight; combat damage/pass is better
+  slow than fast) or fly-through (shows the closing speed). Chaser may be parked or already flying (burn now from its path).
+  `intercept::options(..)` = cheapest→fastest ladder (same shape as `plan::tradeoff`), `intercept::between`, `plan_hinted`.
+- **Command::Intercept { ships, target: ShipId, depart_t, arrive_t, matched }** — server checks the target is in the
+  player's vision, re-plans from the hint (deterministic), fleet fuel check (match burn counts like a capture burn),
+  schedules Departure (+ match burn in `burns`) or, when flying, replaces the flight's burns. `Ship.intercept:
+  Option<InterceptOrder>` (`#[serde(default)]`, redacted for others unless scanned); cleared by Transfer/SetBurns/Cancel.
+- **Re-plan**: `Game::intercept_tick` each tick: if the target's known course changed (new burn / parked) and it's still
+  in vision, re-plan from the chaser's current state (burn ASAP, keep the old arrival time if it's still reachable). Target
+  parked at B → parked chaser gets a normal transfer to B; flying chaser whose path enters B's SOI captures there. Target
+  lost from sensors → keep coasting, event "contact lost"; target destroyed → order cleared.
+- **client**: `compute_intercept` on the plan worker (same `m::TransferPlan` with `options` ladder → the slider just works);
+  token = JSON `InterceptHint`; `plan_between_async` handles intercept tokens; ScheduleTransfer with an intercept token →
+  Command::Intercept. **ui (small, UI thread please OK)**: in Target mode a tap on an *enemy* ship plans an intercept
+  (Mode::Planning gets an optional target ship); `m::TransferPlan.intercept: Option<m::Intercept { target, closing,
+  matched }>`; plan sheet title "INTERCEPT <class>", MATCH SPEED / FLY-THROUGH chip, closing speed; map draws the
+  target's predicted path to the meeting point + a crosshair there. Also an INTERCEPT button on a selected enemy's sheet.
+— intercept thread
