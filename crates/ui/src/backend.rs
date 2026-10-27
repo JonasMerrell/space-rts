@@ -38,6 +38,8 @@ pub enum UiAction {
     CancelFlight { ship: ShipId },
     Chat(String),
     BackToMenu,
+    /// Build/Upgrade/Research/BuildStation start now when affordable, otherwise they wait for funds
+    /// and start by themselves once income covers them.
     Build { body: BodyId, class: ShipClass },
     /// `upgrade` is one of `model::UPGRADES`.
     Upgrade { body: BodyId, upgrade: String },
@@ -56,6 +58,10 @@ pub enum UiAction {
     CancelJob { body: BodyId, index: usize },
     /// Move queue item `from` to position `to` (indices into `BodyInfo.queue`).
     MoveJob { body: BodyId, from: usize, to: usize },
+    /// Drop an item from the waiting-for-funds list (`WaitingItem::id`).
+    Unwait { id: u32 },
+    /// Move a waiting item to position `to` of the whole waiting list (`WaitingItem::index`).
+    MoveWait { id: u32, to: usize },
     /// Start `tech` (a `TechInfo::id`) at a lab body.
     Research { body: BodyId, tech: String },
     /// `kind` is one of `model::STATION_KINDS`.

@@ -198,13 +198,11 @@ fn tech_card(g: &mut GameScreen, inp: &mut Input, view: &GameView, t: &TechInfo,
         }
         TechState::Ready { lab } => {
             let br = Rect::new(rc.x, rc.center().y - 20.0 * s(), rc.w, 40.0 * s());
-            if widgets::button(inp, br, "RESEARCH", if ok { Style::Primary } else { Style::Ghost }) {
-                if ok {
-                    art::sfx("purchase");
-                    g.emit(UiAction::Research { body: *lab, tech: t.id.clone() });
-                } else {
-                    art::sfx("ui_error");
-                    g.hint = Some(("Not enough matter or energy".into(), get_time()));
+            if widgets::button(inp, br, if ok { "RESEARCH" } else { "QUEUE" }, if ok { Style::Primary } else { Style::Secondary }) {
+                art::sfx(if ok { "purchase" } else { "menu_select" });
+                g.emit(UiAction::Research { body: *lab, tech: t.id.clone() });
+                if !ok {
+                    g.hint = Some(("Queued: starts when you can afford it".into(), get_time()));
                 }
             }
             let lab_name = view.body(*lab).map(|b| format!("at {}", b.name)).unwrap_or_default();
@@ -313,12 +311,15 @@ pub fn stations_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, vie
         let sub = wrap(&sub, FontKind::Body, 11.0, sub_w).into_iter().next().unwrap_or_default();
         text(&sub, cr.x + 40.0 * s(), cr.y + cr.h * 0.7, 11.0, if blocked || ok { MUTED } else { DANGER }, FontKind::Body, Align::Left);
         let br = Rect::new(cr.x + cr.w - 44.0 * s(), cr.y + (cr.h - 32.0 * s()) / 2.0, 36.0 * s(), 32.0 * s());
-        if !blocked && widgets::button(inp, br, "+", if ok { Style::Primary } else { Style::Ghost }) {
-            if ok {
-                art::sfx("purchase");
-                g.emit(UiAction::BuildStation { body, kind: o.kind.clone() });
-            } else {
-                art::sfx("ui_error");
+        // no construction ship there yet / can't afford it yet: queue it, it starts once both are true
+        let later = !ok || blocked;
+        if (!blocked || o.queueable)
+            && widgets::button(inp, br, "+", if later { Style::Secondary } else { Style::Primary })
+        {
+            art::sfx(if later { "menu_select" } else { "purchase" });
+            g.emit(UiAction::BuildStation { body, kind: o.kind.clone() });
+            if later {
+                g.hint = Some(("Queued: starts once it can".into(), get_time()));
             }
         }
         if inp.tapped(cr) {

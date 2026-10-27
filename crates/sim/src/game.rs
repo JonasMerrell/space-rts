@@ -449,6 +449,11 @@ pub struct Player {
     /// fog of war: what this player detects right now (recomputed every tick, so not saved or sent)
     #[serde(skip)]
     pub vision: crate::fog::Vision,
+    /// builds/upgrades/stations/research queued before they could be paid for (see waitlist.rs)
+    #[serde(default)]
+    pub waiting: Vec<crate::waitlist::Waiting>,
+    #[serde(default)]
+    pub next_wait: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -573,6 +578,12 @@ pub enum Command {
     MoveJob { body: BodyId, from: usize, to: usize },
     /// Host only: game seconds per real second from now on.
     SetSpeed { speed: f64 },
+    /// Queue a build/upgrade/station/research that starts by itself once it's affordable (now, if it is).
+    Wait { wish: crate::waitlist::Wish },
+    /// Drop an item from the waiting-for-funds list.
+    Unwait { id: u32 },
+    /// Move a waiting item to position `to` of the list (earlier = funded first).
+    MoveWait { id: u32, to: usize },
 }
 
 pub const TICK: f64 = 60.0;
@@ -649,6 +660,8 @@ impl Game {
             sensor_log: vec![],
             contacts: vec![],
             vision: Default::default(),
+            waiting: vec![],
+            next_wait: 0,
         });
         self.preview_homes();
         Ok(id)
@@ -846,6 +859,9 @@ impl Game {
         }
         match cmd {
             Command::Fleet(c) => self.fleet_command(player, c),
+            Command::Wait { wish } => self.wait_for_funds(player, wish),
+            Command::Unwait { id } => self.unwait(player, id),
+            Command::MoveWait { id, to } => self.move_wait(player, id, to),
             Command::Chat { text } => {
                 let text: String = text.chars().take(500).collect();
                 self.chat.push(ChatMsg { from: player, t: self.t, text });
@@ -1154,6 +1170,7 @@ impl Game {
             if step_end >= next_tick {
                 self.last_tick = next_tick;
                 self.economy(TICK);
+                self.fund_waiting();
                 self.jobs();
                 self.research_tick();
                 self.stations_tick(TICK);

@@ -11,6 +11,7 @@ use sim::station::StationKind;
 use sim::tech::{Branch, Tech};
 use sim::system::{BodyKind as SimKind, SystemSize};
 use sim::traj::{Burn, Trajectory as SimTraj};
+use sim::waitlist::Wish;
 use sim::{BodyId as SimBody, V2};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -166,6 +167,18 @@ impl ClientBackend {
             // queued until we're back: taps made while reconnecting still go through
             _ => self.pending.borrow_mut().push(msg),
         }
+    }
+
+    /// Build/upgrade/station/research: start it now if we can, otherwise put it on the
+    /// waiting-for-funds list (it starts by itself once income covers it).
+    fn send_wish(&self, code: String, wish: Wish) {
+        let now = self.game.as_ref().is_some_and(|g| {
+            let p = &g.players[self.me as usize];
+            let (m, e) = g.wish_cost(self.me, wish, 0);
+            g.wish_blocker(self.me, wish).is_none() && p.matter >= m && p.energy >= e
+        });
+        let cmd = if now { wish.command() } else { Command::Wait { wish } };
+        self.send(ClientMsg::Cmd { code, cmd });
     }
 
     /// Should we be holding a connection open (logged in, or resuming a saved session)?
@@ -1050,13 +1063,23 @@ impl Backend for ClientBackend {
             }
             UiAction::Build { body, class } => {
                 if let Some(code) = code {
-                    self.send(ClientMsg::Cmd { code, cmd: Command::Build { body: SimBody(body), class: sim_class(class) } });
+                    self.send_wish(code, Wish::Build { body: SimBody(body), class: sim_class(class) });
                 }
             }
             UiAction::Upgrade { body, upgrade } => match (code, upgrade_by_name(&upgrade)) {
-                (Some(code), Some(upgrade)) => self.send(ClientMsg::Cmd { code, cmd: Command::Upgrade { body: SimBody(body), upgrade } }),
+                (Some(code), Some(upgrade)) => self.send_wish(code, Wish::Upgrade { body: SimBody(body), upgrade }),
                 _ => self.notice(m::NoticeKind::Bad, "Unknown upgrade", &upgrade, None),
             },
+            UiAction::Unwait { id } => {
+                if let Some(code) = code {
+                    self.send(ClientMsg::Cmd { code, cmd: Command::Unwait { id } });
+                }
+            }
+            UiAction::MoveWait { id, to } => {
+                if let Some(code) = code {
+                    self.send(ClientMsg::Cmd { code, cmd: Command::MoveWait { id, to } });
+                }
+            }
             UiAction::SetOrder { ship, retreat } => {
                 if let Some(code) = code {
                     let order = if retreat { g::StandingOrder::Retreat } else { g::StandingOrder::Hold };
@@ -1074,7 +1097,7 @@ impl Backend for ClientBackend {
                 }
             }
             UiAction::Research { body, tech } => match (code, tech_by_name(&tech)) {
-                (Some(code), Some(tech)) => self.send(ClientMsg::Cmd { code, cmd: Command::Research { body: SimBody(body), tech } }),
+                (Some(code), Some(tech)) => self.send_wish(code, Wish::Research { body: SimBody(body), tech }),
                 _ => self.notice(m::NoticeKind::Bad, "Unknown tech", &tech, None),
             },
             UiAction::FormFleet { .. }
@@ -1088,7 +1111,7 @@ impl Backend for ClientBackend {
                 }
             }
             UiAction::BuildStation { body, kind } => match (code, station_by_name(&kind)) {
-                (Some(code), Some(kind)) => self.send(ClientMsg::Cmd { code, cmd: Command::BuildStation { body: SimBody(body), kind } }),
+                (Some(code), Some(kind)) => self.send_wish(code, Wish::Station { body: SimBody(body), kind }),
                 _ => self.notice(m::NoticeKind::Bad, "Unknown station", &kind, None),
             },
         }
@@ -1317,7 +1340,12 @@ impl Backend for ClientBackend {
         let b = SimBody(id);
         let st = g.bodies.get(id as usize)?;
         let mine = st.owner == Some(self.me);
-        let pending = |u: g::Upgrade| st.queue.iter().filter(|j| matches!(j.kind, g::JobKind::Upgrade(x) if x == u)).count() as u8;
+        let waiting = g.players.get(self.me as usize).map(|p| p.waiting.as_slice()).unwrap_or(&[]);
+        // upgrades already queued or waiting for funds raise the level the next one buys
+        let pending = |u: g::Upgrade| {
+            let w = Wish::Upgrade { body: b, upgrade: u };
+            (st.queue.iter().filter(|j| matches!(j.kind, g::JobKind::Upgrade(x) if x == u)).count() + waiting.iter().filter(|x| x.wish == w).count()) as u8
+        };
         let upgrades = g::Upgrade::ALL
             .iter()
             .map(|&u| {
@@ -1358,7 +1386,23 @@ impl Backend for ClientBackend {
             })
             .collect();
         let (matter_rate, energy_rate, fuel_rate) = if mine { g.production(b) } else { (0.0, 0.0, 0.0) };
-        Some(m::BodyInfo { upgrades, buildable, queue, fuel: st.fuel, power: g.power_at(b), matter_rate, energy_rate, fuel_rate })
+        let etas = g.waiting_eta(self.me);
+        let waiting = waiting
+            .iter()
+            .zip(&etas)
+            .enumerate()
+            .filter(|(_, (w, _))| w.wish.body() == b)
+            .map(|(index, (w, e))| m::WaitingItem {
+                id: w.id,
+                label: w.wish.label(),
+                cost: m::Cost { matter: e.matter, energy: e.energy, seconds: 0.0 },
+                start_t: e.start_t,
+                blocked: e.blocked.clone(),
+                index,
+                of: etas.len(),
+            })
+            .collect();
+        Some(m::BodyInfo { upgrades, buildable, queue, waiting, fuel: st.fuel, power: g.power_at(b), matter_rate, energy_rate, fuel_rate })
     }
 
     fn research(&self) -> Option<m::ResearchView> {
@@ -1450,6 +1494,7 @@ impl Backend for ClientBackend {
                     desc: k.describe().to_string(),
                     cost: m::Cost { matter, energy, seconds },
                     blocker: g.station_blocker(me, b, k),
+                    queueable: g.wish_obsolete(me, Wish::Station { body: b, kind: k }, 0).is_none(),
                 }
             })
             .collect();

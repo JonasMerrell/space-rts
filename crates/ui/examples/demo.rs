@@ -140,6 +140,25 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                     g.selected = Some(Focus::Body(2));
                     g.detail = Some(ui::game::details::Detail::Queue { body: 2 });
                 }
+                "waiting" | "waiting_yard" => {
+                    // broke after two builds: the rest waits for funds
+                    for c in [ShipClass::Gunship, ShipClass::Scout] {
+                        be.act(UiAction::Build { body: 2, class: c });
+                    }
+                    if let Some(vw) = be.view.as_mut() {
+                        vw.resources.matter = 40.0;
+                        vw.resources.energy = 25.0;
+                    }
+                    be.act(UiAction::Build { body: 2, class: ShipClass::Bomber });
+                    be.act(UiAction::Upgrade { body: 2, upgrade: "Mining".into() });
+                    be.act(UiAction::BuildStation { body: 2, kind: "Telescope".into() });
+                    g.selected = Some(Focus::Body(2));
+                    if scene == "waiting" {
+                        g.detail = Some(ui::game::details::Detail::Queue { body: 2 });
+                    } else {
+                        g.body_tab = 1;
+                    }
+                }
                 "status" => {
                     // departing (Red Fang), burn ahead (Hammerhead), selected = Hammerhead
                     if let Some(p) = be.plan_transfer(1, 4, v.now) {

@@ -503,6 +503,7 @@ fn blank_player(pl: &mut crate::game::Player) {
     pl.sensor_log.clear();
     pl.last_active = 0.0;
     pl.research.clear();
+    pl.waiting.clear();
     pl.techs.clear();
     pl.vision = Vision::default();
     pl.bot_avoid.clear();

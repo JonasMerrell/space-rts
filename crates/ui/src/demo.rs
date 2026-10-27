@@ -49,6 +49,8 @@ pub struct DemoBackend {
     /// Upgrade levels per body (index = model::UPGRADES).
     levels: std::collections::HashMap<BodyId, [u8; 8]>,
     queue: Vec<(BodyId, String, f64, ShipClass)>,
+    /// waiting for funds: (id, body, label, cost); the demo never funds them
+    waiting: Vec<(u32, BodyId, String, Cost)>,
     user: String,
     games: Vec<GameSummary>,
     /// Research: indices into DEMO_TECHS done, and (tech, lab, done_t) running.
@@ -80,6 +82,7 @@ impl DemoBackend {
             lobby: None,
             levels: std::collections::HashMap::new(),
             queue: vec![],
+            waiting: vec![],
             user: String::new(),
             techs_done: vec![0, 4, 8, 9, 16],
             research_run: vec![],
@@ -454,7 +457,31 @@ impl Backend for DemoBackend {
     }
 
     fn act(&mut self, action: UiAction) {
+        // can't afford it: it waits for funds
+        let short = |v: &Option<GameView>, c: &Cost| v.as_ref().is_some_and(|v| v.resources.matter < c.matter || v.resources.energy < c.energy);
+        let wish = match &action {
+            UiAction::Build { body, class } => Some((*body, class.label().to_string(), ship_cost(*class))),
+            UiAction::Upgrade { body, upgrade } => UPGRADES.iter().position(|u| u == upgrade).map(|i| {
+                let lv = self.levels.get(body).map(|l| l[i]).unwrap_or(1);
+                (*body, upgrade.clone(), upgrade_cost(lv + 1))
+            }),
+            UiAction::Research { body, tech } => DEMO_TECHS.iter().position(|t| t.0 == tech).map(|i| (*body, tech.clone(), demo_tech_cost(i))),
+            UiAction::BuildStation { body, kind } => STATION_KINDS.iter().position(|k| k == kind).map(|i| (*body, kind.clone(), demo_station_cost(i))),
+            _ => None,
+        };
+        if let Some((body, label, cost)) = wish.filter(|w| short(&self.view, &w.2)) {
+            let id = self.waiting.iter().map(|w| w.0 + 1).max().unwrap_or(0);
+            self.waiting.push((id, body, label, cost));
+            return;
+        }
         match action {
+            UiAction::Unwait { id } => self.waiting.retain(|w| w.0 != id),
+            UiAction::MoveWait { id, to } => {
+                if let Some(i) = self.waiting.iter().position(|w| w.0 == id) {
+                    let w = self.waiting.remove(i);
+                    self.waiting.insert(to.min(self.waiting.len()), w);
+                }
+            }
             UiAction::DeleteGame { .. } => self.view = None,
             UiAction::Feedback { .. } => {}
             UiAction::SensorsSeen => {
@@ -734,6 +761,21 @@ impl Backend for DemoBackend {
             upgrades,
             buildable,
             queue: self.queue.iter().filter(|q| q.0 == id).map(|q| (q.1.clone(), q.2)).collect(),
+            waiting: self
+                .waiting
+                .iter()
+                .enumerate()
+                .filter(|(_, w)| w.1 == id)
+                .map(|(index, w)| WaitingItem {
+                    id: w.0,
+                    label: w.2.clone(),
+                    cost: w.3.clone(),
+                    start_t: Some(self.now() + 3600.0 * (index + 1) as f64),
+                    blocked: None,
+                    index,
+                    of: self.waiting.len(),
+                })
+                .collect(),
             fuel: 420.0,
             power,
             matter_rate: 60.0 * (1.0 + lv[0] as f64),
@@ -818,7 +860,7 @@ impl Backend for DemoBackend {
                 } else {
                     None
                 };
-                StationOption { kind: k.to_string(), name: DEMO_STATIONS[i].0.to_string(), desc: DEMO_STATIONS[i].1.to_string(), cost: demo_station_cost(i), blocker }
+                StationOption { kind: k.to_string(), name: DEMO_STATIONS[i].0.to_string(), desc: DEMO_STATIONS[i].1.to_string(), cost: demo_station_cost(i), queueable: blocker.as_deref() != Some("already built here"), blocker }
             })
             .collect();
         Some(StationsView { here, options, present, constructors, workers })
