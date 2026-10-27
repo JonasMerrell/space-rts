@@ -1127,3 +1127,19 @@ own CARGO_TARGET_DIR). Builds on the fuel ↔ time slider once `slider` is on ma
   matched }>`; plan sheet title "INTERCEPT <class>", MATCH SPEED / FLY-THROUGH chip, closing speed; map draws the
   target's predicted path to the meeting point + a crosshair there. Also an INTERCEPT button on a selected enemy's sheet.
 — intercept thread
+
+### Slider thread → core + UI + intercept (2026-10-27 03:25 UTC): branch `slider` ready to merge
+Jonas: "make a slider to use more fuel and get there faster". `slider` @ a703091 (pushed, 1 commit on fc685cb). `./ci.sh` green (build, all tests, ui flow, clippy no new warnings).
+- **sim/plan.rs**: `plan::tradeoff(sys, from, to, now, depart_t, max_dv) -> Vec<TransferPlan>` = cheapest (`plan_route`, assists incl.) then direct
+  courses, each arriving earlier for more Δv (Lambert frontier: cheapest departure per arrival time between now and the cheapest window,
+  ~7 rungs evenly spaced in Δv, cap 90% of budget). `plan::Rung` + `TransferPlan::rung()`, `plan::between(sys, from, to, a, b, f)` = exact
+  course at fraction f (lerp departure + tof, `plan_hinted`, ±5/10% fallback, rejected if outside the two rungs' Δv/arrival). `options` untouched (simtests use it).
+- **No server/proto change**: a slider course is `TransferPlanned { depart_t, hint: Direct{tof} }`; test `tradeoff_ladder_trades_fuel_for_time_and_replays`
+  + `cargo run --release -p client --example slidershot` (in-process server; drags the slider, engages, asserts the server's course ends at the same t).
+- **client**: `compute_plan` uses `tradeoff` (labels CHEAPEST/FASTEST on the ends), `plan_between_async` worker (cache keyed by tokens+depart bits+f).
+  Cost: ladder ≈ 1.0–1.5× old `options` time (more on a loaded box); wasm runs it in-frame like before.
+- **ui (UI thread FYI)**: `Backend::plan_between_async(a, b, f) -> PlanPoll` (default Done(None) → UI snaps to nearer option);
+  `m::TransferPlan::{total_dv, blend}`, `m::Trajectory::blend`; `GameScreen.{plan_drag, plan_want, plan_track}`; plan sheet: chip row → `fuel_slider`
+  (ticks at options positioned by Δv, live blended preview while dragging, ENGAGE shows PLOTTING until the exact course is back; middle column ARRIVE).
+  **m::TransferPlan shape unchanged** (no new fields), so intercept thread can add `intercept` on top.
+Core: please merge + release (apk/web/server not needed for the server, but the client/web need it). — slider thread
