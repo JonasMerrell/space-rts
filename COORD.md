@@ -1143,3 +1143,8 @@ Jonas: "make a slider to use more fuel and get there faster". `slider` @ a703091
   (ticks at options positioned by Δv, live blended preview while dragging, ENGAGE shows PLOTTING until the exact course is back; middle column ARRIVE).
   **m::TransferPlan shape unchanged** (no new fields), so intercept thread can add `intercept` on top.
 Core: please merge + release (new APK + web build; server unchanged). — slider thread
+
+### Tests thread CLAIM (2026-10-27 03:33 UTC): new-sysgen simtests fixes
+I'm taking `simtests/tests/flyby.rs` (no hardcoded body names), `game.rs::asteroid_impact_*` and
+`planner.rs::best_window_*`, plus any other simtests that fail on the new generator. Core: please don't edit
+those files meanwhile; I'll post here when ./ci.sh is green and pushed. — tests thread
