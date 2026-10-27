@@ -109,8 +109,9 @@ pub struct BodyInfo {
     pub upgrades: Vec<UpgradeInfo>,
     /// Ship classes this body's shipyard can build now, with costs.
     pub buildable: Vec<(ShipClass, Cost)>,
-    /// (label, finishes at t).
-    pub queue: Vec<(String, f64)>,
+    /// Build queue in order; the shipyard lane and the upgrade lane run side by side.
+    /// Index into this = index for `UiAction::CancelJob` / `MoveJob`.
+    pub queue: Vec<QueueItem>,
     /// Ours waiting for funds at this body (they start by themselves once income covers them).
     pub waiting: Vec<WaitingItem>,
     pub fuel: f64,
@@ -120,6 +121,22 @@ pub struct BodyInfo {
     pub matter_rate: f64,
     pub energy_rate: f64,
     pub fuel_rate: f64,
+}
+
+#[derive(Clone, Debug)]
+pub struct QueueItem {
+    pub label: String,
+    /// Some for ships (shipyard lane), None for upgrades (upgrade lane).
+    pub ship: Option<ShipClass>,
+    /// When it starts (started, for the running one) and finishes.
+    pub start_t: f64,
+    pub done_t: f64,
+}
+
+impl QueueItem {
+    pub fn upgrade(&self) -> bool {
+        self.ship.is_none()
+    }
 }
 
 /// A build/upgrade/station/research queued before we could pay for it.
@@ -571,8 +588,14 @@ pub struct LabInfo {
     pub body: BodyId,
     pub name: String,
     pub level: u8,
-    /// (tech name, finishes at t)
-    pub busy: Option<(String, f64)>,
+    /// Projects running here: (tech name, finishes at t). A lab runs one per level at once.
+    pub busy: Vec<(String, f64)>,
+}
+
+impl LabInfo {
+    pub fn has_free_slot(&self) -> bool {
+        self.busy.len() < self.level.max(1) as usize
+    }
 }
 
 /// Everything the research screen shows (`Backend::research`).

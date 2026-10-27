@@ -153,6 +153,24 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                     g.selected = Some(Focus::Body(2));
                     g.detail = Some(ui::game::details::Detail::Queue { body: 2 });
                 }
+                "lanes" => {
+                    // shipyard and upgrades build side by side
+                    for c in [ShipClass::Gunship, ShipClass::Scout] {
+                        be.act(UiAction::Build { body: 2, class: c });
+                    }
+                    for u in ["Mining", "Solar"] {
+                        be.act(UiAction::Upgrade { body: 2, upgrade: u.into() });
+                    }
+                    g.selected = Some(Focus::Body(2));
+                    g.detail = Some(ui::game::details::Detail::Queue { body: 2 });
+                }
+                "research2" => {
+                    // a level-2 lab runs two projects; a third queues
+                    be.act(ui::UiAction::Research { body: 2, tech: "ModularYards".into() });
+                    be.act(ui::UiAction::Research { body: 2, tech: "DeepCoreMining".into() });
+                    g.research_open = true;
+                    g.research_branch = 2;
+                }
                 "waiting" | "waiting_yard" => {
                     // broke after two builds: the rest waits for funds
                     for c in [ShipClass::Gunship, ShipClass::Scout] {

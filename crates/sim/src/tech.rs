@@ -1,6 +1,7 @@
 //! The shared research tree: 5 branches × 4 tiers. Everyone researches from the same tree
 //! (factions are only aesthetic). A tech is researched at an owned body with a Research lab;
-//! each lab body runs one project at a time, separately from its ship/upgrade queue.
+//! each lab body runs one project per lab level at a time (Jonas: more research at once as labs
+//! are upgraded; labs on different bodies run in parallel too), separately from its ship/upgrade queue.
 //! The whole tree is ~130 lab-hours, so one lab finishes it in about a week.
 //!
 //! Advanced tier (rules >= 2, Jonas 2026-10-27): 5 more branches × 3 tiers that open once
@@ -395,6 +396,11 @@ impl Tech {
     }
 }
 
+/// Projects a lab can run at once: one per level.
+pub fn lab_slots(level: u8) -> usize {
+    level.max(1) as usize
+}
+
 /// Lab speed multiplier for a research lab level.
 pub fn lab_speed(level: u8) -> f64 {
     1.0 + 0.5 * (level.max(1) as f64 - 1.0)
@@ -445,8 +451,9 @@ impl Game {
         if b.level(Upgrade::Research) < tech.min_lab() {
             return Some(format!("needs research lab level {}", tech.min_lab()));
         }
-        if pl.research.iter().any(|r| r.body == body) {
-            return Some("this lab is busy".into());
+        let slots = lab_slots(b.level(Upgrade::Research));
+        if pl.research.iter().filter(|r| r.body == body).count() >= slots {
+            return Some(if slots == 1 { "this lab is busy".into() } else { format!("all {slots} lab slots here are busy") });
         }
         None
     }
@@ -506,6 +513,23 @@ pub(crate) mod tests {
         g.players[0].matter = 1e5;
         g.players[0].energy = 1e5;
         g
+    }
+
+    #[test]
+    fn upgraded_labs_and_more_labs_research_in_parallel() {
+        let mut g = game();
+        let home = g.players[0].home.unwrap();
+        let r = |g: &mut Game, body, t| g.apply(0, Command::Research { body, tech: t });
+        g.bodies[home.0 as usize].levels[Upgrade::Research.index()] = 2;
+        r(&mut g, home, Tech::HardenedSlugs).unwrap();
+        r(&mut g, home, Tech::DeepCoreMining).unwrap();
+        let third = Tech::ALL.into_iter().find(|&t| g.research_blocker(0, home, t).is_some_and(|w| w.contains("busy"))).unwrap();
+        // a second planet with its own lab takes a third project
+        let other = (0..g.bodies.len() as u32).map(BodyId).find(|&b| b != home && g.bodies[b.0 as usize].owner.is_none() && !g.system.body(b).is_star()).unwrap();
+        g.bodies[other.0 as usize].owner = Some(0);
+        g.bodies[other.0 as usize].levels[Upgrade::Research.index()] = 1;
+        r(&mut g, other, third).unwrap();
+        assert_eq!(g.players[0].research.len(), 3);
     }
 
     #[test]

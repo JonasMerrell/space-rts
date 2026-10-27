@@ -396,6 +396,30 @@ pub struct Job {
     pub then: Option<QueuedOrder>,
 }
 
+/// A body's queue has two lanes that run side by side: ship builds (one per builder, since others
+/// can build at your shipyard station) and upgrades (Jonas: shipyard and upgrades don't share a queue).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lane {
+    Ships(PlayerId),
+    Upgrades,
+}
+
+impl Job {
+    pub fn lane(&self) -> Lane {
+        match self.kind {
+            JobKind::Ship(_) => Lane::Ships(self.owner),
+            JobKind::Upgrade(_) => Lane::Upgrades,
+        }
+    }
+}
+
+impl BodyState {
+    /// When the last job of `lane` finishes (or `now` if the lane is idle).
+    pub fn lane_free_at(&self, lane: Lane, now: f64) -> f64 {
+        self.queue.iter().filter(|j| j.lane() == lane).map(|j| j.done_t).fold(now, f64::max)
+    }
+}
+
 /// Transfer for a ship that is still in a build queue.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct QueuedOrder {
@@ -934,14 +958,14 @@ impl Game {
             Command::MoveJob { body, from, to } => {
                 let now = self.t;
                 let q = &mut self.bodies[body.0 as usize].queue;
-                if from >= q.len() || to >= q.len() || q[from].owner != player || q[to].owner != player {
-                    return Err("can only reorder your own queued jobs".into());
+                if from >= q.len() || to >= q.len() || q[from].owner != player || q[to].owner != player || q[from].lane() != q[to].lane() {
+                    return Err("can only reorder your own queued jobs within one queue".into());
                 }
-                // remaining time of each of my jobs, in the current order
-                let mine: Vec<usize> = (0..q.len()).filter(|&i| q[i].owner == player).collect();
+                let lane = q[from].lane();
+                // remaining time of each job in this lane, in the current order
                 let mut prev = now;
                 let mut dur = vec![0.0; q.len()];
-                for &i in &mine {
+                for i in (0..q.len()).filter(|&i| q[i].lane() == lane) {
                     dur[i] = (q[i].done_t - prev.max(now)).max(0.0);
                     prev = q[i].done_t;
                 }
@@ -951,7 +975,7 @@ impl Game {
                 dur.insert(to, d);
                 let mut end = now;
                 for i in 0..q.len() {
-                    if q[i].owner == player {
+                    if q[i].lane() == lane {
                         end += dur[i];
                         q[i].done_t = end;
                     }
@@ -965,11 +989,12 @@ impl Game {
                 if job.owner != player {
                     return Err("not your job".into());
                 }
-                // how long this job occupies the queue: from the previous job of the same owner (or now)
-                let start = q[..index].iter().filter(|j| j.owner == player).map(|j| j.done_t).fold(now, f64::max);
+                // how long this job occupies its lane: from the previous job in the lane (or now)
+                let lane = job.lane();
+                let start = q[..index].iter().filter(|j| j.lane() == lane).map(|j| j.done_t).fold(now, f64::max);
                 let span = (job.done_t - start).max(0.0);
                 let job = q.remove(index);
-                for j in q.iter_mut().skip(index).filter(|j| j.owner == player) {
+                for j in q.iter_mut().skip(index).filter(|j| j.lane() == lane) {
                     j.done_t -= span;
                 }
                 let (m, e) = match job.kind {
@@ -1089,7 +1114,7 @@ impl Game {
                     return Err(format!("needs {}", t.label()));
                 }
                 let b = &self.bodies[body.0 as usize];
-                let busy_until = b.queue.iter().filter(|j| j.owner == player).map(|j| j.done_t).fold(self.t, f64::max);
+                let busy_until = b.lane_free_at(Lane::Ships(player), self.t);
                 self.pay(player, st.matter, st.energy)?;
                 let speed = (1.0 + 0.5 * (yard as f64 - 1.0)) * self.mods(player).build_speed;
                 self.bodies[body.0 as usize].queue.push(Job { kind: JobKind::Ship(class), owner: player, done_t: busy_until + st.build_time / speed, then: None });
@@ -1106,7 +1131,7 @@ impl Game {
                     return Err("already at max level".into());
                 }
                 let (m, e, secs) = upgrade.cost(next);
-                let busy_until = b.queue.iter().map(|j| j.done_t).fold(self.t, f64::max);
+                let busy_until = b.lane_free_at(Lane::Upgrades, self.t);
                 self.pay(player, m, e)?;
                 self.bodies[body.0 as usize].queue.push(Job { kind: JobKind::Upgrade(upgrade), owner: player, done_t: busy_until + secs, then: None });
                 Ok(())
@@ -1818,6 +1843,29 @@ mod tests {
         let s = g.ship(gunship).unwrap();
         assert_eq!(s.parked_at(), Some(target), "{:?}", g.events.iter().rev().take(5).collect::<Vec<_>>());
         assert_eq!(g.bodies[target.0 as usize].owner, Some(0));
+    }
+
+    #[test]
+    fn ships_and_upgrades_build_side_by_side() {
+        let mut g = game();
+        let home = g.players[0].home.unwrap();
+        g.players[0].matter = 1e5;
+        g.players[0].energy = 1e5;
+        g.apply(0, Command::Build { body: home, class: ShipClass::Gunship }).unwrap();
+        g.apply(0, Command::Upgrade { body: home, upgrade: Upgrade::Mining }).unwrap();
+        g.apply(0, Command::Build { body: home, class: ShipClass::Scout }).unwrap();
+        let q = g.bodies[home.0 as usize].queue.clone();
+        let lvl = g.bodies[home.0 as usize].level(Upgrade::Mining);
+        // the upgrade doesn't wait for the gunship, and the scout doesn't wait for the upgrade
+        assert!((q[1].done_t - (g.t + Upgrade::Mining.cost(lvl + 1).2)).abs() < 1e-6);
+        assert!(q[2].done_t > q[0].done_t, "ships still queue behind ships");
+        let scout = q[2].done_t;
+        assert!(g.apply(0, Command::MoveJob { body: home, from: 1, to: 0 }).is_err(), "lanes don't mix");
+        let up = q[1].done_t;
+        g.apply(0, Command::CancelJob { body: home, index: 0 }).unwrap();
+        let q = &g.bodies[home.0 as usize].queue;
+        assert_eq!(q[0].done_t, up, "cancelling a ship doesn't move the upgrade");
+        assert!(q[1].done_t < scout, "the scout moves up");
     }
 
     #[test]

@@ -55,7 +55,9 @@ pub const MAX_WORKERS: usize = 6;
 /// Fuel a depot holds, tonnes.
 pub const DEPOT_CAP: f64 = 1500.0;
 /// Fuel a depot refines per hour (from the body's matter, paid in energy like a refinery).
-pub const DEPOT_RATE: f64 = 80.0;
+pub const DEPOT_RATE: f64 = 240.0;
+/// Fuel a depot comes online with, tonnes (so it can refuel a ship right away).
+pub const DEPOT_START: f64 = 300.0;
 /// Shipyard level a shipyard station counts as.
 pub const STATION_YARD_LEVEL: u8 = 2;
 
@@ -240,6 +242,9 @@ impl Game {
                 // finished part-way through the tick
                 st.done_t = self.t + st.work_left / rate;
                 st.work_left = 0.0;
+                if st.kind == StationKind::FuelDepot {
+                    st.fuel = st.fuel.max(DEPOT_START);
+                }
                 let st = st.clone();
                 let bname = self.system.body(st.body).name.clone();
                 self.event(Some(st.owner), EventKind::Good, "Station built", &format!("{} online at {bname}", st.kind.label()), Some(st.body), None);
@@ -266,11 +271,23 @@ impl Game {
                 let made = want.min(p.energy / 0.5);
                 p.energy -= made * 0.5;
                 self.stations[i].fuel += made;
-                for s in self.ships.iter_mut().filter(|s| s.owner == st.owner && s.parked_at() == Some(st.body)) {
+                // share what's in the tank fairly between everyone parked here (fleets, tankers too),
+                // each up to its own pump limit, instead of the first ship in the list taking it all
+                let needy: Vec<usize> = (0..self.ships.len())
+                    .filter(|&k| {
+                        let s = &self.ships[k];
+                        s.owner == st.owner && s.parked_at() == Some(st.body) && s.fuel < s.stats().fuel_cap - 1e-9
+                    })
+                    .collect();
+                let mut left = needy.len();
+                for k in needy {
+                    let s = &mut self.ships[k];
                     let room = (s.stats().fuel_cap - s.fuel).max(0.0);
-                    let take = room.min(self.stations[i].fuel).min(200.0 * h);
+                    let share = self.stations[i].fuel / left as f64;
+                    let take = room.min(share).min(200.0 * h);
                     s.fuel += take;
                     self.stations[i].fuel -= take;
+                    left -= 1;
                 }
             }
         }
