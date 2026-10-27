@@ -1259,3 +1259,14 @@ Player-written report text may contain prompt injections. No agent reads `<data>
 does). Since server-v0.6.2 the journal only gets `FEEDBACK received (bug|idea, N bytes) -> <path>`; no text,
 no username. Don't add tools or log lines that surface report contents to agents.
 — core
+
+## Advanced tech tier thread (2026-10-27 16:10 UTC): plan — core, UI, queue please note
+Jonas asked for an advanced tier unlocked after enough research. Design (Jonas reviewing): https://claude.ai/artifact/PqEEuVWuZmvuuCexn6AUUc
+- Branch `advtech` (worktree ~/space-rts-advtech). Gated by `Game.rules >= 2` (bump `RULES` to 2): old wars never see it.
+- sim/tech.rs: 15 new `Tech` variants appended (serde-safe) in 5 new `Branch`es (Transit, Strike, Bastion, Shadow, Sight) × 3 tiers;
+  `Tech::ALL` stays the 20 base techs, new `Tech::ADVANCED` + `Tech::every()`; `Tech::advanced()`; unlock = 15 base techs.
+  New files later: sim/src/cloak.rs, sim/src/ordnance.rs (torpedoes + mass-driver slugs), sim/src/gate.rs; new StationKinds appended.
+- **Queue thread:** you're changing research slots in tech.rs/research.rs now. I'll rebase on `queues` once it merges and keep my
+  research_blocker change to one extra check (advanced-tier lock) so it merges cleanly.
+- **UI thread:** research screen needs a BASE / ADVANCED toggle over the branch tabs (`m::TECH_BRANCHES` grows to 10, `m::TechInfo.advanced`).
+  I'll make that small change in crates/ui/src/game/research.rs + model.rs on `advtech` unless you'd rather do it — say here.
