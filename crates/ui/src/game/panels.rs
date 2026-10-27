@@ -1005,8 +1005,12 @@ fn plan_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
         None => view.body(p.target).map(|b| b.name.to_uppercase()).unwrap_or_default(),
     };
     let via: Vec<String> = p.via.iter().filter_map(|&b| view.body(b)).map(|b| b.name.to_uppercase()).collect();
+    // a ship already in flight changes course with one burn on its current path
+    let rerouting = icp.is_none() && view.ship(p.ship).is_some_and(|sh| map::is_flying(sh, view.now));
     let title = if icp.is_some() {
         format!("INTERCEPT {target}")
+    } else if rerouting {
+        format!("NEW COURSE TO {target}")
     } else if via.is_empty() {
         format!("COURSE TO {target}")
     } else {
@@ -1022,7 +1026,7 @@ fn plan_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
     }
     let p = &p;
     let cols = [
-        ("DEPART", if p.depart_t - view.now < 60.0 { "NOW".to_string() } else { format!("in {}", fmt_dur(p.depart_t - view.now)) }),
+        (if rerouting { "BURN" } else { "DEPART" }, if p.depart_t - view.now < 60.0 { "NOW".to_string() } else { format!("in {}", fmt_dur(p.depart_t - view.now)) }),
         // with the slider, what changes is when you get there; a lone course shows its flight time
         if icp.is_some() {
             ("MEET", format!("in {}", fmt_dur(p.arrive_t - view.now)))
@@ -1071,7 +1075,13 @@ fn plan_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
     if widgets::button(inp, b(0), label, if ok && exact { Style::Primary } else { Style::Ghost }) && ok && exact {
         g.emit(UiAction::ScheduleTransfer(p.clone()));
         art::sfx("transfer_scheduled");
-        let body = if icp.is_some() { format!("Intercepting {target}") } else { format!("Departing for {target}") };
+        let body = if icp.is_some() {
+            format!("Intercepting {target}")
+        } else if rerouting {
+            format!("New course for {target}")
+        } else {
+            format!("Departing for {target}")
+        };
         g.push_notice(Notice { kind: NoticeKind::Good, title: "Course laid in".into(), body, focus: None });
         g.mode = Mode::Idle;
     }
@@ -1082,7 +1092,7 @@ fn plan_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
             let (ship, tgt, m) = (p.ship, i.target, !i.matched);
             g.intercept(view, ship, tgt, m);
         }
-    } else if widgets::button(inp, b(1), "NEXT WINDOW", Style::Secondary) {
+    } else if widgets::button(inp, b(1), if rerouting { "BURN LATER" } else { "NEXT WINDOW" }, Style::Secondary) {
         let after = p.windows.iter().copied().find(|&w| w > p.depart_t + 60.0).unwrap_or(p.depart_t + 3600.0);
         let (ship, tgt) = (p.ship, p.target);
         g.plan(be, view, ship, tgt, after);

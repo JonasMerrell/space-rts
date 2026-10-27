@@ -479,6 +479,9 @@ fn real_ships(g: &Game, ids: &[ShipId]) -> Vec<g::ShipId> {
 /// the first hop of the route; the returned plan is the cheapest, with all options in `options`.
 fn compute_plan(g: &Game, now: f64, ship: ShipId, target: BodyId, after: f64) -> Option<m::TransferPlan> {
     let s = g.ship(lead(g, ship))?;
+    if s.parked_at().is_none() {
+        return compute_reroute(g, now, ship, target, after);
+    }
     let depart = if after > now + 120.0 { Some(after) } else { None };
     let from = s.parked_at()?;
     let first = *sim::plan::route(&g.system, from, SimBody(target)).first()?;
@@ -506,6 +509,57 @@ fn compute_plan(g: &Game, now: f64, ship: ShipId, target: BodyId, after: f64) ->
         p.options = list.clone();
     }
     all.into_iter().next()
+}
+
+/// New course for a ship in flight (one burn on its current path), slider stops cheapest first.
+fn compute_reroute(g: &Game, now: f64, ship: ShipId, target: BodyId, after: f64) -> Option<m::TransferPlan> {
+    let s = g.ship(lead(g, ship))?;
+    let opts = g.reroute_options(s.id, SimBody(target), now, after);
+    let mut all: Vec<m::TransferPlan> = opts.iter().map(|p| model_reroute(g, s, ship, p)).collect();
+    let n = all.len();
+    for (i, p) in all.iter_mut().enumerate() {
+        if n > 1 && (i == 0 || i + 1 == n) {
+            p.label = if i == 0 { "CHEAPEST" } else { "FASTEST" }.into();
+        }
+    }
+    let list = all.clone();
+    for p in &mut all {
+        p.options = list.clone();
+    }
+    all.into_iter().next()
+}
+
+fn model_reroute(g: &Game, s: &g::Ship, ship: ShipId, p: &sim::reroute::CoursePlan) -> m::TransferPlan {
+    let flying = g.with_fleetmates(s.id);
+    let fuel_have: f64 = flying.iter().filter_map(|&id| g.ship(id)).map(|m| m.fuel).sum();
+    let fuel_needed: f64 = flying
+        .iter()
+        .filter_map(|&id| g.ship(id))
+        .map(|m| {
+            let dep = m.fuel_for(p.depart_dv);
+            dep + g::fuel_needed(m.class, (m.fuel - dep).max(0.0), p.capture_dv)
+        })
+        .sum();
+    // the drawn path starts at the burn; before it the ship keeps its current path
+    m::TransferPlan {
+        ship,
+        target: p.hint.to.0,
+        depart_t: p.hint.depart_t,
+        arrive_t: p.arrive_t,
+        dv_depart: p.depart_dv,
+        dv_mid: 0.0,
+        dv_capture: p.capture_dv,
+        fuel_needed: fuel_needed as f32,
+        fuel_have: fuel_have as f32,
+        fuel_problem: g.fleet_fuel_check(&flying, p.depart_dv, p.capture_dv).err(),
+        path: to_model_traj(&g.system, &p.traj),
+        via: vec![],
+        label: String::new(),
+        options: vec![],
+        token: serde_json::to_string(&p.hint).unwrap_or_default(),
+        windows: vec![],
+        intercept: None,
+    }
 }
 
 /// Intercept courses (cheapest … fastest) for our `ship` token on enemy ship `target`, on what our
@@ -574,6 +628,12 @@ fn model_intercept(g: &Game, s: &g::Ship, ship: ShipId, p: &sim::intercept::Inte
 
 /// The exact course `f` of the way between two neighbouring slider options (see `plan::between`).
 fn compute_between(g: &Game, a: &m::TransferPlan, b: &m::TransferPlan, f: f64) -> Option<m::TransferPlan> {
+    if let (Ok(ha), Ok(hb)) = (serde_json::from_str::<sim::reroute::Hint>(&a.token), serde_json::from_str::<sim::reroute::Hint>(&b.token)) {
+        let s = g.ship(lead(g, a.ship))?;
+        let path = g.coasting_path(s.id)?;
+        let p = sim::reroute::between(&g.system, &path, ha, hb, f)?;
+        return Some(model_reroute(g, s, a.ship, &p));
+    }
     if let (Ok(ha), Ok(hb)) = (serde_json::from_str::<sim::intercept::Hint>(&a.token), serde_json::from_str::<sim::intercept::Hint>(&b.token)) {
         let s = g.ship(lead(g, a.ship))?;
         let tgt = g.view_path(ha.target)?;
@@ -1107,7 +1167,12 @@ impl Backend for ClientBackend {
                     let ships = self.ship_ids(p.ship);
                     let to = SimBody(p.target);
                     let icp = serde_json::from_str::<sim::intercept::Hint>(&p.token).ok();
+                    let rr = serde_json::from_str::<sim::reroute::Hint>(&p.token).ok();
                     let cmd = match serde_json::from_str::<sim::plan::PlanHint>(&p.token) {
+                        _ if rr.is_some() => {
+                            let h = rr.unwrap();
+                            Command::Reroute { ships, to: h.to, depart_t: h.depart_t, aim_t: h.aim_t }
+                        }
                         _ if icp.is_some() => {
                             let h = icp.unwrap();
                             Command::Intercept { ships, target: h.target, depart_t: h.depart_t, arrive_t: h.arrive_t, matched: h.matched }

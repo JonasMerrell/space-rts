@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 /// A miss below this counts as an intercept (kinetic weapons reach 4000 km).
 pub const HIT_KM: f64 = 1_500.0;
 /// Shortest flight we plan (and the earliest meeting after now).
-const MIN_TOF: f64 = 900.0;
+pub(crate) const MIN_TOF: f64 = 900.0;
 /// How soon after `now` the departure burn can be.
 pub const LEAD: f64 = 120.0;
 
@@ -53,7 +53,7 @@ impl Chaser {
     }
 }
 
-fn coast(sys: &System, st: State) -> Trajectory {
+pub(crate) fn coast(sys: &System, st: State) -> Trajectory {
     predict(sys, st, &[], None, st.t + Flight::HORIZON)
 }
 
@@ -95,7 +95,7 @@ impl InterceptPlan {
 }
 
 /// Absolute state on a trajectory.
-fn abs_state(sys: &System, tr: &Trajectory, t: f64) -> Option<(V2, V2)> {
+pub(crate) fn abs_state(sys: &System, tr: &Trajectory, t: f64) -> Option<(V2, V2)> {
     let st = tr.state_at(sys, t)?;
     Some((sys.pos(st.parent, t) + st.r, sys.vel(st.parent, t) + st.v))
 }
@@ -110,7 +110,7 @@ pub fn reach_end(tgt: &Trajectory) -> f64 {
 }
 
 /// Lowest common ancestor of two bodies.
-fn common(sys: &System, a: BodyId, b: BodyId) -> BodyId {
+pub(crate) fn common(sys: &System, a: BodyId, b: BodyId) -> BodyId {
     let lb = sys.lineage(b);
     *sys.lineage(a).iter().find(|x| lb.contains(x)).unwrap_or(&sys.star().id)
 }
@@ -174,7 +174,7 @@ fn est_cost(sys: &System, ch: &Chaser, tgt: &Trajectory, td: f64, ta: f64, match
     Some(dv + if matched { close.len() } else { 0.0 })
 }
 
-fn nelder_mead(f: &dyn Fn(&[f64]) -> f64, start: &[f64], step: &[f64], iters: usize, tol: f64) -> (Vec<f64>, f64) {
+pub(crate) fn nelder_mead(f: &dyn Fn(&[f64]) -> f64, start: &[f64], step: &[f64], iters: usize, tol: f64) -> (Vec<f64>, f64) {
     let n = start.len();
     let mut pts: Vec<(Vec<f64>, f64)> = vec![(start.to_vec(), f(start))];
     for k in 0..n {
@@ -225,7 +225,7 @@ fn nelder_mead(f: &dyn Fn(&[f64]) -> f64, start: &[f64], step: &[f64], iters: us
 
 /// Damped Newton on a 2-parameter aim whose result is a 2D miss vector (finite-difference
 /// Jacobian). Returns the parameters and the miss distance (1e12 when it never flew).
-fn newton(f: &dyn Fn(&[f64]) -> Option<V2>, eps: f64) -> (Vec<f64>, f64) {
+pub(crate) fn newton(f: &dyn Fn(&[f64]) -> Option<V2>, eps: f64) -> (Vec<f64>, f64) {
     let mut p = vec![0.0, 0.0];
     let Some(mut m) = f(&p) else { return (p, 1e12) };
     for _ in 0..14 {
@@ -350,8 +350,8 @@ pub fn plan_hinted(sys: &System, ch: &Chaser, tgt: &Trajectory, hint: Hint) -> R
     })
 }
 
-/// Cheapest departure time and its estimated cost for meeting the target at `ta`.
-fn best_departure(sys: &System, ch: &Chaser, tgt: &Trajectory, now: f64, ta: f64, matched: bool) -> Option<(f64, f64)> {
+/// Cheapest departure time (from `now + LEAD`) and its estimated cost for arriving at `ta`.
+pub(crate) fn best_departure(now: f64, ta: f64, cost: &dyn Fn(f64, f64) -> Option<f64>) -> Option<(f64, f64)> {
     let t0 = now + LEAD;
     let latest = ta - MIN_TOF;
     if latest < t0 {
@@ -361,13 +361,13 @@ fn best_departure(sys: &System, ch: &Chaser, tgt: &Trajectory, now: f64, ta: f64
     let mut best: Option<(f64, f64)> = None;
     for j in 0..n {
         let td = t0 + (latest - t0) * j as f64 / (n - 1) as f64;
-        if let Some(c) = est_cost(sys, ch, tgt, td, ta, matched) {
+        if let Some(c) = cost(td, ta) {
             if best.is_none_or(|b| c < b.1) {
                 best = Some((td, c));
             }
         }
     }
-    // a few rounds of golden-section-ish refinement around the winner
+    // a few rounds of bisection-ish refinement around the winner
     let (mut td, mut c) = best?;
     let mut step = (latest - t0) / (n - 1) as f64 * 0.5;
     for _ in 0..8 {
@@ -375,7 +375,7 @@ fn best_departure(sys: &System, ch: &Chaser, tgt: &Trajectory, now: f64, ta: f64
             if cand < t0 || cand > latest {
                 continue;
             }
-            if let Some(cc) = est_cost(sys, ch, tgt, cand, ta, matched) {
+            if let Some(cc) = cost(cand, ta) {
                 if cc < c {
                     td = cand;
                     c = cc;
@@ -387,22 +387,22 @@ fn best_departure(sys: &System, ch: &Chaser, tgt: &Trajectory, now: f64, ta: f64
     Some((td, c))
 }
 
-/// Intercept courses from cheapest to fastest (the fuel ↔ time slider's stops): each arrives
-/// sooner and costs more than the one before, all within `max_dv`. Empty when the target can't be
-/// reached (out of its known path, or out of fuel).
-pub fn options(sys: &System, ch: &Chaser, tgt: &Trajectory, target: ShipId, now: f64, max_dv: f64, matched: bool) -> Vec<InterceptPlan> {
-    let end = reach_end(tgt).min(now + 4.0 * 86_400.0);
+/// Fuel ↔ time slider stops for any course with a (departure, arrival) parameterisation: the Pareto
+/// front of estimated cost over arrival times in (now, `end`], then up to six exact courses spread
+/// over it in cost, cheapest first, each arriving sooner and costing more than the one before.
+/// `exact` returns (plan, Δv, arrival) for a converged course.
+pub(crate) fn ladder<P>(now: f64, end: f64, max_dv: f64, cost: &dyn Fn(f64, f64) -> Option<f64>, exact: &dyn Fn(f64, f64) -> Option<(P, f64, f64)>) -> Vec<P> {
     let first = now + LEAD + MIN_TOF;
     if end <= first {
         return vec![];
     }
-    // meeting-time grid, denser near now (quadratic spacing), and the Pareto front of it
+    // arrival grid, denser near now (quadratic spacing)
     let n = 60;
     let span = end - first;
     let mut front: Vec<(f64, f64, f64)> = vec![]; // (arrive, depart, est cost)
     for i in 0..n {
         let ta = first + span * (i as f64 / (n - 1) as f64).powi(2);
-        if let Some((td, c)) = best_departure(sys, ch, tgt, now, ta, matched) {
+        if let Some((td, c)) = best_departure(now, ta, cost) {
             if c <= max_dv && front.iter().all(|f| f.2 > c) {
                 front.push((ta, td, c));
             }
@@ -412,7 +412,7 @@ pub fn options(sys: &System, ch: &Chaser, tgt: &Trajectory, target: ShipId, now:
     front.reverse();
     let (Some(&(.., lo)), Some(&(.., hi))) = (front.first(), front.last()) else { return vec![] };
     const STEPS: usize = 6;
-    let mut out: Vec<InterceptPlan> = vec![];
+    let mut out: Vec<(P, f64, f64)> = vec![];
     let mut tried: Vec<usize> = vec![];
     for k in 0..STEPS {
         let want = lo + (hi - lo) * k as f64 / (STEPS - 1) as f64;
@@ -424,17 +424,28 @@ pub fn options(sys: &System, ch: &Chaser, tgt: &Trajectory, target: ShipId, now:
             }
             tried.push(i);
             let (ta, td, _) = front[i];
-            let Ok(p) = plan_hinted(sys, ch, tgt, Hint { target, depart_t: td, arrive_t: ta, matched }) else { continue };
-            if !p.converged || p.total_dv() > max_dv {
-                continue;
-            }
-            if out.last().is_none_or(|l| p.total_dv() > l.total_dv() && p.arrive_t() < l.arrive_t() - 300.0) {
+            let Some(p) = exact(td, ta).filter(|p| p.1 <= max_dv) else { continue };
+            if out.last().is_none_or(|l| p.1 > l.1 && p.2 < l.2 - 300.0) {
                 out.push(p);
                 break;
             }
         }
     }
-    out
+    out.into_iter().map(|p| p.0).collect()
+}
+
+/// Intercept courses from cheapest to fastest (the fuel ↔ time slider's stops): each arrives
+/// sooner and costs more than the one before, all within `max_dv`. Empty when the target can't be
+/// reached (out of its known path, or out of fuel).
+pub fn options(sys: &System, ch: &Chaser, tgt: &Trajectory, target: ShipId, now: f64, max_dv: f64, matched: bool) -> Vec<InterceptPlan> {
+    let end = reach_end(tgt).min(now + 4.0 * 86_400.0);
+    let cost = |td: f64, ta: f64| est_cost(sys, ch, tgt, td, ta, matched);
+    let exact = |td: f64, ta: f64| {
+        let p = plan_hinted(sys, ch, tgt, Hint { target, depart_t: td, arrive_t: ta, matched }).ok().filter(|p| p.converged)?;
+        let (dv, at) = (p.total_dv(), p.arrive_t());
+        Some((p, dv, at))
+    };
+    ladder(now, end, max_dv, &cost, &exact)
 }
 
 /// An intercept part way (`f` = 0..1) between two neighbouring `options` (departure and meeting
@@ -886,7 +897,7 @@ mod saved_tests {
             let first = v.t + LEAD + MIN_TOF;
             for i in 0..40 {
                 let ta = first + (end - first) * ((1.0 + 99.0 * i as f64 / 39.0).ln() / 100f64.ln());
-                if let Some((td, c)) = best_departure(&v.system, &ch, &tgt, v.t, ta, matched) {
+                if let Some((td, c)) = best_departure(v.t, ta, &|td, ta| est_cost(&v.system, &ch, &tgt, td, ta, matched)) {
                     let t0 = std::time::Instant::now();
                     let p = plan_hinted(&v.system, &ch, &tgt, Hint { target: foe, depart_t: td, arrive_t: ta, matched });
                     let r = p.map(|p| format!("{:.2} miss {:.0}", p.total_dv(), p.miss)).unwrap_or_else(|e| e);

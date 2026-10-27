@@ -10,6 +10,7 @@ pub mod game;
 pub mod intercept;
 pub mod kepler;
 pub mod plan;
+pub mod reroute;
 pub mod station;
 pub mod tech;
 pub mod traj;
