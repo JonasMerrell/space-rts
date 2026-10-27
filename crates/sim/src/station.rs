@@ -31,6 +31,7 @@ pub struct Station {
     #[serde(default)]
     pub fuel: f64,
     /// when construction finished, or the estimated finish while building (INFINITY while paused)
+    #[serde(serialize_with = "crate::game::ser_time", deserialize_with = "crate::game::de_time")]
     pub done_t: f64,
     /// construction work still to do, in single-worker seconds (0 = finished)
     #[serde(default)]
