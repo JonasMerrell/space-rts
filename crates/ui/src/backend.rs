@@ -86,6 +86,19 @@ pub enum PlanPoll {
     Done(Option<TransferPlan>),
 }
 
+/// Result of polling `Backend::windows_async`.
+#[derive(Clone, Debug)]
+pub enum WindowsPoll {
+    Pending,
+    Done(Option<WindowsView>),
+}
+
+impl WindowsPoll {
+    pub fn is_pending(&self) -> bool {
+        matches!(self, WindowsPoll::Pending)
+    }
+}
+
 /// Result of polling `Backend::plan_impact_async`.
 pub enum ImpactPoll {
     Pending,
@@ -126,6 +139,11 @@ pub trait Backend {
     /// stops in `options`. `matched` = match the target's velocity on arrival. Default: unsupported.
     fn plan_intercept_async(&self, _ship: ShipId, _target: ShipId, _matched: bool) -> PlanPoll {
         PlanPoll::Done(None)
+    }
+    /// Transfer-window tool for a parked ship, polled every frame like `plan_transfer_async`.
+    /// None = not parked / not ours. Default: unsupported.
+    fn windows_async(&self, _ship: ShipId) -> WindowsPoll {
+        WindowsPoll::Done(None)
     }
     /// Asteroid impact planner, polled every frame like `plan_transfer_async`. None = can't aim it
     /// (not ours, no tech, no route). Default: unsupported.
