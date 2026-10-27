@@ -65,9 +65,9 @@ pub fn loaded() {
 /// Tell the page where the game's text fields are (CSS px) and whether one is focused: a tap on one
 /// focuses a hidden HTML input so phones open their keyboard, whose typing comes back as key events.
 pub fn text_fields(ui: &ui::Ui) {
+    // macroquad's screen coordinates are already CSS px with high_dpi (the canvas is dpi× larger)
     let (fields, focused) = ui.input.text_fields();
-    let dpi = macroquad::miniquad::window::dpi_scale().max(0.1);
-    let flat: Vec<f32> = fields.iter().flat_map(|(_, r)| [r.x / dpi, r.y / dpi, r.w / dpi, r.h / dpi]).collect();
+    let flat: Vec<f32> = fields.iter().flat_map(|(_, r)| [r.x, r.y, r.w, r.h]).collect();
     let focused = focused.and_then(|f| fields.iter().position(|(id, _)| *id == f)).map_or(-1, |i| i as i32);
     unsafe { hr_text_fields(flat.as_ptr(), fields.len(), focused) }
 }
