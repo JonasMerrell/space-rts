@@ -573,6 +573,23 @@ pub enum Command {
 }
 
 pub const TICK: f64 = 60.0;
+
+/// A game time that may be "never" (INFINITY). JSON has no infinity (serde_json writes `null`, which
+/// then fails to load), so it is stored as a huge finite number and read back as INFINITY.
+pub fn ser_time<S: serde::Serializer>(t: &f64, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_f64(if t.is_finite() { *t } else { NEVER })
+}
+
+/// Reads `ser_time` values; also accepts `null` (files written before the fix) as INFINITY.
+pub fn de_time<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+    let v: Option<f64> = Deserialize::deserialize(d)?;
+    Ok(match v {
+        Some(t) if t < NEVER * 0.5 => t,
+        _ => f64::INFINITY,
+    })
+}
+
+const NEVER: f64 = 1e300;
 /// Power a parked construction ship or scout adds in orbit (Jonas: they can claim bodies).
 pub const CONSTRUCTOR_POWER: f64 = 1.0;
 const FACTIONS: [&str; 4] = ["vanguard", "hive", "prism", "junker"];

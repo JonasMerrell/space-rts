@@ -226,6 +226,31 @@ pub fn make_invites(path: &Path, n: usize) -> std::io::Result<Vec<String>> {
     Ok(codes)
 }
 
+/// Parse a saved game. A non-finite f64 is written by serde_json as `null` and then refuses to load;
+/// each such `null` where a number is expected is replaced by a huge number (`1e300`, read as "never"
+/// where that matters) and parsing retried. Returns the game and how many nulls were repaired.
+fn parse_game(text: &str) -> Result<(Game, usize), String> {
+    let mut text = text.to_string();
+    let mut repaired = 0;
+    loop {
+        match serde_json::from_str::<Game>(&text) {
+            Ok(g) => return Ok((g, repaired)),
+            Err(e) if repaired < 10_000 && e.to_string().contains("invalid type: null, expected f64") => {
+                // locate the offending `null` (the error column points just past it)
+                let line_start: usize = text.split_inclusive('\n').take(e.line().saturating_sub(1)).map(|l| l.len()).sum();
+                let end = (line_start + e.column()).min(text.len());
+                let start = end.saturating_sub(4);
+                if text.get(start..end) != Some("null") {
+                    return Err(e.to_string());
+                }
+                text.replace_range(start..end, "1e300");
+                repaired += 1;
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+}
+
 fn write_atomic(path: &Path, data: &str) {
     let tmp = path.with_extension("tmp");
     // a failed save loses state at the next restart, so say so loudly
@@ -243,10 +268,14 @@ impl Server {
         if let Ok(rd) = std::fs::read_dir(data.join("games")) {
             for e in rd.flatten() {
                 if e.path().extension().is_some_and(|x| x == "json") {
-                    match std::fs::read_to_string(e.path()).map_err(|e| e.to_string()).and_then(|s| serde_json::from_str::<Game>(&s).map_err(|e| e.to_string())) {
-                        Ok(g) => {
+                    match std::fs::read_to_string(e.path()).map_err(|e| e.to_string()).and_then(|s| parse_game(&s)) {
+                        Ok((g, repaired)) => {
+                            if repaired > 0 {
+                                eprintln!("repaired {repaired} null number(s) in {}", e.path().display());
+                            }
                             games.insert(g.code.clone(), g);
                         }
+                        // never touched again: the file stays as it is for a later fix
                         Err(err) => eprintln!("skipping {}: {err}", e.path().display()),
                     }
                 }
@@ -283,7 +312,7 @@ impl Server {
                     c
                 })
                 .collect();
-            if !self.games.contains_key(&code) {
+            if !self.games.contains_key(&code) && !self.data.join("games").join(format!("{code}.json")).exists() {
                 return code;
             }
         }
@@ -957,4 +986,36 @@ pub fn serve_with(listener: TcpListener, mut cfg: Config) -> Result<(), String> 
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod save_tests {
+    use super::parse_game;
+    use sim::game::{Game, Settings};
+    use sim::station::{Station, StationId, StationKind};
+    use sim::SystemSize;
+
+    #[test]
+    fn paused_station_round_trips_and_old_null_saves_load() {
+        let mut g = Game::new("ABCDE".into(), Settings { name: "t".into(), size: SystemSize::Small, max_players: 2, length: 86_400.0, speed: 1.0 }, 3, "ann");
+        let _ = g.add_player("bob", None);
+        g.start();
+        let body = g.players[0].home.unwrap();
+        g.stations.push(Station { id: StationId(0), owner: 0, kind: StationKind::FuelDepot, body, hp: 100.0, fuel: 0.0, done_t: f64::INFINITY, work_left: 3600.0 });
+        let json = serde_json::to_string(&g).unwrap();
+        assert!(!json.contains("\"done_t\":null"));
+        let done = json.split("\"done_t\":").nth(1).unwrap().split(',').next().unwrap().to_string();
+        let (back, n) = parse_game(&json).unwrap();
+        assert_eq!(n, 0);
+        assert!(back.stations[0].done_t.is_infinite());
+        // a file written by 0.5.x: the infinity became null
+        let old = json.replace(&format!("\"done_t\":{done}"), "\"done_t\":null");
+        assert!(old.contains("\"done_t\":null"));
+        let (back, _) = parse_game(&old).unwrap();
+        assert!(back.stations[0].done_t.is_infinite());
+        // any other f64 that went null is repaired instead of losing the whole game
+        let hp = old.replacen("\"hp\":100.0", "\"hp\":null", 1);
+        let (_, n) = parse_game(&hp).unwrap();
+        assert_eq!(n, 1);
+    }
 }
