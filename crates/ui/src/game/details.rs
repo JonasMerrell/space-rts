@@ -112,9 +112,28 @@ pub fn draw(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameVi
             let player = view.player(view.me);
             let skin = player.map(|p| art::skin_of(&p.faction)).unwrap_or("vanguard");
             let row_h = 46.0 * s();
-            // leave room for the waiting-for-funds list
-            let reserve = if info.waiting.is_empty() { 0.0 } else { (info.waiting.len().min(2) as f32 + 0.6) * row_h };
-            let bottom = r.y + r.h - 80.0 * s() - reserve;
+            // Everything below the title scrolls (drag / wheel) inside `list`, clipped; taps outside it
+            // are held back so half-hidden rows can't be pressed.
+            let list = Rect::new(r.x + 4.0 * s(), y - 4.0 * s(), r.w - 8.0 * s(), (r.y + r.h - 80.0 * s()) - (y - 4.0 * s()));
+            if let (Some(d), Some(p)) = (inp.drag, inp.drag_pos) {
+                if list.contains(p) {
+                    g.queue_scroll -= d.y;
+                }
+            }
+            if let (Some((_, k)), Some(p)) = (inp.zoom, inp.hover) {
+                if list.contains(p) {
+                    g.queue_scroll -= k.ln() / 1.15f32.ln() * row_h;
+                }
+            }
+            g.queue_scroll = g.queue_scroll.max(0.0);
+            let held_tap = inp.tap.filter(|p| !list.contains(*p));
+            if held_tap.is_some() {
+                inp.tap = None;
+            }
+            cel::clip(Some(list));
+            let top = y;
+            y -= g.queue_scroll;
+            let bottom = f32::MAX;
             // the shipyard and the upgrades are two lanes that build side by side
             for (title, upgrades) in [("SHIPYARD", false), ("UPGRADES", true)] {
                 let lane: Vec<usize> = (0..info.queue.len()).filter(|&i| info.queue[i].upgrade() == upgrades).collect();
@@ -172,7 +191,19 @@ pub fn draw(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameVi
                 }
             }
             if !info.waiting.is_empty() {
-                waiting_rows(g, inp, view, info, x, w, &mut y, r.y + r.h - 80.0 * s());
+                waiting_rows(g, inp, view, info, x, w, &mut y, f32::MAX);
+            }
+            cel::clip(None);
+            if inp.tap.is_none() {
+                inp.tap = held_tap;
+            }
+            let content = y + g.queue_scroll - top;
+            let max_scroll = (content - list.h + 8.0 * s()).max(0.0);
+            g.queue_scroll = g.queue_scroll.min(max_scroll);
+            if max_scroll > 0.0 {
+                let th = (list.h / content * list.h).max(24.0 * s());
+                let ty = list.y + (list.h - th) * (g.queue_scroll / max_scroll);
+                cel::round_rect(Rect::new(r.x + r.w - 7.0 * s(), ty, 3.0 * s(), th), 1.5 * s(), Color::new(1.0, 1.0, 1.0, 0.35));
             }
             let foot = if info.waiting.is_empty() { "Cancelling refunds the cost." } else { "Waiting items start by themselves once you can pay, top first." };
             text(foot, x, r.y + r.h - 70.0 * s(), 12.0, MUTED, FontKind::Body, Align::Left);

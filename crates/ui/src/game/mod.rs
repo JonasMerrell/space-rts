@@ -111,6 +111,8 @@ pub struct GameScreen {
     pub confirm_delete: bool,
     /// Constructor "leave when done": (ship, depart after this game time).
     pub leave_after: Option<(ShipId, f64)>,
+    /// Build queue sheet scroll (px).
+    pub queue_scroll: f32,
     /// Chat list scroll, px up from the newest message (0 = pinned to the newest).
     pub chat_scroll: f32,
     /// Resource breakdown sheet (0 matter, 1 energy, 2 fuel) opened from the top bar.
@@ -169,6 +171,7 @@ impl GameScreen {
             detail: None,
             res_open: None,
             chat_scroll: 0.0,
+            queue_scroll: 0.0,
             results_seen: false,
             results_hidden: false,
             feedback: None,

@@ -154,6 +154,17 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                     g.selected = Some(Focus::Body(2));
                     g.detail = Some(ui::game::details::Detail::Queue { body: 2 });
                 }
+                "queue_long" => {
+                    for c in [ShipClass::Gunship, ShipClass::Scout, ShipClass::Bomber, ShipClass::Interceptor, ShipClass::Tanker, ShipClass::Gunship, ShipClass::Scout, ShipClass::Bomber, ShipClass::Dreadnought, ShipClass::Dreadnought, ShipClass::Dreadnought] {
+                        be.act(UiAction::Build { body: 2, class: c });
+                    }
+                    for u in ["Mining", "Solar", "Reactor"] {
+                        be.act(UiAction::Upgrade { body: 2, upgrade: u.into() });
+                    }
+                    g.selected = Some(Focus::Body(2));
+                    g.detail = Some(ui::game::details::Detail::Queue { body: 2 });
+                    g.queue_scroll = 150.0;
+                }
                 "lanes" => {
                     // shipyard and upgrades build side by side
                     for c in [ShipClass::Gunship, ShipClass::Scout] {
