@@ -204,6 +204,8 @@ impl ClientBackend {
     fn on_msg(&mut self, msg: ServerMsg) {
         match msg {
             ServerMsg::Welcome { user, token } => {
+                // a reconnect after a dropped connection: keep the player where they were
+                let reconnect = self.logged_in;
                 self.logged_in = true;
                 self.auto_user = None;
                 self.online = true;
@@ -216,7 +218,9 @@ impl ClientBackend {
                     }
                     crate::notify::save(&self.server, u, secret);
                 }
-                self.events.push(BackendEvent::LoggedIn { user });
+                if !reconnect {
+                    self.events.push(BackendEvent::LoggedIn { user });
+                }
                 // re-open the game we were looking at after a reconnect
                 if let Some(code) = self.code() {
                     self.send(ClientMsg::Open { code });
@@ -932,8 +936,15 @@ impl Backend for ClientBackend {
                 max_players: 4,
                 bots,
             }),
-            UiAction::JoinGame { code } => self.send(ClientMsg::JoinGame { code }),
-            UiAction::OpenGame { code } => self.send(ClientMsg::Open { code }),
+            // opening a game always ends on the game screen, even if it's the one we had before
+            UiAction::JoinGame { code } => {
+                self.was_running = false;
+                self.send(ClientMsg::JoinGame { code })
+            }
+            UiAction::OpenGame { code } => {
+                self.was_running = false;
+                self.send(ClientMsg::Open { code })
+            }
             UiAction::AddBot { difficulty } => {
                 if let Some(code) = code {
                     self.send(ClientMsg::AddBot { code, difficulty });
