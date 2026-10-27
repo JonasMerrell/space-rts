@@ -950,6 +950,11 @@ impl Backend for ClientBackend {
                 self.send(ClientMsg::JoinGame { code })
             }
             UiAction::DeleteGame { code } => self.send(ClientMsg::DeleteGame { code }),
+            UiAction::Feedback { bug, text } => {
+                let platform = if cfg!(target_arch = "wasm32") { "web" } else if cfg!(target_os = "android") { "android" } else { "desktop" };
+                let client = format!("{} {platform}", env!("CARGO_PKG_VERSION"));
+                self.send(ClientMsg::Feedback { bug, text, game: code, client });
+            }
             UiAction::OpenGame { code } => {
                 self.was_running = false;
                 self.send(ClientMsg::Open { code })

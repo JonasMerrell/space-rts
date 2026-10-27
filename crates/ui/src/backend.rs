@@ -46,6 +46,8 @@ pub enum UiAction {
     ExtendGame { days: u32 },
     /// Host only: delete the war for every player (ask for confirmation first).
     DeleteGame { code: String },
+    /// Bug report (`bug`) or feature request; the server logs it with the current war and client version.
+    Feedback { bug: bool, text: String },
     /// Host only: game seconds per real second from now on.
     SetSpeed { speed: f64 },
     /// Retry the server connection now instead of waiting for the backoff.

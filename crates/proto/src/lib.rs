@@ -40,6 +40,8 @@ pub enum ClientMsg {
     /// Notification poll: events for me that happened after unix time `since`, across all my games.
     Events { since: f64 },
     Ping,
+    /// Bug report / feature request, appended to the server's feedback log.
+    Feedback { bug: bool, text: String, game: Option<String>, client: String },
     /// Host only: delete the war for everyone (it disappears from every player's list).
     DeleteGame { code: String },
 }
@@ -71,6 +73,7 @@ impl ClientMsg {
             ClientMsg::SetFaction { code, faction } => short(code) && short(faction),
             ClientMsg::Cmd { code, .. } => short(code),
             ClientMsg::Events { since } => !since.is_nan(),
+            ClientMsg::Feedback { text, game, client, .. } => text.len() <= 16_000 && game.as_deref().is_none_or(short) && client.len() <= 200,
             ClientMsg::ListGames | ClientMsg::Ping => true,
         };
         if ok {

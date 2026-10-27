@@ -175,6 +175,8 @@ pub struct Server {
     dirty: HashSet<String>,
     /// games whose state changed since the last broadcast
     changed: HashSet<String>,
+    /// feedback reports per user in the current hour (user -> (hour, count))
+    feedback: HashMap<String, (u64, u32)>,
 }
 
 fn legacy_hash(salt: &str, pass: &str) -> String {
@@ -253,7 +255,7 @@ impl Server {
             }
         }
         eprintln!("loaded {} accounts, {} games from {}", accounts_len(&accounts), games.len(), data.display());
-        Server { data, invites: None, guard: None, accounts, games, conns: HashMap::new(), next_conn: 1, dirty: HashSet::new(), changed: HashSet::new() }
+        Server { data, invites: None, guard: None, accounts, games, conns: HashMap::new(), next_conn: 1, dirty: HashSet::new(), changed: HashSet::new(), feedback: HashMap::new() }
     }
 
     fn save(&mut self) {
@@ -454,6 +456,39 @@ impl Server {
                 }
                 self.dirty.insert(code.clone());
                 self.changed.insert(code);
+            }
+            ClientMsg::Feedback { bug, text, game, client } => {
+                let hour = (unix_now() / 3600.0) as u64;
+                let e = self.feedback.entry(user.clone()).or_insert((hour, 0));
+                if e.0 != hour {
+                    *e = (hour, 0);
+                }
+                if e.1 >= 10 {
+                    return err(self, "thanks, that's plenty of reports for this hour");
+                }
+                e.1 += 1;
+                let text: String = text.trim().chars().take(4000).collect();
+                if text.is_empty() {
+                    return err(self, "write something first");
+                }
+                let rec = serde_json::json!({
+                    "t": unix_now(),
+                    "kind": if bug { "bug" } else { "feature" },
+                    "user": user,
+                    "game": game,
+                    "client": client.chars().take(80).collect::<String>(),
+                    "text": text,
+                });
+                let line = rec.to_string();
+                use std::io::Write as _;
+                let path = self.data.join("feedback.jsonl");
+                match std::fs::OpenOptions::new().create(true).append(true).open(&path).and_then(|mut f| writeln!(f, "{line}")) {
+                    Ok(()) => {}
+                    Err(e) => eprintln!("SAVE FAILED {}: {e}", path.display()),
+                }
+                // also to the journal, so admins without access to the data dir can read reports
+                eprintln!("FEEDBACK {line}");
+                reply(self, ServerMsg::CmdResult { ok: true, msg: "thanks, report saved".into() });
             }
             ClientMsg::DeleteGame { code } => {
                 let Some(g) = self.games.get(&code) else { return err(self, "no such game") };

@@ -453,6 +453,7 @@ impl Backend for DemoBackend {
         match action {
             UiAction::DismissReport => self.report = None,
             UiAction::DeleteGame { .. } => self.view = None,
+            UiAction::Feedback { .. } => {}
             UiAction::Login { user, .. } => {
                 self.user = user.clone();
                 self.events.push(BackendEvent::LoggedIn { user });
