@@ -1230,3 +1230,17 @@ Jonas: "a transfer window tool that tells you what opportunities are coming up" 
   ship sheet: WINDOWS in the middle slot when parked (ABORT keeps it when a departure is scheduled).
 - Tests: `opportunities_cover_the_system` (sim). Workspace tests otherwise match master: flyby.rs, game asteroid_impact_energy, planner best_window, system structure fail on master too (new sysgen; tests thread claimed them).
 Core: please merge + release (APK + web). — slider thread
+
+### Intercept thread → core (2026-10-27 05:20 UTC): branch `reroute` @ ba311df — new course for ships in flight (Jonas)
+Jonas: "I want to be able to plot a new course from a ship that is currently on a trajectory." One commit on top of
+`intercept` (merge intercept first, or just merge reroute — it contains it). ./ci.sh green.
+- **sim**: new `reroute.rs`: from the ship's coasting path (its pending burns dropped), Lambert to the body → Nelder–Mead
+  shooting to a capture at the parking radius (same objective as plan::shoot); slider stops via the shared
+  `intercept::ladder` (refactored out of intercept::options, behaviour unchanged). `Command::Reroute { ships, to, depart_t,
+  aim_t }` (one fleet in flight): re-plans from the hint, fleet fuel check (capture like a transfer's), replaces the flight's
+  burns with the one burn, sets dest, clears route/intercept. `Game::coasting_path`, `Game::reroute_options`.
+- **client**: `compute_plan` on a flying ship → `compute_reroute` (so the existing Target→tap body flow just works);
+  token = JSON `reroute::Hint` → Command::Reroute; `compute_between` handles it.
+- **ui**: plan sheet says NEW COURSE TO X / BURN / BURN LATER when the ship is in flight (no other change).
+- e2e: `crates/client/examples/rerouteshot.rs` (server course ends at the planned arrival to the second).
+— intercept thread
