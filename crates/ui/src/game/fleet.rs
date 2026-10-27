@@ -13,7 +13,10 @@ use crate::widgets::{self, Style, TextField};
 use macroquad::prelude::*;
 
 const ROW_H: f32 = 40.0;
-const MAX_ROWS: usize = 6;
+const ROW_GAP: f32 = 6.0;
+const HEAD_H: f32 = 22.0;
+/// Rows visible before the list scrolls (phone); computer mode also stops at the panel height.
+const VISIBLE_ROWS: f32 = 6.5;
 
 pub struct FleetSheet {
     /// The token the sheet is about (a fleet or a single ship).
@@ -24,13 +27,15 @@ pub struct FleetSheet {
     pub members: Vec<ShipId>,
     pub others: Vec<ShipId>,
     pub name: TextField,
+    /// List scroll offset in px (drag or mouse wheel over the list).
+    pub scroll: f32,
 }
 
 impl FleetSheet {
     pub fn new(anchor: ShipId, opened_on: Option<Focus>) -> Self {
         let mut name = TextField::new(false);
         name.max_len = 32;
-        FleetSheet { anchor, opened_on, members: vec![], others: vec![], name }
+        FleetSheet { anchor, opened_on, members: vec![], others: vec![], name, scroll: 0.0 }
     }
 }
 
@@ -99,11 +104,17 @@ pub fn fleet_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
     fs.members.retain(|id| anchor.members.iter().any(|m| m.id == *id));
     fs.others.retain(|id| here.iter().any(|s| s.id == *id));
 
-    let n_members = anchor.members.len().min(MAX_ROWS);
-    let n_here = here.len().min(MAX_ROWS);
-    let sections = (n_members > 0) as usize + (n_here > 0) as usize;
-    let h = 128.0 + sections as f32 * 26.0 + (n_members + n_here) as f32 * (ROW_H + 6.0) + 56.0;
-    let r = sheet_rect(h);
+    let n_members = anchor.members.len();
+    let n_here = here.len();
+    // one scrolling list: [header, member rows..., header, other rows...]
+    let row_px = (ROW_H + ROW_GAP) * s();
+    let content_h = (n_members > 0) as usize as f32 * HEAD_H * s()
+        + (n_here > 0) as usize as f32 * HEAD_H * s()
+        + (n_members + n_here) as f32 * row_px;
+    let fixed = (116.0 + 66.0) * s();
+    let room = if wide() { (screen_height() - 260.0 * s() - fixed).max(row_px * 2.0) } else { f32::MAX };
+    let list_h = if n_members + n_here == 0 { 30.0 * s() } else { content_h.min(VISIBLE_ROWS * row_px).min(room) };
+    let r = sheet_rect((fixed + list_h) / s());
     inp.block(r);
     cel::panel(r, alpha(PANEL, 0.98));
     cel::round_rect_lines(r, 10.0 * s(), 1.0 * s(), BORDER);
@@ -136,22 +147,36 @@ pub fn fleet_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
         }
     }
 
-    let mut y = fy + 52.0 * s();
     let rw = r.w - 2.0 * pad;
+    let list = Rect::new(r.x + pad, fy + 52.0 * s(), rw, list_h);
+    // scroll: drag inside the list, or the mouse wheel over it
+    let max_scroll = (content_h - list_h).max(0.0);
+    if let (Some(d), Some(p)) = (inp.drag, inp.drag_pos) {
+        if list.contains(p) {
+            fs.scroll -= d.y;
+        }
+    }
+    if let (Some((_, k)), Some(p)) = (inp.zoom, inp.hover) {
+        if list.contains(p) {
+            fs.scroll -= k.ln() / 1.15f32.ln() * row_px;
+        }
+    }
+    fs.scroll = fs.scroll.clamp(0.0, max_scroll);
+    cel::clip(Some(list));
+    let mut y = list.y - fs.scroll;
+    let visible = |y: f32, h: f32| y + h > list.y && y < list.y + list.h;
+    // rows partly scrolled out stay tappable only inside the list
+    let tap_in_list = inp.tap.is_some_and(|p| list.contains(p));
     if n_members > 0 {
         text("SHIPS IN FLEET", r.x + pad, y + 8.0 * s(), 13.0, MUTED, FontKind::Title, Align::Left);
-        y += 20.0 * s();
-        for m in anchor.members.iter().take(MAX_ROWS) {
+        y += HEAD_H * s();
+        for m in anchor.members.iter() {
             let rr = Rect::new(r.x + pad, y, rw, ROW_H * s());
-            if row(inp, view, rr, fs.members.contains(&m.id), m.class, &m.name, m.class.label(), m.fuel, m.fuel_max) {
+            if visible(rr.y, rr.h) && row(inp, view, rr, fs.members.contains(&m.id), m.class, &m.name, m.class.label(), m.fuel, m.fuel_max) && tap_in_list {
                 toggle(&mut fs.members, m.id);
             }
-            y += (ROW_H + 6.0) * s();
+            y += row_px;
         }
-        if anchor.members.len() > MAX_ROWS {
-            text(&format!("+{} more", anchor.members.len() - MAX_ROWS), r.x + r.w - pad, y - 2.0 * s(), 12.0, MUTED, FontKind::Body, Align::Right);
-        }
-        y += 6.0 * s();
     }
     if n_here > 0 {
         let label = match anchor.parked_at.and_then(|b| view.body(b)) {
@@ -159,18 +184,25 @@ pub fn fleet_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
             None => "ALSO HERE".into(),
         };
         text(&label, r.x + pad, y + 8.0 * s(), 13.0, MUTED, FontKind::Title, Align::Left);
-        y += 20.0 * s();
-        for o in here.iter().take(MAX_ROWS) {
+        y += HEAD_H * s();
+        for o in here.iter() {
             let rr = Rect::new(r.x + pad, y, rw, ROW_H * s());
             let sub = if o.is_fleet() { format!("Fleet of {}", o.count) } else { o.class.label().to_string() };
-            if row(inp, view, rr, fs.others.contains(&o.id), o.class, &o.name, &sub, o.fuel, o.fuel_max) {
+            if visible(rr.y, rr.h) && row(inp, view, rr, fs.others.contains(&o.id), o.class, &o.name, &sub, o.fuel, o.fuel_max) && tap_in_list {
                 toggle(&mut fs.others, o.id);
             }
-            y += (ROW_H + 6.0) * s();
+            y += row_px;
         }
     }
+    cel::clip(None);
+    if max_scroll > 0.0 {
+        // scroll thumb
+        let th = (list_h / content_h * list_h).max(24.0 * s());
+        let ty = list.y + (list_h - th) * (fs.scroll / max_scroll);
+        cel::round_rect(Rect::new(r.x + r.w - 7.0 * s(), ty, 3.0 * s(), th), 1.5 * s(), Color::new(1.0, 1.0, 1.0, 0.35));
+    }
     if n_members == 0 && n_here == 0 {
-        text("No other ships of yours are parked here.", r.x + pad, y + 10.0 * s(), 14.0, MUTED, FontKind::Body, Align::Left);
+        text("No other ships of yours are parked here.", r.x + pad, list.y + 10.0 * s(), 14.0, MUTED, FontKind::Body, Align::Left);
     }
 
     // actions

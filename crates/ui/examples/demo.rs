@@ -141,6 +141,23 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                     fs.others.push(other);
                     g.fleet = Some(fs);
                 }
+                "fleet_many" => {
+                    // lots of ships at Tethys: the list has to scroll
+                    if let Some(v) = be.view.as_mut() {
+                        let base = v.ships.iter().find(|s| s.id == 2).unwrap().clone();
+                        for i in 0..12u32 {
+                            let mut sh = base.clone();
+                            sh.id = 500 + i;
+                            sh.name = format!("Picket {}", i + 1);
+                            sh.count = 1;
+                            v.ships.push(sh);
+                        }
+                    }
+                    g.selected = Some(Focus::Ship(1));
+                    let mut fs = ui::game::fleet::FleetSheet::new(1, Some(Focus::Ship(1)));
+                    fs.scroll = 140.0;
+                    g.fleet = Some(fs);
+                }
                 "fleet_formed" => {
                     be.act(ui::UiAction::FormFleet { ships: vec![5, 6, 4], name: "Strike Group".into() });
                     be.act(ui::UiAction::LeaveFleet { ships: vec![101, 102], split: Some("Red Fang B".into()) });

@@ -321,3 +321,10 @@ pub fn halftone(r: Rect, color: Color) {
         row += 1;
     }
 }
+
+/// Clip subsequent drawing to `r` (screen px), or stop clipping with None (scrolling lists).
+pub fn clip(r: Option<Rect>) {
+    let mut gl = unsafe { get_internal_gl() };
+    gl.flush();
+    gl.quad_gl.scissor(r.map(|r| (r.x as i32, r.y as i32, r.w.max(0.0) as i32, r.h.max(0.0) as i32)));
+}
