@@ -203,13 +203,19 @@ async fn main() {
     let pc = tr.sample(p.arrive_t).expect("path through the meeting");
     let pt = be.ship_pos(gun, p.arrive_t).expect("target path");
     let miss = (pc[0] - pt[0]).hypot(pc[1] - pt[1]);
-    eprintln!("engaged at {now:.0}: server course passes {miss:.0} km from the target at the meeting time");
-    for _ in 0..10 {
+    // both are polylines sampled for drawing, so compare like with like: the planned path drawn the same way
+    let pp = p.path.sample(p.arrive_t).expect("planned path");
+    let planned_miss = (pp[0] - pt[0]).hypot(pp[1] - pt[1]);
+    let same = (pc[0] - pp[0]).hypot(pc[1] - pp[1]);
+    eprintln!("engaged at {now:.0}: server course {miss:.0} km from the target at the meeting time (drawn paths; planned one {planned_miss:.0} km), {same:.0} km from the planned course");
+    for i in 0..10 {
         be.poll();
         ui.frame(&mut be);
+        if i == 9 {
+            shot("intercept_3_engaged");
+        }
         next_frame().await;
     }
-    shot("intercept_3_engaged");
-    assert!(miss < 3000.0, "server course misses by {miss} km");
+    assert!(same < 1000.0, "server flies a different course ({same} km off)");
     eprintln!("OK");
 }
