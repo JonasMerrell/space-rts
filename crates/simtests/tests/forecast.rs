@@ -83,10 +83,14 @@ fn forecast_a_week_is_fast_enough() {
     g.advance_to(6.0 * HOUR);
     let mut f = g.view_for(0);
     let t0 = Instant::now();
+    let c0 = thread_cpu_secs();
     f.forecast_to(g.t + 7.0 * DAY);
     let el = t0.elapsed();
-    eprintln!("forecast 7 days: {el:?} ({} ships at start)", g.ships.len());
-    assert!(el.as_secs_f64() < 20.0);
+    // budget on this thread's CPU time, not wall time: netdash runs many builds at once and wall
+    // time under a load of ~30 says nothing about the forecast itself
+    let cpu = thread_cpu_secs().map(|c| c - c0.unwrap_or(0.0));
+    eprintln!("forecast 7 days: wall {el:?}, cpu {cpu:?} s ({} ships at start)", g.ships.len());
+    assert!(cpu.unwrap_or(el.as_secs_f64()) < 20.0);
 }
 
 #[test]
@@ -100,4 +104,14 @@ fn host_can_change_speed_without_a_time_jump() {
     g.apply(0, Command::SetSpeed { speed: 4.0 }).unwrap();
     assert!((g.time_at(real) - t).abs() < 1e-6, "game time continuous");
     assert!((g.time_at(real + 60.0) - (t + 240.0)).abs() < 1e-6, "4× from now on");
+}
+
+/// CPU seconds used by the calling thread (Linux `/proc/thread-self/stat`), None elsewhere.
+fn thread_cpu_secs() -> Option<f64> {
+    let st = std::fs::read_to_string("/proc/thread-self/stat").ok()?;
+    // fields after the ")" of the comm field: state is #3, utime #14, stime #15
+    let rest = &st[st.rfind(')')? + 2..];
+    let f: Vec<&str> = rest.split_whitespace().collect();
+    let (u, s): (f64, f64) = (f.get(11)?.parse().ok()?, f.get(12)?.parse().ok()?);
+    Some((u + s) / 100.0) // USER_HZ
 }

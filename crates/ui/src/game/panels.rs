@@ -60,11 +60,11 @@ fn icon_fuel(c: Vec2, r: f32) {
     draw_circle(c.x - r * 0.3, c.y + r * 0.1, r * 0.2, Color::new(1.0, 1.0, 1.0, 0.6));
 }
 
-pub fn hud(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
+pub fn hud(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView) {
     let w = screen_width();
     let top = safe_top() + margin();
     let res = view.resources;
-    let btn_space = 2.0 * 52.0 * s();
+    let btn_space = 3.0 * 52.0 * s();
     let avail = w - 2.0 * margin() - btn_space;
     let cw = ((avail - 2.0 * 8.0 * s()) / 3.0).min(if wide() { 150.0 * s() } else { f32::MAX });
     let ch = 44.0 * s();
@@ -98,6 +98,7 @@ pub fn hud(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
         art::sfx(if g.chat_open { "menu_open" } else { "menu_close" });
         g.chat_seen = view.chat.len();
     }
+    super::report::hud_button(g, inp, be, vec2(bx - 100.0 * s(), top + ch / 2.0));
     if widgets::round_button(inp, vec2(bx, top + ch / 2.0), 21.0 * s(), "@menu", ACCENT, 0) {
         g.menu_open = !g.menu_open;
         art::sfx(if g.menu_open { "menu_open" } else { "menu_close" });
@@ -115,7 +116,7 @@ pub fn hud(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
 
 fn game_menu(g: &mut GameScreen, inp: &mut Input, view: &GameView, at: Rect) {
     let host = view.host == view.me;
-    let items = if host { 7 } else { 4 };
+    let items = if host { 9 } else { 5 };
     let bh = 44.0 * s();
     let pad = 10.0 * s();
     let r = Rect::new(at.x, at.y, at.w, pad + items as f32 * (bh + pad));
@@ -151,6 +152,14 @@ fn game_menu(g: &mut GameScreen, inp: &mut Input, view: &GameView, at: Rect) {
             g.emit(UiAction::SetSpeed { speed: v });
         }
     }
+    if widgets::button(inp, row(items - if host { 3 } else { 2 }), "BUG REPORT / IDEA", Style::Secondary) {
+        g.feedback = Some(super::endgame::FeedbackForm::new());
+        g.menu_open = false;
+        art::sfx("menu_open");
+    }
+    if host {
+        super::endgame::delete_row(g, inp, view, row(items - 2));
+    }
     if widgets::button(inp, row(items - 1), "LEAVE TO MENU", Style::Ghost) {
         g.menu_open = false;
         g.emit(UiAction::BackToMenu);
@@ -158,6 +167,9 @@ fn game_menu(g: &mut GameScreen, inp: &mut Input, view: &GameView, at: Rect) {
     // Tap elsewhere closes it.
     if inp.tap.is_some_and(|p| !r.contains(p)) {
         g.menu_open = false;
+    }
+    if !g.menu_open {
+        g.confirm_delete = false;
     }
 }
 
@@ -381,10 +393,11 @@ pub fn sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameV
         Mode::Nodes(ne) => node_sheet(g, inp, be, view, ne),
         Mode::Target(ship) => {
             if let Some(sh) = view.ship(ship) {
-                ship_sheet(g, inp, view, sh, true);
+                ship_sheet(g, inp, be, view, sh, true);
             }
         }
         Mode::Aim(ast) => aim_bar(g, inp, view, ast),
+        Mode::Windows(_) => super::windows::windows_sheet(g, inp, be, view),
         Mode::Impact(ip) => impact_sheet(g, inp, view, &ip),
         Mode::Planning { .. } | Mode::Impacting { .. } | Mode::Intercepting { .. } => {
             let name = match g.mode {
@@ -423,7 +436,7 @@ pub fn sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameV
         Mode::Idle => match g.selected {
             Some(Focus::Ship(id)) => {
                 if let Some(sh) = view.ship(id) {
-                    ship_sheet(g, inp, view, sh, false);
+                    ship_sheet(g, inp, be, view, sh, false);
                 }
             }
             Some(Focus::Body(id)) => {
@@ -703,12 +716,12 @@ fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view:
                 // Narrow cell: matter + energy only (the queue shows build time).
                 let short = format!("{}M {}E", fmt_amount(cost.matter), fmt_amount(cost.energy));
                 text(&short, cx, cr.y + cr.h * 0.7, 11.0, if ok { MUTED } else { DANGER }, FontKind::Body, Align::Left);
-                if widgets::button(inp, br, "+", if ok { Style::Primary } else { Style::Ghost }) {
-                    if ok {
-                        art::sfx("purchase");
-                        g.emit(UiAction::Upgrade { body: b.id, upgrade: u.name.clone() });
-                    } else {
-                        art::sfx("ui_error");
+                // can't afford it yet: queue it, it starts once income covers it
+                if widgets::button(inp, br, "+", if ok { Style::Primary } else { Style::Secondary }) {
+                    art::sfx(if ok { "purchase" } else { "menu_select" });
+                    g.emit(UiAction::Upgrade { body: b.id, upgrade: u.name.clone() });
+                    if !ok {
+                        g.hint = Some(("Queued: starts when you can afford it".into(), get_time()));
                     }
                 }
             } else {
@@ -739,12 +752,11 @@ fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view:
             text(&class.label().to_uppercase(), cr.x + 44.0 * s(), cr.y + cr.h * 0.34, 14.0, PAPER, FontKind::Title, Align::Left);
             text(&cost_line(cost), cr.x + 44.0 * s(), cr.y + cr.h * 0.7, 11.0, if ok { MUTED } else { DANGER }, FontKind::Body, Align::Left);
             let br = Rect::new(cr.x + cr.w - 44.0 * s(), cr.y + (cr.h - 32.0 * s()) / 2.0, 36.0 * s(), 32.0 * s());
-            if widgets::button(inp, br, "+", if ok { Style::Primary } else { Style::Ghost }) {
-                if ok {
-                    art::sfx("purchase");
-                    g.emit(UiAction::Build { body: b.id, class: *class });
-                } else {
-                    art::sfx("ui_error");
+            if widgets::button(inp, br, "+", if ok { Style::Primary } else { Style::Secondary }) {
+                art::sfx(if ok { "purchase" } else { "menu_select" });
+                g.emit(UiAction::Build { body: b.id, class: *class });
+                if !ok {
+                    g.hint = Some(("Queued: starts when you can afford it".into(), get_time()));
                 }
             }
             if inp.tapped(cr) {
@@ -756,20 +768,24 @@ fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view:
     }
     // Build queue.
     let qy = r.y + r.h - 22.0 * s();
-    let q = if info.queue.is_empty() {
+    let empty = info.queue.is_empty() && info.waiting.is_empty();
+    let q = if empty {
         "Queue empty · tap an item for details".to_string()
     } else {
-        let items: Vec<String> = info.queue.iter().take(3).map(|(l, t)| format!("{l} {}", fmt_dur(t - view.now))).collect();
+        let mut items: Vec<String> = info.queue.iter().take(if info.waiting.is_empty() { 3 } else { 1 }).map(|(l, t)| format!("{l} {}", fmt_dur(t - view.now))).collect();
+        if !info.waiting.is_empty() {
+            items.push(format!("{} waiting", info.waiting.len()));
+        }
         format!("Queue: {}", items.join(" · "))
     };
     let qr = Rect::new(r.x + 8.0 * s(), qy - 12.0 * s(), r.w - 170.0 * s(), 24.0 * s());
-    if !info.queue.is_empty() {
+    if !empty {
         cel::round_rect(qr, 6.0 * s(), Color::new(1.0, 1.0, 1.0, if inp.holding(qr) { 0.12 } else { 0.05 }));
     }
-    let q = if info.queue.is_empty() { q } else { format!("{q} ›") };
+    let q = if empty { q } else { format!("{q} ›") };
     let q = wrap(&q, FontKind::Body, 13.0, qr.w - 12.0 * s()).into_iter().next().unwrap_or_default();
-    text(&q, r.x + 16.0 * s(), qy, 13.0, if info.queue.is_empty() { MUTED } else { PAPER }, FontKind::Body, Align::Left);
-    if !info.queue.is_empty() && inp.tapped(qr) {
+    text(&q, r.x + 16.0 * s(), qy, 13.0, if empty { MUTED } else { PAPER }, FontKind::Body, Align::Left);
+    if !empty && inp.tapped(qr) {
         inp.consume_tap();
         art::sfx("menu_open");
         g.detail = Some(Detail::Queue { body: b.id });
@@ -841,8 +857,15 @@ fn ship_icon(view: &GameView, sh: &Ship, c: Vec2, px: f32) {
 }
 
 /// Compact bar while picking a target, so the map above stays tappable.
-fn target_bar(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship) {
-    let r = sheet_rect(112.0);
+fn target_bar(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView, sh: &Ship) {
+    // A constructor at a site with our stations still being built can leave once they're done.
+    let is_builder = sh.class == ShipClass::Constructor || sh.members.iter().any(|m| m.class == ShipClass::Constructor);
+    let done_at = sh.parked_at.filter(|_| is_builder && !map::is_flying(sh, view.now)).and_then(|b| be.construction_done(b)).filter(|&t| t > view.now);
+    if done_at.is_none() && g.leave_after.is_some_and(|l| l.0 == sh.id) {
+        g.leave_after = None;
+    }
+    let extra = if done_at.is_some() { 44.0 } else { 0.0 };
+    let r = sheet_rect(112.0 + extra);
     inp.block(r);
     cel::panel(r, PANEL);
     ship_icon(view, sh, vec2(r.x + 28.0 * s(), r.y + 28.0 * s()), 34.0 * s());
@@ -854,6 +877,24 @@ fn target_bar(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship) {
         None => "Tap a planet or moon to plot a course".to_string(),
     };
     text(&hint, r.x + 54.0 * s(), r.y + 40.0 * s(), 13.0, ACCENT, FontKind::Body, Align::Left);
+    if let Some(t) = done_at {
+        let on = g.leave_after.is_some_and(|l| l.0 == sh.id);
+        let cr = Rect::new(r.x + 12.0 * s(), r.y + 56.0 * s(), 190.0 * s(), 32.0 * s());
+        let paused = !t.is_finite();
+        let label = if paused { "LEAVE WHEN DONE (paused)" } else { "LEAVE WHEN DONE" };
+        if widgets::chip(inp, cr, label, on, ACCENT) && !paused {
+            g.leave_after = if on { None } else { Some((sh.id, t)) };
+            art::sfx(if on { "toggle_off" } else { "toggle_on" });
+        }
+        let note = if paused {
+            "build paused".to_string()
+        } else if on {
+            format!("then departs · {}", fmt_dur(t - view.now))
+        } else {
+            format!("station done in {}", fmt_dur(t - view.now))
+        };
+        text(&note, cr.x + cr.w + 10.0 * s(), cr.center().y, 12.0, if on { ACCENT } else { MUTED }, FontKind::Body, Align::Left);
+    }
     let by = r.y + r.h - 52.0 * s();
     let group = super::fleet::can_group(view, sh);
     let n = if group { 4 } else { 3 };
@@ -863,7 +904,7 @@ fn target_bar(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship) {
     let builds = sh.class == ShipClass::Constructor || sh.members.iter().any(|m| m.class == ShipClass::Constructor);
     let site = sh.parked_at.filter(|_| builds && !map::is_flying(sh, view.now));
     if let Some(body) = site {
-        if widgets::button(inp, b(0), "BUILD STATION", Style::Primary) {
+        if widgets::button(inp, b(0), if n > 3 { "BUILD" } else { "BUILD STATION" }, Style::Primary) {
             g.mode = Mode::Idle;
             g.selected = Some(Focus::Body(body));
             g.stations_for = Some(body);
@@ -907,10 +948,10 @@ fn ships_here_button(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &B
     }
 }
 
-fn ship_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship, targeting: bool) {
+fn ship_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView, sh: &Ship, targeting: bool) {
     let mine = sh.owner == view.me;
     if targeting {
-        return target_bar(g, inp, view, sh);
+        return target_bar(g, inp, be, view, sh);
     }
     let r = sheet_rect(if mine { 200.0 } else { 110.0 });
     inp.block(r);
@@ -980,6 +1021,10 @@ fn ship_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship, t
         let flying = sh.trajectory.is_some();
         if flying && widgets::button(inp, b(1), "ABORT", Style::Danger) {
             g.emit(UiAction::CancelFlight { ship: sh.id });
+        }
+        // where can it go, and when: the transfer-window tool
+        if !flying && sh.parked_at.is_some() && widgets::button(inp, b(1), "WINDOWS", Style::Secondary) {
+            g.mode = Mode::Windows(super::windows::WindowsSheet::new(sh.id));
         }
         if widgets::button(inp, b(2), "DONE", Style::Ghost) {
             g.mode = Mode::Idle;

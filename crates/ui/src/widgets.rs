@@ -189,7 +189,10 @@ pub fn text_field(inp: &mut Input, r: Rect, f: &mut TextField, placeholder: &str
             inp.field_menu = None;
         }
         if button(inp, b2, "PASTE", Style::Primary) {
-            if let Some(p) = macroquad::miniquad::window::clipboard_get() {
+            // the browser's clipboard can only be read asynchronously, by the page
+            if cfg!(target_arch = "wasm32") {
+                inp.paste_request = true;
+            } else if let Some(p) = macroquad::miniquad::window::clipboard_get() {
                 for c in p.chars().filter(|c| !c.is_control()) {
                     if f.text.chars().count() >= f.max_len.max(1) {
                         break;

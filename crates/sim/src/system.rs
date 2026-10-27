@@ -226,11 +226,18 @@ pub fn generate(seed: u64, size: SystemSize) -> System {
     }
     let mut ps: Vec<P> = (0..n_planets)
         .map(|i| {
-            let giant = i > n_planets / 2 && rng.f() < 0.5;
-            let a = inner * ratio.powi(i as i32) * rng.range(0.93, 1.07);
+            // inner system: small rocky worlds close together; outer system: gas giants far apart
+            let giant = i > n_planets / 2;
+            // balance: outer years were very long, so pull planets in until the outermost one
+            // orbits 2x faster (T ∝ a^1.5, so a shrinks by k^-2/3), ramping from 1x at the innermost
+            let k = 1.0 + i as f64 / (n_planets - 1) as f64;
+            let a = inner * ratio.powi(i as i32) * k.powf(-2.0 / 3.0) * rng.range(0.93, 1.07);
             // The system is time-compressed (years of hours/days), so bodies are small and dense to
             // keep their spheres of influence comfortably larger than the bodies themselves.
-            let radius = if giant { rng.range(2800.0, 4500.0) } else { rng.range(700.0, 1500.0) };
+            // rocky planets grow outward (bigger = richer: see Game::base_yield), offsetting the slower,
+            // costlier outer orbits
+            let grow = 1.0 + 0.6 * i as f64 / (n_planets - 1) as f64;
+            let radius = if giant { rng.range(2800.0, 4500.0) } else { rng.range(700.0, 1500.0) * grow };
             let mu = if giant { 3.0e4 * (radius / 1000.0).powi(3) } else { 1.6e5 * (radius / 1000.0).powi(3) };
             let e = rng.range(0.0, 0.06);
             P { a, e, giant, radius, mu, soi: a * (mu / STAR_MU).powf(0.4) }
@@ -246,6 +253,13 @@ pub fn generate(seed: u64, size: SystemSize) -> System {
             cap = cap.min(0.45 * (ps[i + 1].a * (1.0 - ps[i + 1].e) - ps[i].a * (1.0 + ps[i].e)));
         }
         ps[i].soi = ps[i].soi.min(cap);
+        // a tightly packed planet must still leave room to park inside its SOI: shrink it (same density)
+        let k = if ps[i].giant { 3.0e4 } else { 1.6e5 };
+        while ps[i].soi < ps[i].radius * 1.6 * 1.6 && ps[i].radius > 300.0 {
+            ps[i].radius *= 0.9;
+            ps[i].mu = k * (ps[i].radius / 1000.0).powi(3);
+            ps[i].soi = (ps[i].a * (ps[i].mu / STAR_MU).powf(0.4)).min(cap);
+        }
     }
     for (i, p) in ps.iter().enumerate() {
         let (a_i, giant, radius, mu, soi) = (p.a, p.giant, p.radius, p.mu, p.soi);
@@ -264,16 +278,21 @@ pub fn generate(seed: u64, size: SystemSize) -> System {
             look: rng.below(8),
         });
         // moons
-        let n_moons = if giant { 1 + rng.below(3) } else { rng.below(3) };
-        let mut mr = radius * 3.5;
+        // gas giants carry big moon systems; inner rocky planets have at most one moon
+        let n_moons = if giant { 2 + rng.below(3) } else { rng.below(2) };
+        let mut mr = radius * if giant { 2.4 } else { 3.5 };
+        let mut prev_outer = radius * 1.6;
         for k in 0..n_moons {
             let r_m = mr * rng.range(1.0, 1.3);
-            let mrad = radius * rng.range(0.12, 0.3);
+            let mrad = radius * if giant { rng.range(0.07, 0.15) } else { rng.range(0.12, 0.3) };
             let mmu = 1.2e5 * (mrad / 1000.0).powi(3);
             let msoi = r_m * (mmu / mu).powf(0.4);
-            if r_m + msoi > soi * 0.6 {
+            // must fit inside the planet's SOI, and leave room for a parking orbit inside its own
+            // ...and must not touch the previous moon's SOI
+            if r_m + msoi > soi * 0.7 || msoi < mrad * 1.6 * 1.6 || r_m - msoi < prev_outer * 1.05 {
                 break;
             }
+            prev_outer = r_m + msoi;
             let morbit = Orbit::new(mu, r_m, 0.0, 0.0, rng.range(0.0, TAU));
             bodies.push(Body {
                 id: BodyId(bodies.len() as u32),
@@ -286,7 +305,7 @@ pub fn generate(seed: u64, size: SystemSize) -> System {
                 orbit: Some(morbit),
                 look: rng.below(8),
             });
-            mr = (r_m + msoi) * 1.5;
+            mr = (r_m + msoi) * if giant { 1.2 } else { 1.5 };
         }
         if i + 1 == belt_after {
             // belt sits in the middle of the gap between this planet's SOI and the next one's
@@ -294,7 +313,8 @@ pub fn generate(seed: u64, size: SystemSize) -> System {
             let hi = ps[i + 1].a * (1.0 - ps[i + 1].e) - ps[i + 1].soi;
             let belt_a = 0.5 * (lo + hi);
             let half = 0.3 * (hi - lo);
-            for _ in 0..(4 + n_planets / 2) {
+            // a dense belt between the inner and outer system: lots of small, cheap-to-reach claims
+            for _ in 0..(8 + n_planets) {
                 let e = rng.range(0.0, 0.5) * half / belt_a;
                 let ar = (belt_a + rng.range(-0.5, 0.5) * half).max(lo + belt_a * e * 1.05);
                 let rad = rng.range(15.0, 60.0);
@@ -327,7 +347,7 @@ mod tests {
         assert_eq!(planets.len(), 7);
         let periods: Vec<f64> = planets.iter().map(|p| p.orbit.unwrap().period() / 3600.0).collect();
         println!("planet periods (h): {periods:?}");
-        assert!(periods[0] < 12.0 && *periods.last().unwrap() > 72.0);
+        assert!(periods[0] < 12.0 && *periods.last().unwrap() > 48.0);
         for b in &s.bodies {
             if let Some(p) = b.parent {
                 let par = s.body(p);

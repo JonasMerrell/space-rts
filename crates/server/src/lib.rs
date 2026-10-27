@@ -113,7 +113,7 @@ pub struct Config {
     /// Port the server listens on (for the origins and https redirects).
     pub port: u16,
     /// Browser build files, scanned from `<data>/public/web/` when the server starts.
-    pub site: Arc<http::Site>,
+    pub site: Arc<http::LiveSite>,
 }
 
 /// Who may connect without TLS (old app builds, LAN tools, tests).
@@ -175,6 +175,8 @@ pub struct Server {
     dirty: HashSet<String>,
     /// games whose state changed since the last broadcast
     changed: HashSet<String>,
+    /// feedback reports per user in the current hour (user -> (hour, count))
+    feedback: HashMap<String, (u64, u32)>,
 }
 
 fn legacy_hash(salt: &str, pass: &str) -> String {
@@ -226,6 +228,31 @@ pub fn make_invites(path: &Path, n: usize) -> std::io::Result<Vec<String>> {
     Ok(codes)
 }
 
+/// Parse a saved game. A non-finite f64 is written by serde_json as `null` and then refuses to load;
+/// each such `null` where a number is expected is replaced by a huge number (`1e300`, read as "never"
+/// where that matters) and parsing retried. Returns the game and how many nulls were repaired.
+fn parse_game(text: &str) -> Result<(Game, usize), String> {
+    let mut text = text.to_string();
+    let mut repaired = 0;
+    loop {
+        match serde_json::from_str::<Game>(&text) {
+            Ok(g) => return Ok((g, repaired)),
+            Err(e) if repaired < 10_000 && e.to_string().contains("invalid type: null, expected f64") => {
+                // locate the offending `null` (the error column points just past it)
+                let line_start: usize = text.split_inclusive('\n').take(e.line().saturating_sub(1)).map(|l| l.len()).sum();
+                let end = (line_start + e.column()).min(text.len());
+                let start = end.saturating_sub(4);
+                if text.get(start..end) != Some("null") {
+                    return Err(e.to_string());
+                }
+                text.replace_range(start..end, "1e300");
+                repaired += 1;
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+}
+
 fn write_atomic(path: &Path, data: &str) {
     let tmp = path.with_extension("tmp");
     // a failed save loses state at the next restart, so say so loudly
@@ -243,17 +270,21 @@ impl Server {
         if let Ok(rd) = std::fs::read_dir(data.join("games")) {
             for e in rd.flatten() {
                 if e.path().extension().is_some_and(|x| x == "json") {
-                    match std::fs::read_to_string(e.path()).map_err(|e| e.to_string()).and_then(|s| serde_json::from_str::<Game>(&s).map_err(|e| e.to_string())) {
-                        Ok(g) => {
+                    match std::fs::read_to_string(e.path()).map_err(|e| e.to_string()).and_then(|s| parse_game(&s)) {
+                        Ok((g, repaired)) => {
+                            if repaired > 0 {
+                                eprintln!("repaired {repaired} null number(s) in {}", e.path().display());
+                            }
                             games.insert(g.code.clone(), g);
                         }
+                        // never touched again: the file stays as it is for a later fix
                         Err(err) => eprintln!("skipping {}: {err}", e.path().display()),
                     }
                 }
             }
         }
         eprintln!("loaded {} accounts, {} games from {}", accounts_len(&accounts), games.len(), data.display());
-        Server { data, invites: None, guard: None, accounts, games, conns: HashMap::new(), next_conn: 1, dirty: HashSet::new(), changed: HashSet::new() }
+        Server { data, invites: None, guard: None, accounts, games, conns: HashMap::new(), next_conn: 1, dirty: HashSet::new(), changed: HashSet::new(), feedback: HashMap::new() }
     }
 
     fn save(&mut self) {
@@ -283,7 +314,7 @@ impl Server {
                     c
                 })
                 .collect();
-            if !self.games.contains_key(&code) {
+            if !self.games.contains_key(&code) && !self.data.join("games").join(format!("{code}.json")).exists() {
                 return code;
             }
         }
@@ -302,6 +333,12 @@ impl Server {
             me,
             last_event: g.events_for(me).last().map(|e| e.seq).unwrap_or(0),
         })
+    }
+
+    fn list_for(&self, user: &str) -> Vec<GameSummary> {
+        let mut list: Vec<GameSummary> = self.games.values().filter_map(|g| self.summary(g, user)).collect();
+        list.sort_by(|a, b| a.code.cmp(&b.code));
+        list
     }
 
     fn send(&self, conn: u64, msg: &ServerMsg) {
@@ -354,9 +391,7 @@ impl Server {
                 }
             }
             ClientMsg::ListGames => {
-                let u = user.clone();
-                let mut list: Vec<GameSummary> = self.games.values().filter_map(|g| self.summary(g, &u)).collect();
-                list.sort_by(|a, b| a.code.cmp(&b.code));
+                let list = self.list_for(&user);
                 reply(self, ServerMsg::Games(list));
             }
             ClientMsg::CreateGame { name, size, length_days, speed, max_players, bots } => {
@@ -450,6 +485,74 @@ impl Server {
                 }
                 self.dirty.insert(code.clone());
                 self.changed.insert(code);
+            }
+            ClientMsg::Feedback { bug, text, game, client } => {
+                let hour = (unix_now() / 3600.0) as u64;
+                let e = self.feedback.entry(user.clone()).or_insert((hour, 0));
+                if e.0 != hour {
+                    *e = (hour, 0);
+                }
+                if e.1 >= 10 {
+                    return err(self, "thanks, that's plenty of reports for this hour");
+                }
+                e.1 += 1;
+                let text: String = text.trim().chars().take(4000).collect();
+                if text.is_empty() {
+                    return err(self, "write something first");
+                }
+                let rec = serde_json::json!({
+                    "t": unix_now(),
+                    "kind": if bug { "bug" } else { "feature" },
+                    "user": user,
+                    "game": game,
+                    "client": client.chars().take(80).collect::<String>(),
+                    "text": text,
+                });
+                let line = rec.to_string();
+                use std::io::Write as _;
+                let path = self.data.join("feedback.jsonl");
+                match std::fs::OpenOptions::new().create(true).append(true).open(&path).and_then(|mut f| writeln!(f, "{line}")) {
+                    Ok(()) => {}
+                    Err(e) => eprintln!("SAVE FAILED {}: {e}", path.display()),
+                }
+                // also to the journal, so admins without access to the data dir can read reports
+                eprintln!("FEEDBACK {line}");
+                reply(self, ServerMsg::CmdResult { ok: true, msg: "thanks, report saved".into() });
+            }
+            ClientMsg::DeleteGame { code } => {
+                let Some(g) = self.games.get(&code) else { return err(self, "no such game") };
+                if g.player_by_name(&user).map(|p| p.id) != Some(g.host) {
+                    return err(self, "only the host can delete a war");
+                }
+                let players: Vec<String> = g.players.iter().map(|p| p.name.clone()).collect();
+                let name = g.settings.name.clone();
+                self.games.remove(&code);
+                self.dirty.remove(&code);
+                self.changed.remove(&code);
+                let path = self.data.join("games").join(format!("{code}.json"));
+                if let Err(e) = std::fs::remove_file(&path) {
+                    eprintln!("delete {}: {e}", path.display());
+                }
+                eprintln!("war {code} deleted by {user}");
+                // everyone in it: close the game if open, then refresh their war list
+                let ids: Vec<(u64, Option<String>, bool)> = self
+                    .conns
+                    .iter()
+                    .filter(|(_, c)| c.user.as_ref().is_some_and(|u| players.contains(u)))
+                    .map(|(id, c)| (*id, c.user.clone(), c.open.as_deref() == Some(code.as_str())))
+                    .collect();
+                for (id, u, was_open) in ids {
+                    if was_open {
+                        if let Some(c) = self.conns.get_mut(&id) {
+                            c.open = None;
+                        }
+                        self.send(id, &ServerMsg::GameDeleted { code: code.clone(), name: name.clone() });
+                    }
+                    if let Some(u) = u {
+                        let list = self.list_for(&u);
+                        self.send(id, &ServerMsg::Games(list));
+                    }
+                }
             }
             ClientMsg::StartGame { code } => {
                 let Some(g) = self.games.get_mut(&code) else { return err(self, "no such game") };
@@ -766,10 +869,11 @@ fn setup(cfg: &Config, tls: &Arc<rustls::ServerConfig>, stream: TcpStream, ip: I
     }
     let origins = cfg.origins();
     let https_base = (cfg.web_cert.is_some()).then(|| cfg.web_hosts.first().map(|h| format!("https://{h}:{}", cfg.port))).flatten();
+    let site = cfg.site.current();
     let ctx = http::Ctx {
         ip,
         data: &cfg.data,
-        site: &cfg.site,
+        site: &site,
         secure,
         game_ok: secure || plain_ok,
         origins: &origins,
@@ -892,8 +996,8 @@ pub fn serve_with(listener: TcpListener, mut cfg: Config) -> Result<(), String> 
         cfg.port = a.port();
     }
     let web_dir = cfg.data.join("public").join("web");
-    cfg.site = Arc::new(http::Site::scan(&web_dir));
-    if !cfg.site.is_empty() {
+    cfg.site = Arc::new(http::LiveSite::new(web_dir.clone()));
+    if !cfg.site.current().is_empty() {
         eprintln!("browser build from {} at /play/", web_dir.display());
     }
     let guard = Guard::new(cfg.limits.clone());
@@ -957,4 +1061,36 @@ pub fn serve_with(listener: TcpListener, mut cfg: Config) -> Result<(), String> 
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod save_tests {
+    use super::parse_game;
+    use sim::game::{Game, Settings};
+    use sim::station::{Station, StationId, StationKind};
+    use sim::SystemSize;
+
+    #[test]
+    fn paused_station_round_trips_and_old_null_saves_load() {
+        let mut g = Game::new("ABCDE".into(), Settings { name: "t".into(), size: SystemSize::Small, max_players: 2, length: 86_400.0, speed: 1.0 }, 3, "ann");
+        let _ = g.add_player("bob", None);
+        g.start();
+        let body = g.players[0].home.unwrap();
+        g.stations.push(Station { id: StationId(0), owner: 0, kind: StationKind::FuelDepot, body, hp: 100.0, fuel: 0.0, done_t: f64::INFINITY, work_left: 3600.0 });
+        let json = serde_json::to_string(&g).unwrap();
+        assert!(!json.contains("\"done_t\":null"));
+        let done = json.split("\"done_t\":").nth(1).unwrap().split(',').next().unwrap().to_string();
+        let (back, n) = parse_game(&json).unwrap();
+        assert_eq!(n, 0);
+        assert!(back.stations[0].done_t.is_infinite());
+        // a file written by 0.5.x: the infinity became null
+        let old = json.replace(&format!("\"done_t\":{done}"), "\"done_t\":null");
+        assert!(old.contains("\"done_t\":null"));
+        let (back, _) = parse_game(&old).unwrap();
+        assert!(back.stations[0].done_t.is_infinite());
+        // any other f64 that went null is repaired instead of losing the whole game
+        let hp = old.replacen("\"hp\":100.0", "\"hp\":null", 1);
+        let (_, n) = parse_game(&hp).unwrap();
+        assert_eq!(n, 1);
+    }
 }

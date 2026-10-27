@@ -3,25 +3,32 @@ use sim::game::*;
 use sim::plan::{self, Choice, PlanHint, TransferPlan};
 use sim::system::{generate, SystemSize};
 use sim::traj::End;
-use sim::{BodyId, System};
+use sim::{BodyId, BodyKind, System};
 
-fn body(sys: &System, name: &str) -> BodyId {
-    sys.by_name(name).unwrap_or_else(|| panic!("no body {name}"))
+/// Sibling planet pairs of a system, nearest orbits first (deterministic order).
+fn planet_pairs(sys: &System) -> Vec<(BodyId, BodyId)> {
+    let p: Vec<BodyId> = sys.bodies.iter().filter(|b| matches!(b.kind, BodyKind::Planet | BodyKind::GasGiant)).map(|b| b.id).collect();
+    let a = |b: BodyId| sys.body(b).orbit.unwrap().a;
+    let mut pairs: Vec<(BodyId, BodyId)> = p.iter().flat_map(|&x| p.iter().filter(move |&&y| y != x).map(move |&y| (x, y))).collect();
+    pairs.sort_by(|&(x1, y1), &(x2, y2)| (a(x1) - a(y1)).abs().total_cmp(&(a(x2) - a(y2)).abs()).then((x1, y1).cmp(&(x2, y2))));
+    pairs
 }
 
-/// Seed-1 pairs where the survey (`cargo run --release -p sim --example flybycheck`) finds an assist.
-const PAIRS: [(&str, &str); 3] = [("Votorgar", "Garae"), ("Votorgar", "Tanyxvo"), ("Votorgar", "Orkaix")];
-
-/// First seed-1 pair that plans with a flyby at `now`.
+/// First pair (in `planet_pairs` order) that `plan_route` flies with a flyby at `now`. Searches
+/// the generated system instead of naming bodies, so it survives generator changes; the result is
+/// still deterministic for a given seed. (Survey: `cargo run --release -p sim --example flybycheck`.)
 fn assisted(sys: &System, now: f64) -> (BodyId, BodyId, TransferPlan) {
-    for (a, b) in PAIRS {
-        let (a, b) = (body(sys, a), body(sys, b));
+    for (a, b) in planet_pairs(sys) {
+        // the Lambert screen is cheap: only fly pairs that have an assist candidate at all
+        if sim::assist::screen(sys, a, b, now, plan::search_span(sys, a, b), None).is_empty() {
+            continue;
+        }
         let p = plan::plan_route(sys, a, b, now, None).unwrap();
         if !p.flybys.is_empty() {
             return (a, b, p);
         }
     }
-    panic!("no assisted route among {PAIRS:?}");
+    panic!("seed {}: no planet pair plans with a gravity assist", sys.seed);
 }
 
 fn same(a: &TransferPlan, b: &TransferPlan) -> bool {
@@ -65,8 +72,14 @@ fn plans_are_deterministic_and_hints_reproduce_them() {
 #[test]
 fn options_run_from_cheapest_to_fastest() {
     let sys = generate(1, SystemSize::Medium);
-    let (a, b) = (body(&sys, "Anseldra"), body(&sys, "Orkaix"));
-    let opts = plan::options(&sys, a, b, 3600.0, None, 60.0);
+    // first pair (nearest orbits first) that offers a faster option on top of the cheapest
+    let (a, b, opts) = planet_pairs(&sys)
+        .into_iter()
+        .take(12)
+        .map(|(a, b)| (a, b, plan::options(&sys, a, b, 3600.0, None, 60.0)))
+        .find(|(_, _, o)| o.len() >= 2)
+        .expect("no pair with more than one option");
+    println!("{} -> {}", sys.body(a).name, sys.body(b).name);
     for (c, p) in &opts {
         println!("{c:?}: {:.2} km/s, {:.1} h, via {:?}", p.total_dv(), (p.arrive_t - 3600.0) / 3600.0, p.flybys);
     }

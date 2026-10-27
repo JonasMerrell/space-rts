@@ -418,7 +418,16 @@ mod tests {
     fn unplanned_flyby_is_a_proper_hyperbola() {
         let sys = generate(7, SystemSize::Medium);
         let mut rng = Rng::new(99);
-        let targets: Vec<BodyId> = sys.bodies.iter().filter(|b| matches!(b.kind, BodyKind::Planet | BodyKind::GasGiant | BodyKind::Moon)).map(|b| b.id).collect();
+        // bodies without moons: a moon system makes the pass a different (multi-body) path
+        let targets: Vec<BodyId> = sys
+            .bodies
+            .iter()
+            .filter(|b| matches!(b.kind, BodyKind::Planet | BodyKind::GasGiant | BodyKind::Moon) && sys.children(b.id).next().is_none())
+            // gas-giant moons orbit deep in the giant's well: the giant's pull over the approach arc
+            // shifts v∞ by more than this test's tolerance (patched conics are still continuous there)
+            .filter(|b| b.parent.is_none_or(|p| sys.body(p).kind != BodyKind::GasGiant))
+            .map(|b| b.id)
+            .collect();
         let mut n = 0;
         for k in 0..200 {
             let b = targets[k % targets.len()];
@@ -475,7 +484,12 @@ mod tests {
     #[test]
     fn trailing_pass_boosts_leading_pass_brakes() {
         let sys = generate(7, SystemSize::Medium);
-        let b = sys.bodies.iter().filter(|b| matches!(b.kind, BodyKind::Planet | BodyKind::GasGiant)).max_by(|a, c| a.mu.total_cmp(&c.mu)).unwrap();
+        let b = sys
+            .bodies
+            .iter()
+            .filter(|b| matches!(b.kind, BodyKind::Planet | BodyKind::GasGiant) && sys.children(b.id).next().is_none())
+            .max_by(|a, c| a.mu.total_cmp(&c.mu))
+            .unwrap();
         let tp = 5000.0;
         let (rb, vb) = sys.rel_state(b.id, tp);
         let rp = b.radius * 1.5;

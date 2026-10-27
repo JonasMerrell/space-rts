@@ -16,6 +16,7 @@ pub mod tech;
 pub mod traj;
 pub mod system;
 pub mod v2;
+pub mod waitlist;
 
 pub use system::{Body, BodyId, BodyKind, System, SystemSize};
 pub use v2::{v2, V2};

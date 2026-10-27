@@ -18,8 +18,8 @@ pub enum BackendEvent {
 /// Commands from the UI. Fire-and-forget; results arrive as `BackendEvent`s or a changed view.
 #[derive(Clone, Debug)]
 pub enum UiAction {
-    /// Close the "while you were away" report.
-    DismissReport,
+    /// The sensors report was looked at: its log items so far are no longer new.
+    SensorsSeen,
     /// `invite`: code for invite-only servers when registering ("" = none)
     Login { server: String, user: String, pass: String, register: bool, invite: String },
     Logout,
@@ -38,12 +38,18 @@ pub enum UiAction {
     CancelFlight { ship: ShipId },
     Chat(String),
     BackToMenu,
+    /// Build/Upgrade/Research/BuildStation start now when affordable, otherwise they wait for funds
+    /// and start by themselves once income covers them.
     Build { body: BodyId, class: ShipClass },
     /// `upgrade` is one of `model::UPGRADES`.
     Upgrade { body: BodyId, upgrade: String },
     SetOrder { ship: ShipId, retreat: bool },
     /// Host only.
     ExtendGame { days: u32 },
+    /// Host only: delete the war for every player (ask for confirmation first).
+    DeleteGame { code: String },
+    /// Bug report (`bug`) or feature request; the server logs it with the current war and client version.
+    Feedback { bug: bool, text: String },
     /// Host only: game seconds per real second from now on.
     SetSpeed { speed: f64 },
     /// Retry the server connection now instead of waiting for the backoff.
@@ -52,6 +58,10 @@ pub enum UiAction {
     CancelJob { body: BodyId, index: usize },
     /// Move queue item `from` to position `to` (indices into `BodyInfo.queue`).
     MoveJob { body: BodyId, from: usize, to: usize },
+    /// Drop an item from the waiting-for-funds list (`WaitingItem::id`).
+    Unwait { id: u32 },
+    /// Move a waiting item to position `to` of the whole waiting list (`WaitingItem::index`).
+    MoveWait { id: u32, to: usize },
     /// Start `tech` (a `TechInfo::id`) at a lab body.
     Research { body: BodyId, tech: String },
     /// `kind` is one of `model::STATION_KINDS`.
@@ -74,6 +84,19 @@ pub enum UiAction {
 pub enum PlanPoll {
     Pending,
     Done(Option<TransferPlan>),
+}
+
+/// Result of polling `Backend::windows_async`.
+#[derive(Clone, Debug)]
+pub enum WindowsPoll {
+    Pending,
+    Done(Option<WindowsView>),
+}
+
+impl WindowsPoll {
+    pub fn is_pending(&self) -> bool {
+        matches!(self, WindowsPoll::Pending)
+    }
 }
 
 /// Result of polling `Backend::plan_impact_async`.
@@ -117,6 +140,11 @@ pub trait Backend {
     fn plan_intercept_async(&self, _ship: ShipId, _target: ShipId, _matched: bool) -> PlanPoll {
         PlanPoll::Done(None)
     }
+    /// Transfer-window tool for a parked ship, polled every frame like `plan_transfer_async`.
+    /// None = not parked / not ours. Default: unsupported.
+    fn windows_async(&self, _ship: ShipId) -> WindowsPoll {
+        WindowsPoll::Done(None)
+    }
     /// Asteroid impact planner, polled every frame like `plan_transfer_async`. None = can't aim it
     /// (not ours, no tech, no route). Default: unsupported.
     fn plan_impact_async(&self, _asteroid: BodyId, _target: BodyId) -> ImpactPoll {
@@ -136,6 +164,15 @@ pub trait Backend {
     fn describe(&self, _key: &str) -> Option<String> {
         None
     }
+    /// Final standings once the war has ended (time limit reached); None while it runs.
+    fn results(&self) -> Option<GameResults> {
+        None
+    }
+    /// When your stations under construction at `body` should be finished (latest of them), if any.
+    /// Infinity = paused (no constructor there). Use it to schedule a constructor to leave when done.
+    fn construction_done(&self, _body: BodyId) -> Option<f64> {
+        None
+    }
     fn body_info(&self, _id: BodyId) -> Option<BodyInfo> {
         None
     }
@@ -147,8 +184,8 @@ pub trait Backend {
     fn stations(&self, _id: BodyId) -> Option<StationsView> {
         None
     }
-    /// "While you were away" report to show on entering a game (until `UiAction::DismissReport`).
-    fn away_report(&self) -> Option<&AwayReport> {
+    /// Sensors report for the open game (what is happening, what sensors see, what happened).
+    fn sensors(&self) -> Option<&SensorsReport> {
         None
     }
     /// Signing back in from a saved session as this user (login screen shows a splash, not the form).

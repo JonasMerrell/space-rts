@@ -19,6 +19,7 @@ extern "C" {
     fn hr_notify(on: i32);
     fn hr_loaded();
     fn hr_text_fields(rects: *const f32, n: usize, focused: i32);
+    fn hr_paste();
 }
 
 /// The JS plugin checks this against its own version.
@@ -64,12 +65,32 @@ pub fn loaded() {
 
 /// Tell the page where the game's text fields are (CSS px) and whether one is focused: a tap on one
 /// focuses a hidden HTML input so phones open their keyboard, whose typing comes back as key events.
-pub fn text_fields(ui: &ui::Ui) {
+pub fn text_fields(ui: &mut ui::Ui) {
+    // PASTE from a field's menu: the page reads the system clipboard and calls `hohmann_paste`
+    if std::mem::take(&mut ui.input.paste_request) {
+        unsafe { hr_paste() }
+    }
+    if let Some(text) = PASTED.with(|p| p.borrow_mut().take()) {
+        ui.input.inject_paste(text);
+    }
     // macroquad's screen coordinates are already CSS px with high_dpi (the canvas is dpi× larger)
     let (fields, focused) = ui.input.text_fields();
     let flat: Vec<f32> = fields.iter().flat_map(|(_, r)| [r.x, r.y, r.w, r.h]).collect();
     let focused = focused.and_then(|f| fields.iter().position(|(id, _)| *id == f)).map_or(-1, |i| i as i32);
     unsafe { hr_text_fields(flat.as_ptr(), fields.len(), focused) }
+}
+
+thread_local! {
+    static PASTED: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// Called by the page with the system clipboard's text (a buffer from miniquad's `allocate_vec_u8`).
+#[no_mangle]
+pub extern "C" fn hohmann_paste(ptr: *mut u8, len: usize) {
+    let bytes = unsafe { Vec::from_raw_parts(ptr, len, len) };
+    if let Ok(text) = String::from_utf8(bytes) {
+        PASTED.with(|p| *p.borrow_mut() = Some(text));
+    }
 }
 
 /// WebSocket connection with the same interface as the native TLS one.

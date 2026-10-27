@@ -11,6 +11,7 @@ use sim::station::StationKind;
 use sim::tech::{Branch, Tech};
 use sim::system::{BodyKind as SimKind, SystemSize};
 use sim::traj::{Burn, Trajectory as SimTraj};
+use sim::waitlist::Wish;
 use sim::{BodyId as SimBody, V2};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -84,6 +85,9 @@ pub struct ClientBackend {
     /// fuel ↔ time slider: exact courses between two options, keyed by both tokens + fraction
     between: RefCell<HashMap<String, Option<m::TransferPlan>>>,
     between_jobs: RefCell<HashMap<String, Job<Option<m::TransferPlan>>>>,
+    /// transfer-window tool, keyed by ship and quarter hour
+    windows: RefCell<HashMap<(ShipId, i64), Option<m::WindowsView>>>,
+    windows_jobs: RefCell<HashMap<(ShipId, i64), Job<Option<m::WindowsView>>>>,
     /// asteroid impact previews keyed by (asteroid, target), and their background jobs
     impact_cache: RefCell<HashMap<(BodyId, BodyId), Option<m::ImpactPreview>>>,
     impact_jobs: RefCell<HashMap<(BodyId, BodyId), Job<Option<m::ImpactPreview>>>>,
@@ -102,8 +106,11 @@ pub struct ClientBackend {
     forecast: Forecaster,
     /// last `predicted` answer: (run gen, frame index, view)
     predicted: RefCell<Option<(u64, usize, Rc<m::GameView>)>>,
-    /// "While you were away" report waiting to be shown / dismissed.
-    report: Option<m::AwayReport>,
+    /// Sensors report for the open game, rebuilt with the view.
+    sensors: Option<m::SensorsReport>,
+    /// (game code, game time) up to which the player has seen the report's log: the server's
+    /// last-active time on open, then whenever the report is closed.
+    sensors_seen: Option<(String, f64)>,
 }
 
 impl ClientBackend {
@@ -140,6 +147,8 @@ impl ClientBackend {
             plan_jobs: RefCell::new(HashMap::new()),
             between: RefCell::new(HashMap::new()),
             between_jobs: RefCell::new(HashMap::new()),
+            windows: RefCell::new(HashMap::new()),
+            windows_jobs: RefCell::new(HashMap::new()),
             impact_cache: RefCell::new(HashMap::new()),
             impact_jobs: RefCell::new(HashMap::new()),
             reconnect_at: 0.0,
@@ -152,7 +161,8 @@ impl ClientBackend {
             last_error: None,
             forecast: Forecaster::default(),
             predicted: RefCell::new(None),
-            report: None,
+            sensors: None,
+            sensors_seen: None,
         }
     }
 
@@ -162,6 +172,18 @@ impl ClientBackend {
             // queued until we're back: taps made while reconnecting still go through
             _ => self.pending.borrow_mut().push(msg),
         }
+    }
+
+    /// Build/upgrade/station/research: start it now if we can, otherwise put it on the
+    /// waiting-for-funds list (it starts by itself once income covers it).
+    fn send_wish(&self, code: String, wish: Wish) {
+        let now = self.game.as_ref().is_some_and(|g| {
+            let p = &g.players[self.me as usize];
+            let (m, e) = g.wish_cost(self.me, wish, 0);
+            g.wish_blocker(self.me, wish).is_none() && p.matter >= m && p.energy >= e
+        });
+        let cmd = if now { wish.command() } else { Command::Wait { wish } };
+        self.send(ClientMsg::Cmd { code, cmd });
     }
 
     /// Should we be holding a connection open (logged in, or resuming a saved session)?
@@ -209,6 +231,8 @@ impl ClientBackend {
     fn on_msg(&mut self, msg: ServerMsg) {
         match msg {
             ServerMsg::Welcome { user, token } => {
+                // a reconnect after a dropped connection: keep the player where they were
+                let reconnect = self.logged_in;
                 self.logged_in = true;
                 self.auto_user = None;
                 self.online = true;
@@ -221,7 +245,9 @@ impl ClientBackend {
                     }
                     crate::notify::save(&self.server, u, secret);
                 }
-                self.events.push(BackendEvent::LoggedIn { user });
+                if !reconnect {
+                    self.events.push(BackendEvent::LoggedIn { user });
+                }
                 // re-open the game we were looking at after a reconnect
                 if let Some(code) = self.code() {
                     self.send(ClientMsg::Open { code });
@@ -255,13 +281,22 @@ impl ClientBackend {
                     self.notice(m::NoticeKind::Bad, "Can't do that", &msg, None);
                 }
             }
-            ServerMsg::Report { code, since, now, events } => {
-                // only worth a sheet after a real absence (not a reconnect blip)
-                if self.code().as_deref() == Some(code.as_str()) && now - since >= REPORT_MIN_AWAY && !events.is_empty() {
-                    self.report = Some(away_report(since, now, &events));
+            ServerMsg::Report { code, since, .. } => {
+                // sent on Open, before the State: what happened since is "new" in the sensors
+                // report (a reconnect keeps what the player already looked at)
+                if self.sensors_seen.as_ref().is_none_or(|s| s.0 != code) {
+                    self.sensors_seen = Some((code, since));
                 }
             }
             ServerMsg::Events(_) | ServerMsg::Pong => {}
+            ServerMsg::GameDeleted { code, name } => {
+                if self.code().as_deref() == Some(code.as_str()) {
+                    self.game = None;
+                    self.view = None;
+                    self.was_running = false;
+                }
+                self.notice(m::NoticeKind::Bad, "War deleted", &format!("The host deleted \"{name}\""), None);
+            }
         }
     }
 
@@ -275,6 +310,7 @@ impl ClientBackend {
             self.last_event_seq = game.events_for(me).last().map(|e| e.seq).unwrap_or(0);
             self.was_running = false;
             self.plan_cache.borrow_mut().clear();
+            self.windows.borrow_mut().clear();
             self.between.borrow_mut().clear();
         self.impact_cache.borrow_mut().clear();
             self.impact_cache.borrow_mut().clear();
@@ -377,7 +413,17 @@ impl ClientBackend {
             }
         }
         let game = self.game.as_ref().unwrap();
-        self.view = Some(build_view(game, self.me, self.now(), &self.paths));
+        let now = self.now();
+        self.view = Some(build_view(game, self.me, now, &self.paths));
+        let seen = match &self.sensors_seen {
+            Some((code, t)) if *code == game.code => *t,
+            // no Report for this game (lobby, or just created): nothing counts as new
+            _ => {
+                self.sensors_seen = Some((game.code.clone(), now));
+                now
+            }
+        };
+        self.sensors = (game.status != Status::Lobby).then(|| crate::sensors::report(game, self.me, now, seen));
     }
 
     fn ship_ids(&self, id: ShipId) -> Vec<g::ShipId> {
@@ -444,7 +490,7 @@ fn compute_impact(g: &Game, me: g::PlayerId, now: f64, ast: BodyId, target: Body
 /// with ship ids (those count up from 1) or forecast-only ships (from `PLANNED_BASE` up).
 const FLEET_TOKEN: u32 = 0x4000_0000;
 
-fn fleet_token(f: &sim::fleet::Fleet) -> ShipId {
+pub(crate) fn fleet_token(f: &sim::fleet::Fleet) -> ShipId {
     FLEET_TOKEN + f.id.0
 }
 
@@ -626,6 +672,26 @@ fn model_intercept(g: &Game, s: &g::Ship, ship: ShipId, p: &sim::intercept::Inte
     }
 }
 
+/// Transfer-window tool: opportunities from where the ship is parked over the next 3 days.
+fn compute_windows(g: &Game, now: f64, ship: ShipId) -> Option<m::WindowsView> {
+    const HORIZON: f64 = 3.0 * 86_400.0;
+    let s = g.ship(lead(g, ship))?;
+    let from = s.parked_at()?;
+    let budget = g.with_fleetmates(s.id).iter().filter_map(|&id| g.ship(id)).map(|m| m.dv_left()).fold(s.dv_left(), f64::min);
+    let est = |w: &sim::plan::Window| m::WindowEst { depart_t: w.depart_t, arrive_t: w.arrive_t, dv: w.dv };
+    let list = sim::plan::opportunities(&g.system, from, now, HORIZON, budget)
+        .into_iter()
+        .map(|o| m::Opportunity {
+            target: o.to.0,
+            via: o.via.iter().map(|b| b.0).collect(),
+            windows: o.windows.iter().map(est).collect(),
+            fastest: o.fastest.as_ref().map(est),
+            strip: o.strip.iter().map(|&d| d as f32).collect(),
+        })
+        .collect();
+    Some(m::WindowsView { ship, from: from.0, start: now + 60.0, horizon: HORIZON, budget, list })
+}
+
 /// The exact course `f` of the way between two neighbouring slider options (see `plan::between`).
 fn compute_between(g: &Game, a: &m::TransferPlan, b: &m::TransferPlan, f: f64) -> Option<m::TransferPlan> {
     if let (Ok(ha), Ok(hb)) = (serde_json::from_str::<sim::reroute::Hint>(&a.token), serde_json::from_str::<sim::reroute::Hint>(&b.token)) {
@@ -804,40 +870,6 @@ pub(crate) fn ship_model(s: &g::Ship, trajectory: Option<m::Trajectory>) -> m::S
     }
 }
 
-/// Game seconds away before the report sheet is worth showing.
-const REPORT_MIN_AWAY: f64 = 900.0;
-
-fn away_report(since: f64, now: f64, events: &[g::Event]) -> m::AwayReport {
-    let items = events
-        .iter()
-        .map(|e| {
-            let territory = e.title.starts_with("Territory") || e.title == "Battle sighted";
-            let section = match e.kind {
-                g::EventKind::Battle => m::ReportSection::Battles,
-                _ if territory => m::ReportSection::Battles,
-                g::EventKind::Sensor => m::ReportSection::Contacts,
-                _ => m::ReportSection::Empire,
-            };
-            let tone = match e.kind {
-                g::EventKind::Good => 1,
-                g::EventKind::Bad | g::EventKind::Battle => -1,
-                g::EventKind::Sensor if e.title == "Contact" || e.title == "Engine burn" => -1,
-                _ => 0,
-            };
-            m::ReportItem {
-                t: e.t,
-                section,
-                title: e.title.clone(),
-                text: e.body.clone(),
-                focus: e.ship_ref.map(|s| m::Focus::Ship(s.0)).or(e.body_ref.map(|b| m::Focus::Body(b.0))),
-                fallback: e.body_ref.map(|b| m::Focus::Body(b.0)),
-                tone,
-            }
-        })
-        .collect();
-    m::AwayReport { since, now, items }
-}
-
 /// Replace our fleets' ship models with one token per fleet (models of other ships pass through).
 fn group_fleets(game: &Game, me: g::PlayerId, ships: Vec<m::Ship>) -> Vec<m::Ship> {
     let fleets: Vec<&sim::fleet::Fleet> = game.fleets.iter().filter(|f| f.owner == me).collect();
@@ -965,6 +997,7 @@ fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Tr
         }
     }
     m::GameView {
+        code: game.code.clone(),
         host: game.host,
         me,
         now,
@@ -1117,8 +1150,21 @@ impl Backend for ClientBackend {
                 max_players: 4,
                 bots,
             }),
-            UiAction::JoinGame { code } => self.send(ClientMsg::JoinGame { code }),
-            UiAction::OpenGame { code } => self.send(ClientMsg::Open { code }),
+            // opening a game always ends on the game screen, even if it's the one we had before
+            UiAction::JoinGame { code } => {
+                self.was_running = false;
+                self.send(ClientMsg::JoinGame { code })
+            }
+            UiAction::DeleteGame { code } => self.send(ClientMsg::DeleteGame { code }),
+            UiAction::Feedback { bug, text } => {
+                let platform = if cfg!(target_arch = "wasm32") { "web" } else if cfg!(target_os = "android") { "android" } else { "desktop" };
+                let client = format!("{} {platform}", env!("CARGO_PKG_VERSION"));
+                self.send(ClientMsg::Feedback { bug, text, game: code, client });
+            }
+            UiAction::OpenGame { code } => {
+                self.was_running = false;
+                self.send(ClientMsg::Open { code })
+            }
             UiAction::AddBot { difficulty } => {
                 if let Some(code) = code {
                     self.send(ClientMsg::AddBot { code, difficulty });
@@ -1194,7 +1240,12 @@ impl Backend for ClientBackend {
                     self.send(ClientMsg::Cmd { code, cmd: Command::CancelDeparture { ship: self.lead(ship) } });
                 }
             }
-            UiAction::DismissReport => self.report = None,
+            UiAction::SensorsSeen => {
+                if let Some(code) = self.code() {
+                    self.sensors_seen = Some((code, self.now()));
+                    self.rebuild();
+                }
+            }
             UiAction::MoveJob { body, from, to } => {
                 if let Some(code) = code.clone() {
                     self.send(ClientMsg::Cmd { code, cmd: Command::MoveJob { body: SimBody(body), from, to } });
@@ -1212,13 +1263,23 @@ impl Backend for ClientBackend {
             }
             UiAction::Build { body, class } => {
                 if let Some(code) = code {
-                    self.send(ClientMsg::Cmd { code, cmd: Command::Build { body: SimBody(body), class: sim_class(class) } });
+                    self.send_wish(code, Wish::Build { body: SimBody(body), class: sim_class(class) });
                 }
             }
             UiAction::Upgrade { body, upgrade } => match (code, upgrade_by_name(&upgrade)) {
-                (Some(code), Some(upgrade)) => self.send(ClientMsg::Cmd { code, cmd: Command::Upgrade { body: SimBody(body), upgrade } }),
+                (Some(code), Some(upgrade)) => self.send_wish(code, Wish::Upgrade { body: SimBody(body), upgrade }),
                 _ => self.notice(m::NoticeKind::Bad, "Unknown upgrade", &upgrade, None),
             },
+            UiAction::Unwait { id } => {
+                if let Some(code) = code {
+                    self.send(ClientMsg::Cmd { code, cmd: Command::Unwait { id } });
+                }
+            }
+            UiAction::MoveWait { id, to } => {
+                if let Some(code) = code {
+                    self.send(ClientMsg::Cmd { code, cmd: Command::MoveWait { id, to } });
+                }
+            }
             UiAction::SetOrder { ship, retreat } => {
                 if let Some(code) = code {
                     let order = if retreat { g::StandingOrder::Retreat } else { g::StandingOrder::Hold };
@@ -1236,7 +1297,7 @@ impl Backend for ClientBackend {
                 }
             }
             UiAction::Research { body, tech } => match (code, tech_by_name(&tech)) {
-                (Some(code), Some(tech)) => self.send(ClientMsg::Cmd { code, cmd: Command::Research { body: SimBody(body), tech } }),
+                (Some(code), Some(tech)) => self.send_wish(code, Wish::Research { body: SimBody(body), tech }),
                 _ => self.notice(m::NoticeKind::Bad, "Unknown tech", &tech, None),
             },
             UiAction::FormFleet { .. }
@@ -1250,7 +1311,7 @@ impl Backend for ClientBackend {
                 }
             }
             UiAction::BuildStation { body, kind } => match (code, station_by_name(&kind)) {
-                (Some(code), Some(kind)) => self.send(ClientMsg::Cmd { code, cmd: Command::BuildStation { body: SimBody(body), kind } }),
+                (Some(code), Some(kind)) => self.send_wish(code, Wish::Station { body: SimBody(body), kind }),
                 _ => self.notice(m::NoticeKind::Bad, "Unknown station", &kind, None),
             },
         }
@@ -1370,6 +1431,38 @@ impl Backend for ClientBackend {
         ui::PlanPoll::Pending
     }
 
+    fn windows_async(&self, ship: ShipId) -> ui::WindowsPoll {
+        let key = (ship, (self.now() / 900.0) as i64);
+        if let Some(v) = self.windows.borrow().get(&key) {
+            return ui::WindowsPoll::Done(v.clone());
+        }
+        let mut jobs = self.windows_jobs.borrow_mut();
+        if let Some(rx) = jobs.get(&key) {
+            return match rx.try_recv() {
+                Ok(res) => {
+                    jobs.remove(&key);
+                    let mut cache = self.windows.borrow_mut();
+                    cache.retain(|k, _| k.1 == key.1);
+                    cache.insert(key, res.clone());
+                    ui::WindowsPoll::Done(res)
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => ui::WindowsPoll::Pending,
+                Err(_) => {
+                    jobs.remove(&key);
+                    ui::WindowsPoll::Done(None)
+                }
+            };
+        }
+        // a new quarter hour: keep showing the last list while the fresh one is computed
+        let stale = self.windows.borrow().iter().find(|(k, _)| k.0 == ship).map(|(_, v)| v.clone());
+        let Some((game, now)) = self.plan_input(ship) else { return ui::WindowsPoll::Done(None) };
+        jobs.insert(key, Job::spawn(move || compute_windows(&game, now, ship)));
+        match stale {
+            Some(v) => ui::WindowsPoll::Done(v),
+            None => ui::WindowsPoll::Pending,
+        }
+    }
+
     fn plan_between_async(&self, a: &m::TransferPlan, b: &m::TransferPlan, f: f32) -> ui::PlanPoll {
         let key = format!("{}|{}|{}|{}|{}", a.token, a.depart_t.to_bits(), b.token, b.depart_t.to_bits(), f.to_bits());
         let (a, b) = (a.clone(), b.clone());
@@ -1424,6 +1517,22 @@ impl Backend for ClientBackend {
         self.forecast.shared.lock().unwrap().until()
     }
 
+    fn results(&self) -> Option<m::GameResults> {
+        let g = self.game.as_ref().filter(|g| g.status == Status::Ended)?;
+        let mut scores: Vec<(m::PlayerId, u32)> = g.players.iter().map(|p| (p.id, g.score(p.id))).collect();
+        scores.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        Some(m::GameResults { winner: g.winner, scores, ended_at: g.end_t })
+    }
+
+    fn construction_done(&self, body: BodyId) -> Option<f64> {
+        let g = self.game.as_ref()?;
+        g.stations
+            .iter()
+            .filter(|st| st.owner == self.me && st.body == SimBody(body) && st.building())
+            .map(|st| st.done_t)
+            .fold(None, |a: Option<f64>, t| Some(a.map_or(t, |x| x.max(t))))
+    }
+
     fn default_server(&self) -> String {
         self.server.clone()
     }
@@ -1446,7 +1555,12 @@ impl Backend for ClientBackend {
         let b = SimBody(id);
         let st = g.bodies.get(id as usize)?;
         let mine = st.owner == Some(self.me);
-        let pending = |u: g::Upgrade| st.queue.iter().filter(|j| matches!(j.kind, g::JobKind::Upgrade(x) if x == u)).count() as u8;
+        let waiting = g.players.get(self.me as usize).map(|p| p.waiting.as_slice()).unwrap_or(&[]);
+        // upgrades already queued or waiting for funds raise the level the next one buys
+        let pending = |u: g::Upgrade| {
+            let w = Wish::Upgrade { body: b, upgrade: u };
+            (st.queue.iter().filter(|j| matches!(j.kind, g::JobKind::Upgrade(x) if x == u)).count() + waiting.iter().filter(|x| x.wish == w).count()) as u8
+        };
         let upgrades = g::Upgrade::ALL
             .iter()
             .map(|&u| {
@@ -1487,7 +1601,23 @@ impl Backend for ClientBackend {
             })
             .collect();
         let (matter_rate, energy_rate, fuel_rate) = if mine { g.production(b) } else { (0.0, 0.0, 0.0) };
-        Some(m::BodyInfo { upgrades, buildable, queue, fuel: st.fuel, power: g.power_at(b), matter_rate, energy_rate, fuel_rate })
+        let etas = g.waiting_eta(self.me);
+        let waiting = waiting
+            .iter()
+            .zip(&etas)
+            .enumerate()
+            .filter(|(_, (w, _))| w.wish.body() == b)
+            .map(|(index, (w, e))| m::WaitingItem {
+                id: w.id,
+                label: w.wish.label(),
+                cost: m::Cost { matter: e.matter, energy: e.energy, seconds: 0.0 },
+                start_t: e.start_t,
+                blocked: e.blocked.clone(),
+                index,
+                of: etas.len(),
+            })
+            .collect();
+        Some(m::BodyInfo { upgrades, buildable, queue, waiting, fuel: st.fuel, power: g.power_at(b), matter_rate, energy_rate, fuel_rate })
     }
 
     fn research(&self) -> Option<m::ResearchView> {
@@ -1543,8 +1673,8 @@ impl Backend for ClientBackend {
         Some(m::ResearchView { techs, labs })
     }
 
-    fn away_report(&self) -> Option<&m::AwayReport> {
-        self.report.as_ref()
+    fn sensors(&self) -> Option<&m::SensorsReport> {
+        self.sensors.as_ref()
     }
 
     fn stations(&self, id: BodyId) -> Option<m::StationsView> {
@@ -1579,6 +1709,7 @@ impl Backend for ClientBackend {
                     desc: k.describe().to_string(),
                     cost: m::Cost { matter, energy, seconds },
                     blocker: g.station_blocker(me, b, k),
+                    queueable: g.wish_obsolete(me, Wish::Station { body: b, kind: k }, 0).is_none(),
                 }
             })
             .collect();

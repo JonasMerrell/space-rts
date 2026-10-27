@@ -452,6 +452,11 @@ pub struct Player {
     /// fog of war: what this player detects right now (recomputed every tick, so not saved or sent)
     #[serde(skip)]
     pub vision: crate::fog::Vision,
+    /// builds/upgrades/stations/research queued before they could be paid for (see waitlist.rs)
+    #[serde(default)]
+    pub waiting: Vec<crate::waitlist::Waiting>,
+    #[serde(default)]
+    pub next_wait: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -504,6 +509,9 @@ pub struct Settings {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Game {
+    /// rules revision the match was created with (old saves load as 0 and keep their balance)
+    #[serde(default)]
+    pub rules: u32,
     pub code: String,
     pub settings: Settings,
     pub status: Status,
@@ -573,6 +581,12 @@ pub enum Command {
     MoveJob { body: BodyId, from: usize, to: usize },
     /// Host only: game seconds per real second from now on.
     SetSpeed { speed: f64 },
+    /// Queue a build/upgrade/station/research that starts by itself once it's affordable (now, if it is).
+    Wait { wish: crate::waitlist::Wish },
+    /// Drop an item from the waiting-for-funds list.
+    Unwait { id: u32 },
+    /// Move a waiting item to position `to` of the list (earlier = funded first).
+    MoveWait { id: u32, to: usize },
     /// Meet enemy ship `target` at `arrive_t` (a course from `intercept::options`, re-planned from
     /// these numbers); `matched` = match its velocity there. Ships parked together or one fleet.
     Intercept { ships: Vec<ShipId>, target: ShipId, depart_t: f64, arrive_t: f64, matched: bool },
@@ -582,6 +596,27 @@ pub enum Command {
 }
 
 pub const TICK: f64 = 60.0;
+
+/// A game time that may be "never" (INFINITY). JSON has no infinity (serde_json writes `null`, which
+/// then fails to load), so it is stored as a huge finite number and read back as INFINITY.
+pub fn ser_time<S: serde::Serializer>(t: &f64, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_f64(if t.is_finite() { *t } else { NEVER })
+}
+
+/// Reads `ser_time` values; also accepts `null` (files written before the fix) as INFINITY.
+pub fn de_time<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+    let v: Option<f64> = Deserialize::deserialize(d)?;
+    Ok(match v {
+        Some(t) if t < NEVER * 0.5 => t,
+        _ => f64::INFINITY,
+    })
+}
+
+const NEVER: f64 = 1e300;
+/// Power a parked construction ship or scout adds in orbit (Jonas: they can claim bodies).
+pub const CONSTRUCTOR_POWER: f64 = 1.0;
+/// Current rules revision for new matches. 1: matter yield by body kind and planet size.
+pub const RULES: u32 = 1;
 const FACTIONS: [&str; 4] = ["vanguard", "hive", "prism", "junker"];
 
 impl Game {
@@ -590,6 +625,7 @@ impl Game {
         let bodies = vec![BodyState::default(); system.bodies.len()];
         let end_t = settings.length;
         let mut g = Game {
+            rules: RULES,
             code,
             settings,
             status: Status::Lobby,
@@ -650,6 +686,8 @@ impl Game {
             sensor_log: vec![],
             contacts: vec![],
             vision: Default::default(),
+            waiting: vec![],
+            next_wait: 0,
         });
         self.preview_homes();
         Ok(id)
@@ -851,6 +889,9 @@ impl Game {
         }
         match cmd {
             Command::Fleet(c) => self.fleet_command(player, c),
+            Command::Wait { wish } => self.wait_for_funds(player, wish),
+            Command::Unwait { id } => self.unwait(player, id),
+            Command::MoveWait { id, to } => self.move_wait(player, id, to),
             Command::Chat { text } => {
                 let text: String = text.chars().take(500).collect();
                 self.chat.push(ChatMsg { from: player, t: self.t, text });
@@ -1167,6 +1208,7 @@ impl Game {
             if step_end >= next_tick {
                 self.last_tick = next_tick;
                 self.economy(TICK);
+                self.fund_waiting();
                 self.jobs();
                 self.research_tick();
                 self.stations_tick(TICK);
@@ -1357,16 +1399,32 @@ impl Game {
         (4e5 / a).powi(2).clamp(0.05, 8.0)
     }
 
+    /// Base (matter, energy) per hour a body yields to its owner before upgrades.
+    /// Rules 1: planets 90 matter scaled by size (radius / 1100 km, 0.6–1.8×), gas giants 60 matter +
+    /// 40 energy, moons 30, asteroids 15; every body also gives 20 energy.
+    pub fn base_yield(&self, body: BodyId) -> (f64, f64) {
+        let b = self.system.body(body);
+        if self.rules == 0 {
+            return (if b.kind == BodyKind::Star { 0.0 } else { 60.0 }, 20.0);
+        }
+        match b.kind {
+            BodyKind::Star => (0.0, 20.0),
+            BodyKind::Planet => (90.0 * (b.radius / 1100.0).clamp(0.6, 1.8), 20.0),
+            BodyKind::GasGiant => (60.0, 60.0),
+            BodyKind::Moon => (30.0, 20.0),
+            BodyKind::Asteroid => (15.0, 20.0),
+        }
+    }
+
     /// Production per hour for a body (matter, energy, fuel) given its upgrades.
     pub fn production(&self, body: BodyId) -> (f64, f64, f64) {
         let b = &self.bodies[body.0 as usize];
         if b.owner.is_none() || b.shattered || b.gone {
             return (0.0, 0.0, 0.0);
         }
-        let kind = self.system.body(body).kind;
-        let base_m = if kind == BodyKind::Star { 0.0 } else { 60.0 };
+        let (base_m, base_e) = self.base_yield(body);
         let matter = base_m * (1.0 + b.level(Upgrade::Mining) as f64);
-        let energy = 20.0 + 60.0 * b.level(Upgrade::Solar) as f64 * self.solar_factor(body) + 60.0 * b.level(Upgrade::Reactor) as f64;
+        let energy = base_e + 60.0 * b.level(Upgrade::Solar) as f64 * self.solar_factor(body) + 60.0 * b.level(Upgrade::Reactor) as f64;
         let fuel = 120.0 * b.level(Upgrade::Refinery) as f64;
         let m = self.mods(b.owner.unwrap());
         (matter * m.matter, energy * m.energy, fuel * m.fuel)
@@ -1388,7 +1446,10 @@ impl Game {
             let b = &mut self.bodies[i];
             b.fuel += made;
             let max = b.def_max() * def_k;
-            b.def_hp = (b.def_hp + max * 0.1 * h).min(max);
+            // guns are repaired only while nobody is shooting at them
+            if !b.in_combat {
+                b.def_hp = (b.def_hp + max * 0.1 * h).min(max);
+            }
         }
         // refuelling: ships parked at a friendly body draw from its stock; tankers top up friends
         for i in 0..self.ships.len() {
@@ -1468,6 +1529,9 @@ impl Game {
         for s in &self.ships {
             if s.parked_at() == Some(body) && s.class.stats().attack > 0.0 {
                 add(s.owner, s.class.stats().attack * (s.hp / s.stats().hp).max(0.2));
+            } else if s.parked_at() == Some(body) && matches!(s.class, ShipClass::Constructor | ShipClass::Scout) {
+                // unarmed, but enough of a presence to claim an empty body
+                add(s.owner, CONSTRUCTOR_POWER * (s.hp / s.stats().hp).max(0.2));
             }
         }
         for st in self.stations_at(body) {
@@ -1729,6 +1793,25 @@ mod tests {
         assert!(q[0].done_t < second);
         assert!((g.players[0].matter - (m0 - ShipClass::Scout.stats().matter)).abs() < 1e-9);
         assert!(g.apply(1, Command::CancelJob { body: home, index: 0 }).is_err());
+    }
+
+    #[test]
+    fn a_scout_claims_an_empty_body() {
+        let mut g = game();
+        let target = g.system.bodies.iter().find(|b| b.kind == BodyKind::Asteroid && g.bodies[b.id.0 as usize].owner.is_none()).unwrap().id;
+        g.spawn(0, ShipClass::Scout, target);
+        g.advance_to(g.t + 120.0);
+        assert_eq!(g.bodies[target.0 as usize].owner, Some(0));
+    }
+
+    #[test]
+    fn a_constructor_claims_an_empty_body() {
+        let mut g = game();
+        let target = g.system.bodies.iter().find(|b| b.kind == BodyKind::Asteroid && g.bodies[b.id.0 as usize].owner.is_none()).unwrap().id;
+        let c = g.spawn(0, ShipClass::Constructor, target);
+        g.advance_to(g.t + 120.0);
+        assert_eq!(g.bodies[target.0 as usize].owner, Some(0));
+        assert!(g.ship(c).is_some());
     }
 
     #[test]

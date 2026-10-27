@@ -107,6 +107,8 @@ pub struct BodyInfo {
     pub buildable: Vec<(ShipClass, Cost)>,
     /// (label, finishes at t).
     pub queue: Vec<(String, f64)>,
+    /// Ours waiting for funds at this body (they start by themselves once income covers them).
+    pub waiting: Vec<WaitingItem>,
     pub fuel: f64,
     /// Military power in orbit per player.
     pub power: Vec<(PlayerId, f64)>,
@@ -114,6 +116,22 @@ pub struct BodyInfo {
     pub matter_rate: f64,
     pub energy_rate: f64,
     pub fuel_rate: f64,
+}
+
+/// A build/upgrade/station/research queued before we could pay for it.
+#[derive(Clone, Debug)]
+pub struct WaitingItem {
+    /// Sent back in `UiAction::Unwait` / `MoveWait`.
+    pub id: u32,
+    pub label: String,
+    pub cost: Cost,
+    /// Projected start from the current income; None = blocked or no income.
+    pub start_t: Option<f64>,
+    /// Why it can't start whatever the money ("needs a construction ship..."); it's skipped meanwhile.
+    pub blocked: Option<String>,
+    /// Position in our whole waiting list (all bodies; earlier = funded first) and its length.
+    pub index: usize,
+    pub of: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -411,6 +429,40 @@ pub struct Intercept {
     pub meet: [f64; 2],
 }
 
+/// Transfer-window tool: upcoming opportunities from where a ship is parked to every planet,
+/// moon and gas giant (estimates; tapping one plans the real course).
+#[derive(Clone, Debug)]
+pub struct WindowsView {
+    pub ship: ShipId,
+    pub from: BodyId,
+    /// The strips cover departures from `start` to `start + horizon`.
+    pub start: f64,
+    pub horizon: f64,
+    /// Δv the ship (the thirstiest ship of a fleet) has left, km/s.
+    pub budget: f64,
+    pub list: Vec<Opportunity>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Opportunity {
+    pub target: BodyId,
+    /// Bodies passed through on the way (moons of other planets go via their planet).
+    pub via: Vec<BodyId>,
+    /// Best departure windows in the horizon, soonest first.
+    pub windows: Vec<WindowEst>,
+    /// Earliest arrival that fits the fuel, leaving any time in the horizon.
+    pub fastest: Option<WindowEst>,
+    /// Estimated Δv (km/s) for departures evenly spaced over the horizon (a porkchop slice).
+    pub strip: Vec<f32>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct WindowEst {
+    pub depart_t: f64,
+    pub arrive_t: f64,
+    pub dv: f64,
+}
+
 #[derive(Clone, Debug)]
 pub struct LobbyInfo {
     pub code: String,
@@ -434,9 +486,20 @@ pub struct GameSummary {
     pub unread: usize,
 }
 
+/// Final standings of an ended war (`Backend::results`).
+#[derive(Clone, Debug, Default)]
+pub struct GameResults {
+    pub winner: Option<PlayerId>,
+    /// (player, territory score), best first
+    pub scores: Vec<(PlayerId, u32)>,
+    pub ended_at: f64,
+}
+
 /// Everything the in-game screens draw.
 #[derive(Clone, Debug, Default)]
 pub struct GameView {
+    /// Join code of this war (for war-level actions like DeleteGame).
+    pub code: String,
     pub me: PlayerId,
     pub host: PlayerId,
     pub now: f64,
@@ -538,6 +601,8 @@ pub struct StationOption {
     pub cost: Cost,
     /// Why it can't be built here now; None = can build.
     pub blocker: Option<String>,
+    /// Can be queued anyway: it starts by itself once the blocker clears and it's affordable.
+    pub queueable: bool,
 }
 
 /// Stations at a body and what we could build there (`Backend::stations`).
@@ -557,21 +622,77 @@ pub struct StationsView {
 /// Station kinds (= sim `StationKind`), also the icon names `station_<lowercase>`.
 pub const STATION_KINDS: [&str; 6] = ["Shipyard", "FuelDepot", "Telescope", "Scanner", "Defense", "Relay"];
 
-/// Section of the "while you were away" report.
+/// Tab of the sensors report.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReportTab {
+    /// what is happening right now
+    Now,
+    /// what our telescopes and scanners see (or last saw)
+    Contacts,
+    /// what has happened
+    Log,
+}
+
+/// Group of rows inside a sensors report tab.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReportSection {
-    /// battles, planets changing hands
+    /// enemy ships or asteroids on their way to our bodies, enemy ships in orbit of ours
+    Threats,
+    /// fighting we can see
     Battles,
-    /// what sensors picked up: contacts spotted/lost, engine burns
-    Contacts,
-    /// own builds, arrivals, research
-    Empire,
+    /// our ships in flight and scheduled departures
+    Transfers,
+    /// enemy ships in sensor range now
+    Ships,
+    /// enemy ships out of sensor range: where they were last seen
+    Ghosts,
+    /// planets and moons and what we know about them
+    Bodies,
+    /// events and sensor sightings, oldest first
+    Log,
+}
+
+impl ReportSection {
+    pub fn tab(self) -> ReportTab {
+        match self {
+            ReportSection::Threats | ReportSection::Battles | ReportSection::Transfers => ReportTab::Now,
+            ReportSection::Ships | ReportSection::Ghosts | ReportSection::Bodies => ReportTab::Contacts,
+            ReportSection::Log => ReportTab::Log,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            ReportSection::Threats => "THREATS",
+            ReportSection::Battles => "BATTLES IN SIGHT",
+            ReportSection::Transfers => "YOUR SHIPS UNDER WAY",
+            ReportSection::Ships => "CONTACTS IN RANGE",
+            ReportSection::Ghosts => "LAST KNOWN POSITIONS",
+            ReportSection::Bodies => "PLANETS & MOONS",
+            ReportSection::Log => "",
+        }
+    }
+}
+
+/// How a report row's time reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum When {
+    /// it happened at `t` (clock time)
+    At,
+    /// it happens at `t` (countdown)
+    Eta,
+    /// last seen at `t` ("3H AGO")
+    Seen,
+    /// seen right now
+    Live,
+    /// no time to show
+    Never,
 }
 
 #[derive(Clone, Debug)]
 pub struct ReportItem {
-    /// game time
+    /// game time (see `when`)
     pub t: f64,
+    pub when: When,
     pub section: ReportSection,
     pub title: String,
     pub text: String,
@@ -582,10 +703,20 @@ pub struct ReportItem {
     pub tone: i8,
 }
 
-/// Everything that happened while the player was away (game times).
-#[derive(Clone, Debug)]
-pub struct AwayReport {
-    pub since: f64,
-    pub now: f64,
+/// The sensors report: what is happening now, what our sensors see, and what has happened. Built
+/// from the fogged view only, so it never knows more than the map.
+#[derive(Clone, Debug, Default)]
+pub struct SensorsReport {
+    /// Log items after this game time are new (the player hasn't opened the report since).
+    pub seen_until: f64,
     pub items: Vec<ReportItem>,
+}
+
+impl SensorsReport {
+    pub fn unread(&self) -> usize {
+        self.items.iter().filter(|i| i.section == ReportSection::Log && i.t > self.seen_until).count()
+    }
+    pub fn threats(&self) -> usize {
+        self.items.iter().filter(|i| i.section == ReportSection::Threats).count()
+    }
 }

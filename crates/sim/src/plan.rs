@@ -2,7 +2,7 @@
 //! patched-conic shooting refinement so the real predicted path is captured at the target.
 use crate::assist;
 use crate::kepler::{circular_speed, Conic, ejection, lambert, oberth_dv};
-use crate::system::{BodyId, System};
+use crate::system::{BodyId, BodyKind, System};
 use crate::traj::{predict, Burn, End, State, Trajectory};
 use crate::v2::V2;
 use serde::{Deserialize, Serialize};
@@ -268,6 +268,88 @@ pub fn windows(sys: &System, from: BodyId, to: BodyId, now: f64, span: f64) -> V
 /// Cost curve for the time-scrubber / porkchop strip: (depart time, best Δv) samples.
 pub fn dv_curve(sys: &System, from: BodyId, to: BodyId, now: f64, span: f64, n: usize) -> Vec<(f64, f64)> {
     scan(sys, from, to, now, span, n.max(2)).into_iter().map(|(t, _, c)| (t, c)).collect()
+}
+
+/// One destination in the transfer-window tool.
+#[derive(Clone, Debug)]
+pub struct Opportunity {
+    pub to: BodyId,
+    /// bodies passed through before `to` (each hop is its own leg; times and Δv after the first
+    /// are rough estimates)
+    pub via: Vec<BodyId>,
+    /// best departure windows within the horizon, soonest first (arrival / Δv for the whole route)
+    pub windows: Vec<Window>,
+    /// earliest arrival at `to` whose estimate fits the Δv budget, leaving any time in the horizon
+    pub fastest: Option<Window>,
+    /// estimated Δv of the whole route for departures evenly spaced over the horizon
+    pub strip: Vec<f64>,
+}
+
+/// Upcoming transfer opportunities from `from` to every planet, moon and gas giant (asteroids are
+/// too many to list), from Lambert estimates only: cheap enough to run for the
+/// whole system. `max_dv` is the ship's budget (fastest = within 90% of it).
+pub fn opportunities(sys: &System, from: BodyId, now: f64, horizon: f64, max_dv: f64) -> Vec<Opportunity> {
+    const N: usize = 48;
+    let cap = max_dv * 0.9;
+    let mut out = vec![];
+    for b in &sys.bodies {
+        if b.id == from || matches!(b.kind, BodyKind::Star | BodyKind::Asteroid) {
+            continue;
+        }
+        let hops = route(sys, from, b.id);
+        let Some(&first) = hops.first() else { continue };
+        let Some(rel) = relation(sys, from, first) else { continue };
+        let h = hohmann_tof(sys, from, first, rel);
+        // rest of the route, flown straight after arriving: (extra time, extra Δv) estimate
+        let rest = |t: f64| -> Option<(f64, f64)> {
+            let (mut t, mut dv) = (t, 0.0);
+            for w in hops.windows(2) {
+                let rel = relation(sys, w[0], w[1])?;
+                let tof = hohmann_tof(sys, w[0], w[1], rel);
+                let l = (0..6).filter_map(|k| leg(sys, w[0], w[1], rel, t + 600.0, tof * (0.8 + 0.1 * k as f64))).min_by(|a, b| (a.dep_dv + a.cap_dv).total_cmp(&(b.dep_dv + b.cap_dv)))?;
+                dv += l.dep_dv + l.cap_dv;
+                t = l.arrive_t;
+            }
+            Some((t, dv))
+        };
+        let mut strip = Vec::with_capacity(N);
+        let mut fastest: Option<Window> = None;
+        for i in 0..N {
+            let td = now + 60.0 + horizon * i as f64 / (N - 1) as f64;
+            let mut best = f64::INFINITY;
+            for k in 0..16 {
+                let tof = h * (0.2 + 0.1 * k as f64);
+                let Some(l) = leg(sys, from, first, rel, td, tof) else { continue };
+                let Some((arr, extra)) = rest(l.arrive_t) else { continue };
+                let dv = l.dep_dv + l.cap_dv + extra;
+                best = best.min(dv);
+                if dv <= cap && fastest.as_ref().is_none_or(|f| arr < f.arrive_t) {
+                    fastest = Some(Window { depart_t: td, arrive_t: arr, dv });
+                }
+            }
+            strip.push(best);
+        }
+        // the scan has small ripples (fast moons especially): keep only clear windows, at most
+        // one per 1/16 of the horizon (the cheaper one)
+        let mut wins: Vec<Window> = vec![];
+        for w in windows(sys, from, first, now, horizon) {
+            let Some((arr, extra)) = rest(w.arrive_t) else { continue };
+            let w = Window { depart_t: w.depart_t, arrive_t: arr, dv: w.dv + extra };
+            match wins.last_mut() {
+                Some(l) if w.depart_t - l.depart_t < horizon / 16.0 => {
+                    if w.dv < l.dv {
+                        *l = w;
+                    }
+                }
+                _ => wins.push(w),
+            }
+        }
+        let best = wins.iter().map(|w| w.dv).fold(f64::INFINITY, f64::min);
+        wins.retain(|w| w.dv <= best * 1.25);
+        let windows = wins;
+        out.push(Opportunity { to: b.id, via: hops[..hops.len() - 1].to_vec(), windows, fastest, strip });
+    }
+    out
 }
 
 /// Plan a single direct leg. With `depart_t = None` the best window within the search span is
@@ -739,6 +821,23 @@ mod tests {
         let again = plan_hinted(&sys, p[1], p[2], mid.depart_t(), mid.hint.unwrap()).unwrap();
         assert_eq!(again.depart.v.x.to_bits(), mid.depart.v.x.to_bits());
         assert_eq!(again.arrive_t.to_bits(), mid.arrive_t.to_bits());
+    }
+
+    #[test]
+    fn opportunities_cover_the_system() {
+        let sys = generate(7, SystemSize::Medium);
+        let p = planets(&sys);
+        let t0 = std::time::Instant::now();
+        let ops = opportunities(&sys, p[2], 0.0, 3.0 * 86_400.0, 30.0);
+        println!("{} destinations in {:?}", ops.len(), t0.elapsed());
+        for o in &ops {
+            println!("  {} via {:?}: {} windows, fastest {:?}", sys.body(o.to).name, o.via, o.windows.len(), o.fastest.as_ref().map(|f| (f.arrive_t / 3600.0, f.dv)));
+            assert_eq!(o.strip.len(), 48);
+            assert!(o.windows.iter().all(|w| w.arrive_t > w.depart_t && w.depart_t >= 0.0));
+        }
+        assert!(ops.iter().filter(|o| o.via.is_empty()).count() >= p.len() - 1);
+        assert!(ops.iter().any(|o| !o.via.is_empty()), "moons of other planets go via their planet");
+        assert!(ops.iter().filter(|o| o.fastest.is_some()).count() >= 3);
     }
 
     #[test]

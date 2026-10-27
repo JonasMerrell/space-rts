@@ -66,6 +66,7 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
             game(ui, be);
             let Screen::Game(g) = &mut ui.screen else { unreachable!() };
             let v = be.view().unwrap().clone();
+            be.report = Some(ui::demo::demo_report(v.now));
             match scene {
                 "body" => g.selected = Some(Focus::Body(1)),
                 "owned" => g.selected = Some(Focus::Body(2)),
@@ -95,8 +96,42 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                     g.selected = Some(Focus::Ship(90));
                     g.mode = Mode::Target(90);
                 }
-                "report" => be.report = Some(ui::demo::demo_report(v.now)),
+                "report" | "report_contacts" | "report_log" => {
+                    g.sensors_open = true;
+                    g.report.show(match scene {
+                        "report" => ReportTab::Now,
+                        "report_contacts" => ReportTab::Contacts,
+                        _ => ReportTab::Log,
+                    });
+                }
                 "rock" => g.selected = Some(Focus::Body(9)),
+                "results" => {
+                    be.results = Some(GameResults { winner: Some(1), scores: vec![(1, 7), (3, 5), (2, 3), (4, 1)], ended_at: v.now });
+                }
+                "feedback" => {
+                    let mut f = ui::game::endgame::FeedbackForm::new();
+                    f.text.text = "The ships list at Tethys doesn't scroll on my tablet".into();
+                    g.feedback = Some(f);
+                }
+                "gmenu_delete" => {
+                    g.menu_open = true;
+                    g.confirm_delete = true;
+                }
+                "leave" => {
+                    // a constructor at Tethys with a station going up
+                    be.act(UiAction::BuildStation { body: 2, kind: "Telescope".into() });
+                    if let Some(vw) = be.view.as_mut() {
+                        if let Some(sh) = vw.ships.iter_mut().find(|s| s.id == 2) {
+                            sh.class = ShipClass::Constructor;
+                            sh.name = "Builder".into();
+                            sh.count = 1;
+                        }
+                    }
+                    g.selected = Some(Focus::Ship(2));
+                    g.mode = Mode::Target(2);
+                    let t = be.construction_done(2).unwrap_or(v.now + 7200.0);
+                    g.leave_after = Some((2, t));
+                }
                 "queue" => {
                     for c in [ShipClass::Gunship, ShipClass::Scout, ShipClass::Bomber] {
                         be.act(UiAction::Build { body: 2, class: c });
@@ -104,6 +139,25 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                     be.act(UiAction::Upgrade { body: 2, upgrade: "Mining".into() });
                     g.selected = Some(Focus::Body(2));
                     g.detail = Some(ui::game::details::Detail::Queue { body: 2 });
+                }
+                "waiting" | "waiting_yard" => {
+                    // broke after two builds: the rest waits for funds
+                    for c in [ShipClass::Gunship, ShipClass::Scout] {
+                        be.act(UiAction::Build { body: 2, class: c });
+                    }
+                    if let Some(vw) = be.view.as_mut() {
+                        vw.resources.matter = 40.0;
+                        vw.resources.energy = 25.0;
+                    }
+                    be.act(UiAction::Build { body: 2, class: ShipClass::Bomber });
+                    be.act(UiAction::Upgrade { body: 2, upgrade: "Mining".into() });
+                    be.act(UiAction::BuildStation { body: 2, kind: "Telescope".into() });
+                    g.selected = Some(Focus::Body(2));
+                    if scene == "waiting" {
+                        g.detail = Some(ui::game::details::Detail::Queue { body: 2 });
+                    } else {
+                        g.body_tab = 1;
+                    }
                 }
                 "status" => {
                     // departing (Red Fang), burn ahead (Hammerhead), selected = Hammerhead

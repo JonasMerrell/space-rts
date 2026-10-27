@@ -404,11 +404,14 @@ fn sole_power_in_orbit_takes_the_body() {
     g.advance_to(g.t + 2.0 * TICK);
     assert_eq!(g.bodies[x.0 as usize].owner, Some(2));
     assert!(g.events_for(2).any(|e| e.title == "Territory gained" && e.body_ref == Some(x)));
-    // unarmed ships alone don't claim anything
-    let y = g.system.bodies.iter().find(|b| b.kind == BodyKind::Moon && g.bodies[b.id.0 as usize].owner.is_none()).unwrap().id;
-    put_ship(&mut g, 3, ShipClass::Scout, y);
+    // tankers carry no power and claim nothing; scouts count 1 power, so a lone scout claims an empty body
+    let mut empty = g.system.bodies.iter().filter(|b| b.kind == BodyKind::Moon && g.bodies[b.id.0 as usize].owner.is_none()).map(|b| b.id);
+    let (y, z) = (empty.next().unwrap(), empty.next().unwrap());
+    put_ship(&mut g, 3, ShipClass::Tanker, y);
+    put_ship(&mut g, 3, ShipClass::Scout, z);
     g.advance_to(g.t + 2.0 * TICK);
-    assert_eq!(g.bodies[y.0 as usize].owner, None);
+    assert_eq!(g.bodies[y.0 as usize].owner, None, "a tanker claimed a body");
+    assert_eq!(g.bodies[z.0 as usize].owner, Some(3), "a lone scout should claim an empty body");
 }
 
 #[test]
@@ -503,12 +506,26 @@ fn asteroid_impact_energy_scales_with_mass_and_velocity_squared() {
     assert_eq!(impact_energy(2000.0, 10.0), 2.0 * impact_energy(1000.0, 10.0));
     assert_eq!(impact_energy(1000.0, 30.0), 9.0 * impact_energy(1000.0, 10.0));
 
-    // crash the heaviest asteroid with a course into player 1's home
-    let mut g = game4(6);
-    let home = g.players[1].home.unwrap();
-    let mut asts: Vec<BodyId> = g.system.bodies.iter().filter(|b| b.kind == BodyKind::Asteroid).map(|b| b.id).collect();
-    asts.sort_by(|a, b| g.system.body(*b).radius.total_cmp(&g.system.body(*a).radius));
-    let (ast, plan) = asts.iter().find_map(|&a| plan_impact(&g, a, home, g.t).map(|p| (a, p))).expect("an impact course");
+    // find a wiping impact course into some player's home (heaviest asteroids first); searched
+    // rather than hardcoded so it survives generator changes, deterministic per seed list
+    let found = (6..16u64).find_map(|seed| {
+        let g = game4(seed);
+        let mut asts: Vec<BodyId> = g.system.bodies.iter().filter(|b| b.kind == BodyKind::Asteroid).map(|b| b.id).collect();
+        asts.sort_by(|a, b| g.system.body(*b).radius.total_cmp(&g.system.body(*a).radius).then(a.cmp(b)));
+        for victim in 1..4usize {
+            let home = g.players[victim].home.unwrap();
+            for &a in asts.iter().take(8) {
+                if let Some(p) = plan_impact(&g, a, home, g.t) {
+                    let imp = p.impact.unwrap();
+                    if imp.body == home && imp.severity >= WIPE {
+                        return Some((g, home, a, p));
+                    }
+                }
+            }
+        }
+        None
+    });
+    let (mut g, home, ast, plan) = found.expect("no seed in 6..16 has a wiping impact course into a home planet");
     let imp = plan.impact.unwrap();
     assert_eq!(imp.body, home);
     assert!((imp.energy - impact_energy(sim::asteroid::mass(&g.system, ast), imp.v)).abs() < 1e-6 * imp.energy);

@@ -1,7 +1,9 @@
 //! In-game screen: map + HUD + time scrubber + selection sheet + planner/node editor + chat + toasts.
 
 pub mod details;
+pub mod endgame;
 pub mod fleet;
+pub mod windows;
 mod lobby;
 pub mod map;
 mod panels;
@@ -54,6 +56,8 @@ pub enum Mode {
     /// Waiting on `Backend::plan_impact_async`.
     Impacting { asteroid: BodyId, target: BodyId },
     Impact(ImpactPreview),
+    /// Transfer-window tool for one of our parked ships.
+    Windows(windows::WindowsSheet),
 }
 
 pub struct Toast {
@@ -98,6 +102,15 @@ pub struct GameScreen {
     /// easing to the star (system view) instead of following the selection. Manual pan/zoom cancels.
     pub zoom_goal: Option<f64>,
     pub system_view: bool,
+    /// Results sheet: sound played / player chose to look at the map instead.
+    pub results_seen: bool,
+    pub results_hidden: bool,
+    /// Bug report / feature request form, when open.
+    pub feedback: Option<endgame::FeedbackForm>,
+    /// Host pressed DELETE WAR once; the menu asks to confirm.
+    pub confirm_delete: bool,
+    /// Constructor "leave when done": (ship, depart after this game time).
+    pub leave_after: Option<(ShipId, f64)>,
     /// Chat list scroll, px up from the newest message (0 = pinned to the newest).
     pub chat_scroll: f32,
     /// Resource breakdown sheet (0 matter, 1 energy, 2 fuel) opened from the top bar.
@@ -110,7 +123,8 @@ pub struct GameScreen {
     /// Station picker open for this body, and the highlighted kind.
     pub stations_for: Option<BodyId>,
     pub station_pick: Option<String>,
-    /// "While you were away" sheet state.
+    /// Sensors report sheet open, and its state (tab, scroll).
+    pub sensors_open: bool,
     pub report: report::ReportState,
     /// Fleet sheet (group / split / merge ships parked together).
     pub fleet: Option<fleet::FleetSheet>,
@@ -155,6 +169,11 @@ impl GameScreen {
             detail: None,
             res_open: None,
             chat_scroll: 0.0,
+            results_seen: false,
+            results_hidden: false,
+            feedback: None,
+            confirm_delete: false,
+            leave_after: None,
             zoom_goal: None,
             system_view: false,
             follow: true,
@@ -163,6 +182,7 @@ impl GameScreen {
             research_branch: 0,
             stations_for: None,
             station_pick: None,
+            sensors_open: false,
             report: Default::default(),
             fleet: None,
             lobby_roster: true,
@@ -268,11 +288,13 @@ impl GameScreen {
                 panels::prediction_banner(self.scrub, simulating);
             }
 
-            // Full-screen overlays (away report, research) cover everything and must get the input
+            // Full-screen overlays (sensors report, research) cover everything and must get the input
             // first, so the HUD/sheets underneath aren't drawn or tapped while they're open. Before this,
             // the HUD menu button under the research X ate the tap and the screen wouldn't close.
-            if be_ref.away_report().is_some() {
-                report::away_report(self, inp, be_ref, view);
+            if endgame::results(self, inp, be_ref, view) || endgame::feedback(self, inp) {
+                // covers the screen
+            } else if self.sensors_open {
+                report::sensors_report(self, inp, be_ref, view);
             } else if self.research_open {
                 if inp.take_back() {
                     self.research_open = false;
@@ -282,7 +304,7 @@ impl GameScreen {
                 }
             } else {
                 self.handle_back(inp);
-                panels::hud(self, inp, view);
+                panels::hud(self, inp, be_ref, view);
                 // phone: the chat covers the sheet area, so don't run (or hit-test) what's under it
                 if !(self.chat_open && !wide()) {
                     panels::sheet(self, inp, be_ref, view);
@@ -338,6 +360,7 @@ impl GameScreen {
             (Mode::Planning { ship, .. }, _) | (Mode::Intercepting { ship, .. }, _) => Some(*ship),
             (Mode::Nodes(n), _) => Some(n.ship),
             (Mode::Target(s), _) => Some(*s),
+            (Mode::Windows(w), _) => Some(w.ship),
             (_, Some(Focus::Ship(s))) => Some(s),
             _ => None,
         }
@@ -346,7 +369,12 @@ impl GameScreen {
     fn handle_map_input(&mut self, inp: &mut Input, be: &dyn Backend, view: &GameView, t: f64) {
         let mut cam = self.cam.unwrap();
         let fit = Camera::fit(view);
-        let on_map = inp.for_map() && !self.chat_open && !self.research_open && be.away_report().is_none();
+        let on_map = inp.for_map()
+            && !self.chat_open
+            && !self.research_open
+            && !self.sensors_open
+            && self.feedback.is_none()
+            && (be.results().is_none() || self.results_hidden);
 
         // Node handles get first dibs on drags.
         let node_dragging = if let Mode::Nodes(ne) = &mut self.mode {
@@ -395,7 +423,9 @@ impl GameScreen {
         match (&self.mode, hit) {
             (Mode::Target(ship), Some(Focus::Body(b))) => {
                 let ship = *ship;
-                self.plan(be, view, ship, b, view.now);
+                // "leave when done": plan the departure for after the station work finishes
+                let after = self.leave_after.filter(|l| l.0 == ship).map(|l| l.1.max(view.now)).unwrap_or(view.now);
+                self.plan(be, view, ship, b, after);
             }
             (Mode::Target(ship), Some(Focus::Ship(s))) if view.ship(s).is_some_and(|x| x.owner != view.me) => {
                 let ship = *ship;
@@ -432,6 +462,12 @@ impl GameScreen {
             (Mode::Aim(_), Some(_)) => self.say("Pick a planet or moon"),
             (Mode::Aim(_), None) | (Mode::Impact(_), _) => self.mode = Mode::Idle,
             (Mode::Nodes(_), _) | (Mode::Planning { .. }, _) | (Mode::Intercepting { .. }, _) | (Mode::Impacting { .. }, _) => {}
+            // a tap on a body plans a course there (like picking a target), elsewhere closes it
+            (Mode::Windows(w), Some(Focus::Body(b))) => {
+                let ship = w.ship;
+                self.plan(be, view, ship, b, view.now);
+            }
+            (Mode::Windows(_), _) => self.mode = Mode::Idle,
             (Mode::Idle, Some(Focus::Ship(s))) => self.pick_ship(view, s),
             (Mode::Idle, h) => self.selected = h,
         }

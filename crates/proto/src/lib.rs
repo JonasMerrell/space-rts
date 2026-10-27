@@ -40,6 +40,10 @@ pub enum ClientMsg {
     /// Notification poll: events for me that happened after unix time `since`, across all my games.
     Events { since: f64 },
     Ping,
+    /// Bug report / feature request, appended to the server's feedback log.
+    Feedback { bug: bool, text: String, game: Option<String>, client: String },
+    /// Host only: delete the war for everyone (it disappears from every player's list).
+    DeleteGame { code: String },
 }
 
 /// Session tokens: 32 random bytes as 64 lowercase hex digits.
@@ -64,11 +68,12 @@ impl ClientMsg {
             ClientMsg::CreateGame { name, length_days, speed, bots, .. } => {
                 name.len() <= 200 && ok_f(*length_days) && ok_f(*speed) && bots.len() <= 16 && bots.iter().all(|b| short(b))
             }
-            ClientMsg::JoinGame { code } | ClientMsg::StartGame { code } | ClientMsg::Open { code } | ClientMsg::RemoveBot { code, .. } => short(code),
+            ClientMsg::JoinGame { code } | ClientMsg::StartGame { code } | ClientMsg::Open { code } | ClientMsg::RemoveBot { code, .. } | ClientMsg::DeleteGame { code } => short(code),
             ClientMsg::AddBot { code, difficulty } => short(code) && short(difficulty),
             ClientMsg::SetFaction { code, faction } => short(code) && short(faction),
             ClientMsg::Cmd { code, .. } => short(code),
             ClientMsg::Events { since } => !since.is_nan(),
+            ClientMsg::Feedback { text, game, client, .. } => text.len() <= 16_000 && game.as_deref().is_none_or(short) && client.len() <= 200,
             ClientMsg::ListGames | ClientMsg::Ping => true,
         };
         if ok {
@@ -112,6 +117,8 @@ pub enum ServerMsg {
     /// Result of a `Cmd` (ok or the rule it broke).
     CmdResult { ok: bool, msg: String },
     Pong,
+    /// The war you had open was deleted by its host.
+    GameDeleted { code: String, name: String },
 }
 
 pub fn encode<T: Serialize>(m: &T) -> String {

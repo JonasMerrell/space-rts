@@ -49,6 +49,8 @@ pub struct DemoBackend {
     /// Upgrade levels per body (index = model::UPGRADES).
     levels: std::collections::HashMap<BodyId, [u8; 8]>,
     queue: Vec<(BodyId, String, f64, ShipClass)>,
+    /// waiting for funds: (id, body, label, cost); the demo never funds them
+    waiting: Vec<(u32, BodyId, String, Cost)>,
     user: String,
     games: Vec<GameSummary>,
     /// Research: indices into DEMO_TECHS done, and (tech, lab, done_t) running.
@@ -56,8 +58,10 @@ pub struct DemoBackend {
     research_run: Vec<(usize, BodyId, f64)>,
     /// (body, kind, owner, done_t)
     stations: Vec<(BodyId, String, PlayerId, f64)>,
-    /// "While you were away" report to show (scene `report`).
-    pub report: Option<AwayReport>,
+    /// Sensors report (the demo example fills in `demo_report`).
+    pub report: Option<SensorsReport>,
+    /// Scene `results`: the war has ended.
+    pub results: Option<GameResults>,
 }
 
 impl Default for DemoBackend {
@@ -78,11 +82,13 @@ impl DemoBackend {
             lobby: None,
             levels: std::collections::HashMap::new(),
             queue: vec![],
+            waiting: vec![],
             user: String::new(),
             techs_done: vec![0, 4, 8, 9, 16],
             research_run: vec![],
             stations: vec![],
             report: None,
+            results: None,
             games: vec![
                 GameSummary { code: "K7QX".into(), name: "Friday Night War".into(), day: 3, length_days: 7, players: 4, unread: 3 },
                 GameSummary { code: "ZB2M".into(), name: "Bots practice".into(), day: 1, length_days: 5, players: 3, unread: 0 },
@@ -239,6 +245,7 @@ impl DemoBackend {
         // fog of war: an enemy dreadnought last seen 5 h ago (drawn as a fading ghost)
         ships.push(Ship { seen_at: Some(now - 5.0 * 3600.0), ..ship(13, "Dreadnought", ShipClass::Dreadnought, 2, 1, Some(2)) });
         self.view = Some(GameView {
+            code: "K7QX".into(),
             me: 1,
             host: 1,
             now,
@@ -451,8 +458,39 @@ impl Backend for DemoBackend {
     }
 
     fn act(&mut self, action: UiAction) {
+        // can't afford it: it waits for funds
+        let short = |v: &Option<GameView>, c: &Cost| v.as_ref().is_some_and(|v| v.resources.matter < c.matter || v.resources.energy < c.energy);
+        let wish = match &action {
+            UiAction::Build { body, class } => Some((*body, class.label().to_string(), ship_cost(*class))),
+            UiAction::Upgrade { body, upgrade } => UPGRADES.iter().position(|u| u == upgrade).map(|i| {
+                let lv = self.levels.get(body).map(|l| l[i]).unwrap_or(1);
+                (*body, upgrade.clone(), upgrade_cost(lv + 1))
+            }),
+            UiAction::Research { body, tech } => DEMO_TECHS.iter().position(|t| t.0 == tech).map(|i| (*body, tech.clone(), demo_tech_cost(i))),
+            UiAction::BuildStation { body, kind } => STATION_KINDS.iter().position(|k| k == kind).map(|i| (*body, kind.clone(), demo_station_cost(i))),
+            _ => None,
+        };
+        if let Some((body, label, cost)) = wish.filter(|w| short(&self.view, &w.2)) {
+            let id = self.waiting.iter().map(|w| w.0 + 1).max().unwrap_or(0);
+            self.waiting.push((id, body, label, cost));
+            return;
+        }
         match action {
-            UiAction::DismissReport => self.report = None,
+            UiAction::Unwait { id } => self.waiting.retain(|w| w.0 != id),
+            UiAction::MoveWait { id, to } => {
+                if let Some(i) = self.waiting.iter().position(|w| w.0 == id) {
+                    let w = self.waiting.remove(i);
+                    self.waiting.insert(to.min(self.waiting.len()), w);
+                }
+            }
+            UiAction::DeleteGame { .. } => self.view = None,
+            UiAction::Feedback { .. } => {}
+            UiAction::SensorsSeen => {
+                let now = self.now();
+                if let Some(r) = self.report.as_mut() {
+                    r.seen_until = now;
+                }
+            }
             UiAction::Login { user, .. } => {
                 self.user = user.clone();
                 self.events.push(BackendEvent::LoggedIn { user });
@@ -724,6 +762,21 @@ impl Backend for DemoBackend {
             upgrades,
             buildable,
             queue: self.queue.iter().filter(|q| q.0 == id).map(|q| (q.1.clone(), q.2)).collect(),
+            waiting: self
+                .waiting
+                .iter()
+                .enumerate()
+                .filter(|(_, w)| w.1 == id)
+                .map(|(index, w)| WaitingItem {
+                    id: w.0,
+                    label: w.2.clone(),
+                    cost: w.3.clone(),
+                    start_t: Some(self.now() + 3600.0 * (index + 1) as f64),
+                    blocked: None,
+                    index,
+                    of: self.waiting.len(),
+                })
+                .collect(),
             fuel: 420.0,
             power,
             matter_rate: 60.0 * (1.0 + lv[0] as f64),
@@ -771,7 +824,7 @@ impl Backend for DemoBackend {
         Some(ResearchView { techs, labs })
     }
 
-    fn away_report(&self) -> Option<&AwayReport> {
+    fn sensors(&self) -> Option<&SensorsReport> {
         self.report.as_ref()
     }
 
@@ -808,7 +861,7 @@ impl Backend for DemoBackend {
                 } else {
                     None
                 };
-                StationOption { kind: k.to_string(), name: DEMO_STATIONS[i].0.to_string(), desc: DEMO_STATIONS[i].1.to_string(), cost: demo_station_cost(i), blocker }
+                StationOption { kind: k.to_string(), name: DEMO_STATIONS[i].0.to_string(), desc: DEMO_STATIONS[i].1.to_string(), cost: demo_station_cost(i), queueable: blocker.as_deref() != Some("already built here"), blocker }
             })
             .collect();
         Some(StationsView { here, options, present, constructors, workers })
@@ -860,6 +913,16 @@ impl Backend for DemoBackend {
             }
         });
         crate::ImpactPoll::Done(res)
+    }
+
+    fn results(&self) -> Option<GameResults> {
+        self.results.clone()
+    }
+
+    fn construction_done(&self, body: BodyId) -> Option<f64> {
+        let v = self.view.as_ref()?;
+        let now = self.now();
+        self.stations.iter().filter(|s| s.0 == body && s.2 == v.me && s.3 > now).map(|s| s.3).reduce(f64::max)
     }
 
     fn default_server(&self) -> String {
@@ -1057,25 +1120,37 @@ fn demo_station_cost(i: usize) -> Cost {
     Cost { matter: m, energy: e, seconds: h * 3600.0 }
 }
 
-/// A sample "while you were away" report (14 h away) for the demo scene `report`.
-pub fn demo_report(now: f64) -> AwayReport {
+/// A sample sensors report (back after 14 h away) for the demo scenes `report*`.
+pub fn demo_report(now: f64) -> SensorsReport {
     let h = 3600.0;
-    let it = |dt: f64, section, title: &str, text: &str, focus, tone| ReportItem { t: now - dt * h, section, title: title.into(), text: text.into(), focus, fallback: None, tone };
+    let it = |dt: f64, when, section, title: &str, text: &str, focus, tone| ReportItem { t: now - dt * h, when, section, title: title.into(), text: text.into(), focus, fallback: None, tone };
     use ReportSection::*;
-    AwayReport {
-        since: now - 14.0 * h,
-        now,
+    use When::*;
+    SensorsReport {
+        seen_until: now - 14.0 * h,
         items: vec![
-            it(13.2, Empire, "Ship built", "Interceptor 3 at Tethys", Some(Focus::Body(2)), 1),
-            it(11.5, Contacts, "Contact", "Mara: 3 Interceptors, Scout near Gaia Nova", Some(Focus::Ship(10)), -1),
-            it(10.9, Contacts, "Engine burn", "Mara's 3 Interceptors burned near Gaia Nova, heading for Tethys", Some(Focus::Ship(10)), -1),
-            it(9.0, Battles, "Battle sighted", "Fighting at Kraken", Some(Focus::Body(4)), 0),
-            it(7.4, Battles, "Territory", "Kraken changed hands from Ozzy to Bot (hard)", Some(Focus::Body(4)), 0),
-            it(6.0, Contacts, "Contact lost", "Lost track of Mara's Dreadnought near Tethys", Some(Focus::Ship(13)), -1),
-            it(4.2, Battles, "Under attack", "Tethys: enemy ships in orbit", Some(Focus::Body(2)), -1),
-            it(3.9, Battles, "Territory gained", "Gaia Nova is yours", Some(Focus::Body(3)), 1),
-            it(2.0, Empire, "Research done", "Better optics", None, 1),
-            it(0.5, Empire, "Arrived", "Big Gulp is in orbit of Gaia Nova", Some(Focus::Ship(3)), 1),
+            it(-3.4, Eta, Threats, "Incoming", "Mara's 3 Interceptors heading for Tethys", Some(Focus::Ship(10)), -1),
+            it(-9.0, Eta, Threats, "Asteroid strike", "Vesta-7 is on course to hit Gaia Nova", Some(Focus::Body(9)), -1),
+            it(0.0, Live, Battles, "Fighting", "Fighting at Kraken (Ozzy, Bot (hard))", Some(Focus::Body(4)), 0),
+            it(-1.2, Eta, Transfers, "Under way", "Big Gulp heading for Kraken", Some(Focus::Ship(3)), 1),
+            it(-5.5, Eta, Transfers, "Departs", "Red Fang leaves Tethys for Gaia Nova", Some(Focus::Ship(1)), 1),
+            it(0.0, Live, Ships, "Mara", "3 Interceptors in flight near Gaia Nova, heading for Tethys", Some(Focus::Ship(10)), -1),
+            it(0.0, Live, Ships, "Ozzy", "Gunship, Scout in orbit of Kraken", Some(Focus::Body(4)), -1),
+            it(6.0, Seen, Ghosts, "Mara", "Dreadnought, last seen near Tethys", Some(Focus::Ship(13)), -1),
+            it(0.0, Live, Bodies, "Kraken", "Ozzy's · Mining 2, Defense 1 · 2 ships in orbit", Some(Focus::Body(4)), -1),
+            it(3.0, Seen, Bodies, "Gaia Nova", "Unclaimed · nothing seen in orbit", Some(Focus::Body(3)), 0),
+            it(0.0, Never, Bodies, "Never scanned", "Ymir, Ixvo, Rhae", None, 0),
+            it(13.2, At, Log, "Ship built", "Interceptor 3 at Tethys", Some(Focus::Body(2)), 1),
+            it(11.5, At, Log, "Contact", "Mara: 3 Interceptors, Scout near Gaia Nova", Some(Focus::Ship(10)), -1),
+            it(10.9, At, Log, "Engine burn", "Mara's 3 Interceptors burned near Gaia Nova, heading for Tethys", Some(Focus::Ship(10)), -1),
+            it(9.0, At, Log, "Battle sighted", "Fighting at Kraken", Some(Focus::Body(4)), 0),
+            it(7.4, At, Log, "Territory", "Kraken changed hands from Ozzy to Bot (hard)", Some(Focus::Body(4)), 0),
+            it(6.0, At, Log, "Contact lost", "Lost track of Mara's Dreadnought near Tethys", Some(Focus::Ship(13)), -1),
+            it(4.2, At, Log, "Under attack", "Tethys: enemy ships in orbit", Some(Focus::Body(2)), -1),
+            it(3.9, At, Log, "Territory gained", "Gaia Nova is yours", Some(Focus::Body(3)), 1),
+            it(2.0, At, Log, "Research done", "Better optics", None, 1),
+            it(0.5, At, Log, "Arrived", "Big Gulp is in orbit of Gaia Nova", Some(Focus::Ship(3)), 1),
+            it(16.0, At, Log, "Ship built", "Scout 2 at Tethys", Some(Focus::Body(2)), 1),
         ],
     }
 }

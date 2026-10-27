@@ -207,6 +207,52 @@ impl Site {
     }
 }
 
+/// The browser build, rescanned when `<data>/public/web` changes, so a web-only release needs no
+/// server restart (checked at most every 10 s; the stamp is the newest mtime of the dir and its top files).
+#[derive(Debug)]
+pub struct LiveSite {
+    dir: std::path::PathBuf,
+    cur: std::sync::Mutex<(std::sync::Arc<Site>, Option<std::time::SystemTime>, std::time::Instant)>,
+}
+
+fn stamp(dir: &Path) -> Option<std::time::SystemTime> {
+    let mut newest = std::fs::metadata(dir).and_then(|m| m.modified()).ok()?;
+    for e in std::fs::read_dir(dir).ok()?.flatten() {
+        if let Ok(t) = e.metadata().and_then(|m| m.modified()) {
+            newest = newest.max(t);
+        }
+    }
+    Some(newest)
+}
+
+impl LiveSite {
+    pub fn new(dir: std::path::PathBuf) -> LiveSite {
+        let site = std::sync::Arc::new(Site::scan(&dir));
+        let st = stamp(&dir);
+        LiveSite { dir, cur: std::sync::Mutex::new((site, st, std::time::Instant::now())) }
+    }
+
+    pub fn current(&self) -> std::sync::Arc<Site> {
+        let mut g = self.cur.lock().unwrap_or_else(|e| e.into_inner());
+        if g.2.elapsed() >= Duration::from_secs(10) {
+            g.2 = std::time::Instant::now();
+            let st = stamp(&self.dir);
+            if st != g.1 {
+                g.0 = std::sync::Arc::new(Site::scan(&self.dir));
+                g.1 = st;
+                eprintln!("browser build reloaded from {} ({} files)", self.dir.display(), g.0.files.len());
+            }
+        }
+        g.0.clone()
+    }
+}
+
+impl Default for LiveSite {
+    fn default() -> LiveSite {
+        LiveSite::new(std::path::PathBuf::from("/nonexistent"))
+    }
+}
+
 /// What the server knows when answering one HTTP connection.
 pub struct Ctx<'a> {
     pub ip: IpAddr,

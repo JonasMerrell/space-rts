@@ -422,7 +422,10 @@ impl Game {
             match &mut s.state {
                 ShipState::Parked { departure, .. } => *departure = None,
                 ShipState::Flying(f) => {
+                    // where it's headed (and whether it will brake there) is a plan, not something
+                    // a telescope sees: only the coast arc is known
                     f.burns.clear();
+                    f.dest = None;
                     f.cache = None;
                 }
             }
@@ -501,6 +504,7 @@ fn blank_player(pl: &mut crate::game::Player) {
     pl.sensor_log.clear();
     pl.last_active = 0.0;
     pl.research.clear();
+    pl.waiting.clear();
     pl.techs.clear();
     pl.vision = Vision::default();
     pl.bot_avoid.clear();

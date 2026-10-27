@@ -101,15 +101,19 @@ pub fn draw(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameVi
         Detail::Queue { body } => {
             inked("BUILD QUEUE", x, y, 22.0, PAPER, Align::Left);
             let total = info.queue.last().map(|q| q.1 - view.now).unwrap_or(0.0);
-            text(&format!("{} item(s) · all done in {}", info.queue.len(), fmt_dur(total.max(0.0))), x + w, y, 13.0, MUTED, FontKind::Title, Align::Right);
+            text(&format!("{} item(s) · all done in {}", info.queue.len() + info.waiting.len(), fmt_dur(total.max(0.0))), x + w, y, 13.0, MUTED, FontKind::Title, Align::Right);
             y += 26.0 * s();
-            if info.queue.is_empty() {
+            if info.queue.is_empty() && info.waiting.is_empty() {
                 paragraph("Nothing queued. Tap + on the Shipyard or Upgrades tab to build.", x, &mut y, w, 14.0, MUTED);
             }
             let player = view.player(view.me);
             let skin = player.map(|p| art::skin_of(&p.faction)).unwrap_or("vanguard");
             let row_h = 46.0 * s();
-            let max_rows = (((r.y + r.h - 64.0 * s()) - y) / row_h).floor().max(1.0) as usize;
+            let mut max_rows = (((r.y + r.h - 64.0 * s()) - y) / row_h).floor().max(1.0) as usize;
+            // leave room for the waiting-for-funds list
+            if !info.waiting.is_empty() {
+                max_rows = max_rows.saturating_sub(info.waiting.len().min(3) + 1).max(1);
+            }
             let mut start = view.now;
             for (i, (label, done)) in info.queue.iter().enumerate().take(max_rows) {
                 let class = ShipClass::ALL.iter().copied().find(|c| c.label() == label.as_str());
@@ -160,8 +164,13 @@ pub fn draw(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameVi
             }
             if info.queue.len() > max_rows {
                 text(&format!("+{} more", info.queue.len() - max_rows), x, y + 8.0 * s(), 13.0, MUTED, FontKind::Body, Align::Left);
+                y += 22.0 * s();
             }
-            text("Cancelling refunds the cost.", x, r.y + r.h - 70.0 * s(), 12.0, MUTED, FontKind::Body, Align::Left);
+            if !info.waiting.is_empty() {
+                waiting_rows(g, inp, view, info, x, w, &mut y, r.y + r.h - 80.0 * s());
+            }
+            let foot = if info.waiting.is_empty() { "Cancelling refunds the cost." } else { "Waiting items start by themselves once you can pay, top first." };
+            text(foot, x, r.y + r.h - 70.0 * s(), 12.0, MUTED, FontKind::Body, Align::Left);
         }
         Detail::Upgrade { body, name } => {
             let Some(u) = info.upgrades.iter().find(|u| &u.name == name) else { return false };
@@ -198,7 +207,7 @@ pub fn draw(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameVi
                         }
                     }
                     row("COST", &cost_s(c), x, w, &mut y, if afford(c) { PAPER } else { DANGER });
-                    let label = if u.level == 0 { "BUILD" } else { "UPGRADE" };
+                    let label = if !afford(c) { "QUEUE" } else if u.level == 0 { "BUILD" } else { "UPGRADE" };
                     action = Some((label.into(), afford(c), UiAction::Upgrade { body: *body, upgrade: name.clone() }));
                 }
                 None => row("", "fully upgraded", x, w, &mut y, GOOD),
@@ -235,7 +244,7 @@ pub fn draw(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameVi
             }
             if let Some((_, c)) = info.buildable.iter().find(|(k, _)| k == class) {
                 row("COST", &cost_s(c), x, w, &mut y, if afford(c) { PAPER } else { DANGER });
-                action = Some(("BUILD".into(), afford(c), UiAction::Build { body: *body, class: *class }));
+                action = Some((if afford(c) { "BUILD" } else { "QUEUE" }.into(), afford(c), UiAction::Build { body: *body, class: *class }));
             } else {
                 row("", "this shipyard can't build it yet", x, w, &mut y, MUTED);
             }
@@ -245,14 +254,14 @@ pub fn draw(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameVi
     let bw = (r.w - 3.0 * 12.0 * s()) / 2.0;
     let mut keep = true;
     if let Some((label, ok, a)) = action {
-        if widgets::button(inp, Rect::new(r.x + 12.0 * s(), by, bw, 44.0 * s()), &label, if ok { Style::Primary } else { Style::Ghost }) {
-            if ok {
-                art::sfx("purchase");
-                g.emit(a);
-                keep = false;
-            } else {
-                art::sfx("ui_error");
+        // can't afford it yet: QUEUE, it starts once income covers it
+        if widgets::button(inp, Rect::new(r.x + 12.0 * s(), by, bw, 44.0 * s()), &label, if ok { Style::Primary } else { Style::Secondary }) {
+            art::sfx(if ok { "purchase" } else { "menu_select" });
+            if !ok {
+                g.hint = Some(("Queued: starts when you can afford it".into(), get_time()));
             }
+            g.emit(a);
+            keep = false;
         }
     }
     if widgets::button(inp, Rect::new(r.x + 24.0 * s() + bw, by, bw, 44.0 * s()), "BACK", Style::Ghost) {
@@ -262,4 +271,59 @@ pub fn draw(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameVi
         g.detail = None;
     }
     true
+}
+
+/// "WAITING FOR FUNDS" rows in the build queue sheet: projected start, reorder, cancel.
+#[allow(clippy::too_many_arguments)]
+fn waiting_rows(g: &mut GameScreen, inp: &mut Input, view: &GameView, info: &BodyInfo, x: f32, w: f32, y: &mut f32, bottom: f32) {
+    text("WAITING FOR FUNDS", x, *y + 6.0 * s(), 13.0, MUTED, FontKind::Title, Align::Left);
+    *y += 20.0 * s();
+    let row_h = 46.0 * s();
+    let n = info.waiting.len();
+    for (k, it) in info.waiting.iter().enumerate() {
+        if *y + row_h > bottom {
+            text(&format!("+{} more waiting", n - k), x, *y + 8.0 * s(), 13.0, MUTED, FontKind::Body, Align::Left);
+            break;
+        }
+        let rr = Rect::new(x - 6.0 * s(), *y, w + 12.0 * s(), row_h - 6.0 * s());
+        cel::round_rect(rr, 6.0 * s(), Color::new(1.0, 1.0, 1.0, 0.03));
+        cel::round_rect_lines(rr, 6.0 * s(), (1.0 * s()).max(1.0), Color::new(1.0, 1.0, 1.0, 0.12));
+        if let Some(t) = art::tex("sprites/icons/time.png") {
+            art::draw_centered(&t, vec2(rr.x + 20.0 * s(), rr.center().y), vec2(22.0, 22.0) * s(), 0.0, Color::new(1.0, 1.0, 1.0, 0.7));
+        }
+        let mut title = it.label.to_uppercase();
+        if it.of > 1 {
+            title = format!("{title}  #{}/{}", it.index + 1, it.of);
+        }
+        text(&title, rr.x + 40.0 * s(), rr.y + 13.0 * s(), 13.0, PAPER, FontKind::Title, Align::Left);
+        let (sub, col) = match (&it.blocked, it.start_t) {
+            (Some(why), _) => (why.clone(), DANGER),
+            (None, Some(t)) if t <= view.now + 1.0 => ("starting".to_string(), GOOD),
+            (None, Some(t)) => (format!("starts in ~{} · {}M {}E", fmt_dur(t - view.now), fmt_amount(it.cost.matter), fmt_amount(it.cost.energy)), MUTED),
+            (None, None) => ("no income for it yet".to_string(), DANGER),
+        };
+        let sub = wrap(&sub, FontKind::Body, 12.0, rr.w - 156.0 * s()).into_iter().next().unwrap_or_default();
+        text(&sub, rr.x + 40.0 * s(), rr.y + 30.0 * s(), 12.0, col, FontKind::Body, Align::Left);
+        // reorder within this body's waiting items (positions are in the whole list)
+        let prev = k.checked_sub(1).map(|j| info.waiting[j].index);
+        let next = info.waiting.get(k + 1).map(|w| w.index);
+        for (b, (dir, to)) in [(-1.0f32, prev), (1.0, next)].into_iter().enumerate() {
+            let br = Rect::new(rr.x + rr.w - 100.0 * s() + b as f32 * 34.0 * s(), rr.y + 5.0 * s(), 30.0 * s(), rr.h - 10.0 * s());
+            let Some(to) = to else { continue };
+            if widgets::button(inp, br, "", Style::Secondary) {
+                art::sfx("menu_select");
+                g.emit(UiAction::MoveWait { id: it.id, to });
+            }
+            let c = br.center();
+            let a = 3.5 * s() * dir;
+            draw_line(c.x - 6.0 * s(), c.y - a, c.x, c.y + a, 2.0 * s(), PAPER);
+            draw_line(c.x, c.y + a, c.x + 6.0 * s(), c.y - a, 2.0 * s(), PAPER);
+        }
+        let xr = vec2(rr.x + rr.w - 20.0 * s(), rr.center().y);
+        if widgets::round_button(inp, xr, 11.0 * s(), "X", PAPER, 0) {
+            art::sfx("menu_close");
+            g.emit(UiAction::Unwait { id: it.id });
+        }
+        *y += row_h;
+    }
 }
