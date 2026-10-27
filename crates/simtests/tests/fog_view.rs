@@ -131,10 +131,11 @@ fn intel_remembers_what_was_last_seen() {
         .map(BodyId)
         .find(|&b| !g.system.body(b).is_star() && g.bodies[b.0 as usize].owner.is_none() && !g.sees_body(&home_sensors, b))
         .expect("a body outside home sensor range");
-    // player 0 parks a scout at x (sees it), claims nothing (unarmed), then leaves
-    let sc = ship_at(&mut g, 0, ShipClass::Scout, x);
+    // player 0 parks a tanker at x (sees it), claims nothing (no power; scouts now do claim), then leaves
+    let sc = ship_at(&mut g, 0, ShipClass::Tanker, x);
     g.advance_to(g.t + 2.0 * TICK);
     assert!(g.players[0].intel[x.0 as usize].is_some(), "no intel recorded for a body we orbited");
+    assert_eq!(g.bodies[x.0 as usize].owner, None, "a tanker alone shouldn't claim a body");
     let seen_t = g.players[0].intel[x.0 as usize].as_ref().unwrap().seen_t;
     g.ships.retain(|s| s.id != sc);
     // bob takes it while we're not looking
