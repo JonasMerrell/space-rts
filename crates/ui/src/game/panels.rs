@@ -103,7 +103,7 @@ pub fn hud(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
         art::sfx(if g.menu_open { "menu_open" } else { "menu_close" });
     }
     if g.menu_open {
-        game_menu(g, inp, view, Rect::new(w - margin() - 220.0 * s(), top + ch + 30.0 * s(), 220.0 * s(), 0.0));
+        game_menu(g, inp, view, Rect::new(w - margin() - 290.0 * s(), top + ch + 30.0 * s(), 290.0 * s(), 0.0));
     }
     // Clock line.
     let y = top + ch + 16.0 * s();
@@ -122,9 +122,7 @@ fn game_menu(g: &mut GameScreen, inp: &mut Input, view: &GameView, at: Rect) {
     inp.block(r);
     cel::panel(r, alpha(PANEL, 0.97));
     let row = |i: usize| Rect::new(r.x + pad, r.y + pad + i as f32 * (bh + pad), r.w - 2.0 * pad, bh);
-    if widgets::button(inp, row(0), if art::muted() { "SOUND: OFF" } else { "SOUND: ON" }, Style::Secondary) {
-        art::set_muted(!art::muted());
-    }
+    art::sound_toggles(inp, row(0));
     if widgets::button(inp, row(1), "RESEARCH", Style::Secondary) {
         g.research_open = true;
         g.menu_open = false;
