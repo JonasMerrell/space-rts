@@ -1254,7 +1254,8 @@ impl Backend for ClientBackend {
                 }
             })
             .collect();
-        let buildable = if mine {
+        // ships can be built at your own bodies and wherever you have a shipyard station (e.g. an asteroid)
+        let buildable = if mine || g.station_yard_level(self.me, b) > 0 {
             g::ShipClass::ALL
                 .iter()
                 .filter(|c| g.yard_level(self.me, b) >= c.stats().min_shipyard)

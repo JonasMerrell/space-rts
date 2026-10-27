@@ -379,7 +379,8 @@ pub fn sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameV
             }
             Some(Focus::Body(id)) => {
                 if let Some(b) = view.body(id) {
-                    match be.body_info(id).filter(|_| b.owner == Some(view.me)) {
+                    // your bodies, and any body where your shipyard station lets you build
+                    match be.body_info(id).filter(|i| b.owner == Some(view.me) || !i.buildable.is_empty()) {
                         Some(info) => owned_body_sheet(g, inp, be, view, b, &info),
                         None => body_sheet(g, inp, view, b, be.stations(id).is_some_and(|v| v.present)),
                     }

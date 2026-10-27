@@ -443,6 +443,19 @@ mod tests {
     }
 
     #[test]
+    fn shipyard_station_builds_ships_at_an_asteroid() {
+        let mut g = game();
+        let ast = asteroid(&g);
+        g.stations.push(Station { id: StationId(0), owner: 0, kind: StationKind::Shipyard, body: ast, hp: 300.0, fuel: 0.0, done_t: 0.0, work_left: 0.0 });
+        assert_eq!(g.yard_level(0, ast), STATION_YARD_LEVEL);
+        let n = g.ships.len();
+        g.apply(0, Command::Build { body: ast, class: ShipClass::Interceptor }).unwrap();
+        g.advance_to(2.0 * 3600.0);
+        assert_eq!(g.ships.len(), n + 1);
+        assert_eq!(g.ships.last().unwrap().parked_at(), Some(ast));
+    }
+
+    #[test]
     fn shipyard_station_builds_at_a_body_you_dont_own() {
         let mut g = game();
         // a neutral body: at an enemy home the defenses would shoot the station down
