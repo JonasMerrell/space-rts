@@ -81,6 +81,9 @@ pub struct ClientBackend {
     plan_cache: RefCell<HashMap<(ShipId, BodyId, i64), Option<m::TransferPlan>>>,
     /// background planner jobs keyed like `plan_cache`
     plan_jobs: RefCell<HashMap<(ShipId, BodyId, i64), Job<Option<m::TransferPlan>>>>,
+    /// fuel ↔ time slider: exact courses between two options, keyed by both tokens + fraction
+    between: RefCell<HashMap<String, Option<m::TransferPlan>>>,
+    between_jobs: RefCell<HashMap<String, Job<Option<m::TransferPlan>>>>,
     /// asteroid impact previews keyed by (asteroid, target), and their background jobs
     impact_cache: RefCell<HashMap<(BodyId, BodyId), Option<m::ImpactPreview>>>,
     impact_jobs: RefCell<HashMap<(BodyId, BodyId), Job<Option<m::ImpactPreview>>>>,
@@ -135,6 +138,8 @@ impl ClientBackend {
             was_running: false,
             plan_cache: RefCell::new(HashMap::new()),
             plan_jobs: RefCell::new(HashMap::new()),
+            between: RefCell::new(HashMap::new()),
+            between_jobs: RefCell::new(HashMap::new()),
             impact_cache: RefCell::new(HashMap::new()),
             impact_jobs: RefCell::new(HashMap::new()),
             reconnect_at: 0.0,
@@ -270,6 +275,7 @@ impl ClientBackend {
             self.last_event_seq = game.events_for(me).last().map(|e| e.seq).unwrap_or(0);
             self.was_running = false;
             self.plan_cache.borrow_mut().clear();
+            self.between.borrow_mut().clear();
         self.impact_cache.borrow_mut().clear();
             self.impact_cache.borrow_mut().clear();
         }
@@ -298,6 +304,7 @@ impl ClientBackend {
         self.was_running = running;
         self.game = Some(game);
         self.plan_cache.borrow_mut().clear();
+        self.between.borrow_mut().clear();
         self.rebuild();
         self.forecast.restart(self.game.as_ref().unwrap(), me, self.now());
     }
@@ -468,8 +475,8 @@ fn real_ships(g: &Game, ids: &[ShipId]) -> Vec<g::ShipId> {
 }
 
 /// Auto-plan a transfer on a snapshot of the game (runs on a worker thread for the async path).
-/// Course options (cheapest … fastest, gravity assists included) for the first hop of the route;
-/// the returned plan is the cheapest, with all options in `options`.
+/// Course options for the fuel ↔ time slider (cheapest … fastest, gravity assists included) for
+/// the first hop of the route; the returned plan is the cheapest, with all options in `options`.
 fn compute_plan(g: &Game, now: f64, ship: ShipId, target: BodyId, after: f64) -> Option<m::TransferPlan> {
     let s = g.ship(lead(g, ship))?;
     let depart = if after > now + 120.0 { Some(after) } else { None };
@@ -477,7 +484,7 @@ fn compute_plan(g: &Game, now: f64, ship: ShipId, target: BodyId, after: f64) ->
     let first = *sim::plan::route(&g.system, from, SimBody(target)).first()?;
     // the fastest option must fit the thirstiest ship of a fleet
     let budget = g.with_fleetmates(s.id).iter().filter_map(|&id| g.ship(id)).map(|m| m.dv_left()).fold(s.dv_left(), f64::min);
-    let opts = sim::plan::options(&g.system, from, first, now, depart, budget);
+    let opts = sim::plan::tradeoff(&g.system, from, first, now, depart, budget);
     if opts.is_empty() {
         return None;
     }
@@ -485,10 +492,11 @@ fn compute_plan(g: &Game, now: f64, ship: ShipId, target: BodyId, after: f64) ->
     let windows: Vec<f64> = sim::plan::windows(&g.system, from, first, now, span).into_iter().map(|w| w.depart_t).collect();
     let mut all: Vec<m::TransferPlan> = opts
         .iter()
-        .map(|(c, p)| {
+        .enumerate()
+        .map(|(i, p)| {
             let mut mp = model_plan(g, s, ship, target, p, windows.clone());
-            if opts.len() > 1 {
-                mp.label = format!("{c:?}").to_uppercase();
+            if opts.len() > 1 && (i == 0 || i + 1 == opts.len()) {
+                mp.label = if i == 0 { "CHEAPEST" } else { "FASTEST" }.into();
             }
             mp
         })
@@ -498,6 +506,19 @@ fn compute_plan(g: &Game, now: f64, ship: ShipId, target: BodyId, after: f64) ->
         p.options = list.clone();
     }
     all.into_iter().next()
+}
+
+/// The exact course `f` of the way between two neighbouring slider options (see `plan::between`).
+fn compute_between(g: &Game, a: &m::TransferPlan, b: &m::TransferPlan, f: f64) -> Option<m::TransferPlan> {
+    let s = g.ship(lead(g, a.ship))?;
+    let from = s.parked_at()?;
+    let first = *sim::plan::route(&g.system, from, SimBody(a.target)).first()?;
+    let rung = |p: &m::TransferPlan| {
+        let hint = serde_json::from_str(&p.token).ok()?;
+        Some(sim::plan::Rung { depart_t: p.depart_t, arrive_t: p.arrive_t, dv: p.dv_depart + p.dv_mid + p.dv_capture, hint })
+    };
+    let p = sim::plan::between(&g.system, from, first, rung(a)?, rung(b)?, f)?;
+    Some(model_plan(g, s, a.ship, a.target, &p, a.windows.clone()))
 }
 
 fn model_plan(g: &Game, s: &g::Ship, ship: ShipId, target: BodyId, p: &sim::plan::TransferPlan, windows: Vec<f64>) -> m::TransferPlan {
@@ -1172,6 +1193,36 @@ impl Backend for ClientBackend {
         }
         let Some((game, now)) = self.plan_input(ship) else { return ui::PlanPoll::Done(None) };
         jobs.insert(key, Job::spawn(move || compute_plan(&game, now, ship, target, after.max(now))));
+        ui::PlanPoll::Pending
+    }
+
+    fn plan_between_async(&self, a: &m::TransferPlan, b: &m::TransferPlan, f: f32) -> ui::PlanPoll {
+        let key = format!("{}|{}|{}|{}|{}", a.token, a.depart_t.to_bits(), b.token, b.depart_t.to_bits(), f.to_bits());
+        if let Some(p) = self.between.borrow().get(&key) {
+            return ui::PlanPoll::Done(p.clone());
+        }
+        let mut jobs = self.between_jobs.borrow_mut();
+        if let Some(rx) = jobs.get(&key) {
+            return match rx.try_recv() {
+                Ok(res) => {
+                    jobs.remove(&key);
+                    let mut cache = self.between.borrow_mut();
+                    if cache.len() > 64 {
+                        cache.clear();
+                    }
+                    cache.insert(key, res.clone());
+                    ui::PlanPoll::Done(res)
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => ui::PlanPoll::Pending,
+                Err(_) => {
+                    jobs.remove(&key);
+                    ui::PlanPoll::Done(None)
+                }
+            };
+        }
+        let Some((game, _)) = self.plan_input(a.ship) else { return ui::PlanPoll::Done(None) };
+        let (a, b) = (a.clone(), b.clone());
+        jobs.insert(key, Job::spawn(move || compute_between(&game, &a, &b, f as f64)));
         ui::PlanPoll::Pending
     }
 

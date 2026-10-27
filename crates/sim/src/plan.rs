@@ -479,6 +479,100 @@ pub fn options(sys: &System, from: BodyId, to: BodyId, now: f64, depart_t: Optio
     kept
 }
 
+/// Courses for the fuel ↔ time slider: the cheapest plan first (gravity assists included), then
+/// direct courses that arrive sooner for more Δv, up to 90% of `max_dv`: for each arrival time the
+/// cheapest departure between now (or `depart_t`) and the cheapest plan's own departure. Each
+/// course arrives earlier and costs more than the one before, in roughly even Δv steps.
+/// `between` fills in any course between two neighbours.
+pub fn tradeoff(sys: &System, from: BodyId, to: BodyId, now: f64, depart_t: Option<f64>, max_dv: f64) -> Vec<TransferPlan> {
+    let Ok(cheap) = plan_route(sys, from, to, now, depart_t) else { return vec![] };
+    if !cheap.converged {
+        return vec![];
+    }
+    let Some(rel) = relation(sys, from, to) else { return vec![cheap] };
+    let h = hohmann_tof(sys, from, to, rel);
+    let t0 = depart_t.unwrap_or(now + 60.0).max(now + 30.0);
+    let cap = (max_dv * 0.9).max(cheap.total_dv());
+    let (a0, a1) = (t0 + h * 0.15, cheap.arrive_t - 600.0);
+    if a1 <= a0 {
+        return vec![cheap];
+    }
+    // Lambert-estimated frontier: (arrival, departure, flight, Δv), cheapest departure per arrival
+    let mut front: Vec<(f64, f64, f64, f64)> = vec![];
+    for i in 0..48 {
+        let arr = a0 + (a1 - a0) * i as f64 / 47.0;
+        let latest = cheap.depart_t().max(t0).min(arr - h * 0.15);
+        let best = (0..16)
+            .map(|j| t0 + (latest - t0).max(0.0) * j as f64 / 15.0)
+            .filter_map(|td| leg(sys, from, to, rel, td, arr - td).map(|l| (arr, td, arr - td, l.dep_dv + l.cap_dv)))
+            .min_by(|x, y| x.3.total_cmp(&y.3));
+        // keep it only if it beats every later arrival (otherwise waiting is better)
+        if let Some(b) = best.filter(|b| b.3 <= cap) {
+            front.retain(|f| f.3 > b.3);
+            front.push(b);
+        }
+    }
+    let (Some(&(.., hi)), Some(&(.., lo))) = (front.first(), front.last()) else { return vec![cheap] };
+    // rungs with evenly spaced estimates, slowest first; when a course won't close, the frontier
+    // points next to it get a try
+    const STEPS: usize = 7;
+    let mut out = vec![cheap];
+    let mut tried: Vec<usize> = vec![];
+    for k in 0..STEPS {
+        let want = lo + (hi - lo) * k as f64 / (STEPS - 1) as f64;
+        let mut near: Vec<usize> = (0..front.len()).collect();
+        near.sort_by(|&a, &b| (front[a].3 - want).abs().total_cmp(&(front[b].3 - want).abs()));
+        for i in near.into_iter().take(3) {
+            if tried.contains(&i) {
+                continue;
+            }
+            tried.push(i);
+            let (_, td, tof, _) = front[i];
+            let Ok(p) = plan_hinted(sys, from, to, td, PlanHint::Direct { tof }) else { continue };
+            let last = out.last().unwrap();
+            if p.total_dv() <= cap * 1.1 && p.total_dv() > last.total_dv() && p.arrive_t < last.arrive_t - 600.0 {
+                out.push(p);
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// What `between` needs to know about a `tradeoff` course (the UI only keeps this much of it).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rung {
+    pub depart_t: f64,
+    pub arrive_t: f64,
+    pub dv: f64,
+    pub hint: PlanHint,
+}
+
+impl TransferPlan {
+    pub fn rung(&self) -> Option<Rung> {
+        Some(Rung { depart_t: self.depart_t(), arrive_t: self.arrive_t, dv: self.total_dv(), hint: self.hint? })
+    }
+}
+
+/// A course part way (`f` = 0..1) from `a` to `b`, two neighbouring direct `tradeoff` courses:
+/// departure and flight time are interpolated and the course re-planned exactly, so the server
+/// reproduces it from (departure, hint). None when they can't be blended or the course won't close.
+pub fn between(sys: &System, from: BodyId, to: BodyId, a: Rung, b: Rung, f: f64) -> Option<TransferPlan> {
+    let (PlanHint::Direct { tof: ta }, PlanHint::Direct { tof: tb }) = (a.hint, b.hint) else { return None };
+    if !(0.0..=1.0).contains(&f) {
+        return None;
+    }
+    // when the course there won't close, the nearest one that does (a few % either side)
+    [0.0, 0.05, -0.05, 0.1, -0.1].into_iter().map(|d| f + d).filter(|f| *f > 0.0 && *f < 1.0).find_map(|f| {
+        let td = a.depart_t + (b.depart_t - a.depart_t) * f;
+        let tof = ta + (tb - ta) * f;
+        let p = plan_hinted(sys, from, to, td, PlanHint::Direct { tof }).ok()?;
+        // across a gap in the frontier the blend can be worse than both ends: no use offering it
+        let inside = p.arrive_t <= a.arrive_t.max(b.arrive_t) + 600.0 && p.arrive_t >= a.arrive_t.min(b.arrive_t) - 600.0;
+        (inside && p.total_dv() >= a.dv.min(b.dv) * 0.95 && p.total_dv() <= a.dv.max(b.dv) * 1.05).then_some(p)
+    })
+}
+
 /// Correct the Lambert estimate against the real patched-conic path with a Nelder–Mead search over
 /// (rotation of the departure point, speed scale, radial kick).
 fn shoot(sys: &System, from: BodyId, to: BodyId, l: &Leg, tof: f64, scale: f64) -> TransferPlan {
@@ -626,6 +720,25 @@ mod tests {
             }
         }
         assert!(fails <= 2, "{fails} pairs failed");
+    }
+
+    #[test]
+    fn tradeoff_ladder_trades_fuel_for_time_and_replays() {
+        let sys = generate(9, SystemSize::Medium);
+        let p = planets(&sys);
+        let lad = tradeoff(&sys, p[1], p[2], 0.0, None, 40.0);
+        assert!(lad.len() >= 3, "only {} courses", lad.len());
+        for w in lad.windows(2) {
+            assert!(w[1].total_dv() > w[0].total_dv() && w[1].arrive_t < w[0].arrive_t);
+            assert!(w[1].converged && w[1].total_dv() <= 36.0 * 1.1);
+        }
+        // a slider position between two rungs: the server re-plans it bit for bit from its hint
+        let (a, b) = (&lad[1], &lad[2]);
+        let mid = between(&sys, p[1], p[2], a.rung().unwrap(), b.rung().unwrap(), 0.4).expect("blend");
+        assert!(mid.arrive_t < a.arrive_t && mid.arrive_t > b.arrive_t);
+        let again = plan_hinted(&sys, p[1], p[2], mid.depart_t(), mid.hint.unwrap()).unwrap();
+        assert_eq!(again.depart.v.x.to_bits(), mid.depart.v.x.to_bits());
+        assert_eq!(again.arrive_t.to_bits(), mid.arrive_t.to_bits());
     }
 
     #[test]
