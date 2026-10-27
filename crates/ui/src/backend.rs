@@ -164,6 +164,12 @@ pub trait Backend {
     fn describe(&self, _key: &str) -> Option<String> {
         None
     }
+    /// One line about who holds the orbit of `body` right now, when it isn't simply yours or empty:
+    /// "Battle: …", or "Standoff: no armed ships, nobody can take it" when only unarmed ships of
+    /// different players are parked there. None = nothing to say.
+    fn orbit_status(&self, _body: BodyId) -> Option<String> {
+        None
+    }
     /// Final standings once the war has ended (time limit reached); None while it runs.
     fn results(&self) -> Option<GameResults> {
         None

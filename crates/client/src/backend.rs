@@ -1517,6 +1517,29 @@ impl Backend for ClientBackend {
         self.forecast.shared.lock().unwrap().until()
     }
 
+    fn orbit_status(&self, body: BodyId) -> Option<String> {
+        let g = self.game.as_ref()?;
+        let b = SimBody(body);
+        let here: Vec<&g::Ship> = g.ships.iter().filter(|s| s.parked_at() == Some(b)).collect();
+        let mut owners: Vec<g::PlayerId> = here.iter().map(|s| s.owner).collect();
+        owners.sort();
+        owners.dedup();
+        if owners.len() < 2 {
+            return None;
+        }
+        let armed: Vec<g::PlayerId> = here.iter().filter(|s| s.class.stats().attack > 0.0).map(|s| s.owner).collect();
+        let name = |p: g::PlayerId| g.players.get(p as usize).map(|p| p.name.clone()).unwrap_or_else(|| "?".into());
+        Some(if armed.is_empty() {
+            "Standoff: no armed ships here, so nobody can shoot or take it".into()
+        } else if g.bodies.get(body as usize).is_some_and(|s| s.in_combat) {
+            let mut sides: Vec<String> = owners.iter().map(|&p| name(p)).collect();
+            sides.sort();
+            format!("Battle: {}", sides.join(" vs "))
+        } else {
+            "Ships of several players in orbit".into()
+        })
+    }
+
     fn results(&self) -> Option<m::GameResults> {
         let g = self.game.as_ref().filter(|g| g.status == Status::Ended)?;
         let mut scores: Vec<(m::PlayerId, u32)> = g.players.iter().map(|p| (p.id, g.score(p.id))).collect();
