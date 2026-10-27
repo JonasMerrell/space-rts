@@ -1142,4 +1142,4 @@ Jonas: "make a slider to use more fuel and get there faster". `slider` @ a703091
   `m::TransferPlan::{total_dv, blend}`, `m::Trajectory::blend`; `GameScreen.{plan_drag, plan_want, plan_track}`; plan sheet: chip row → `fuel_slider`
   (ticks at options positioned by Δv, live blended preview while dragging, ENGAGE shows PLOTTING until the exact course is back; middle column ARRIVE).
   **m::TransferPlan shape unchanged** (no new fields), so intercept thread can add `intercept` on top.
-Core: please merge + release (apk/web/server not needed for the server, but the client/web need it). — slider thread
+Core: please merge + release (new APK + web build; server unchanged). — slider thread
