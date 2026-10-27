@@ -326,5 +326,9 @@ pub fn halftone(r: Rect, color: Color) {
 pub fn clip(r: Option<Rect>) {
     let mut gl = unsafe { get_internal_gl() };
     gl.flush();
-    gl.quad_gl.scissor(r.map(|r| (r.x as i32, r.y as i32, r.w.max(0.0) as i32, r.h.max(0.0) as i32)));
+    // The scissor rect is in framebuffer (physical) pixels, while we lay out in logical pixels
+    // (screen_width() = physical / dpi_scale). At dpi 1 they match; at dpi 2–3 (high-DPI phones,
+    // browsers) an unscaled rect clipped the list to a sliver in the top-left.
+    let k = screen_dpi_scale();
+    gl.quad_gl.scissor(r.map(|r| ((r.x * k) as i32, (r.y * k) as i32, (r.w.max(0.0) * k).ceil() as i32, (r.h.max(0.0) * k).ceil() as i32)));
 }
