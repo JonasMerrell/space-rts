@@ -227,10 +227,16 @@ pub fn generate(seed: u64, size: SystemSize) -> System {
     let mut ps: Vec<P> = (0..n_planets)
         .map(|i| {
             let giant = i > n_planets / 2 && rng.f() < 0.5;
-            let a = inner * ratio.powi(i as i32) * rng.range(0.93, 1.07);
+            // balance: outer years were very long, so pull planets in until the outermost one
+            // orbits 2x faster (T ∝ a^1.5, so a shrinks by k^-2/3), ramping from 1x at the innermost
+            let k = 1.0 + i as f64 / (n_planets - 1) as f64;
+            let a = inner * ratio.powi(i as i32) * k.powf(-2.0 / 3.0) * rng.range(0.93, 1.07);
             // The system is time-compressed (years of hours/days), so bodies are small and dense to
             // keep their spheres of influence comfortably larger than the bodies themselves.
-            let radius = if giant { rng.range(2800.0, 4500.0) } else { rng.range(700.0, 1500.0) };
+            // rocky planets grow outward (bigger = richer: see Game::base_yield), offsetting the slower,
+            // costlier outer orbits
+            let grow = 1.0 + 0.6 * i as f64 / (n_planets - 1) as f64;
+            let radius = if giant { rng.range(2800.0, 4500.0) } else { rng.range(700.0, 1500.0) * grow };
             let mu = if giant { 3.0e4 * (radius / 1000.0).powi(3) } else { 1.6e5 * (radius / 1000.0).powi(3) };
             let e = rng.range(0.0, 0.06);
             P { a, e, giant, radius, mu, soi: a * (mu / STAR_MU).powf(0.4) }
@@ -271,7 +277,8 @@ pub fn generate(seed: u64, size: SystemSize) -> System {
             let mrad = radius * rng.range(0.12, 0.3);
             let mmu = 1.2e5 * (mrad / 1000.0).powi(3);
             let msoi = r_m * (mmu / mu).powf(0.4);
-            if r_m + msoi > soi * 0.6 {
+            // must fit inside the planet's SOI, and leave room for a parking orbit inside its own
+            if r_m + msoi > soi * 0.6 || msoi < mrad * 1.6 * 1.6 {
                 break;
             }
             let morbit = Orbit::new(mu, r_m, 0.0, 0.0, rng.range(0.0, TAU));
@@ -327,7 +334,7 @@ mod tests {
         assert_eq!(planets.len(), 7);
         let periods: Vec<f64> = planets.iter().map(|p| p.orbit.unwrap().period() / 3600.0).collect();
         println!("planet periods (h): {periods:?}");
-        assert!(periods[0] < 12.0 && *periods.last().unwrap() > 72.0);
+        assert!(periods[0] < 12.0 && *periods.last().unwrap() > 48.0);
         for b in &s.bodies {
             if let Some(p) = b.parent {
                 let par = s.body(p);

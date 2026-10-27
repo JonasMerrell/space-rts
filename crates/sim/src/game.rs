@@ -501,6 +501,9 @@ pub struct Settings {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Game {
+    /// rules revision the match was created with (old saves load as 0 and keep their balance)
+    #[serde(default)]
+    pub rules: u32,
     pub code: String,
     pub settings: Settings,
     pub status: Status,
@@ -573,6 +576,8 @@ pub enum Command {
 }
 
 pub const TICK: f64 = 60.0;
+/// Current rules revision for new matches. 1: matter yield by body kind and planet size.
+pub const RULES: u32 = 1;
 const FACTIONS: [&str; 4] = ["vanguard", "hive", "prism", "junker"];
 
 impl Game {
@@ -581,6 +586,7 @@ impl Game {
         let bodies = vec![BodyState::default(); system.bodies.len()];
         let end_t = settings.length;
         let mut g = Game {
+            rules: RULES,
             code,
             settings,
             status: Status::Lobby,
@@ -1333,16 +1339,32 @@ impl Game {
         (4e5 / a).powi(2).clamp(0.05, 8.0)
     }
 
+    /// Base (matter, energy) per hour a body yields to its owner before upgrades.
+    /// Rules 1: planets 90 matter scaled by size (radius / 1100 km, 0.6–1.8×), gas giants 60 matter +
+    /// 40 energy, moons 30, asteroids 15; every body also gives 20 energy.
+    pub fn base_yield(&self, body: BodyId) -> (f64, f64) {
+        let b = self.system.body(body);
+        if self.rules == 0 {
+            return (if b.kind == BodyKind::Star { 0.0 } else { 60.0 }, 20.0);
+        }
+        match b.kind {
+            BodyKind::Star => (0.0, 20.0),
+            BodyKind::Planet => (90.0 * (b.radius / 1100.0).clamp(0.6, 1.8), 20.0),
+            BodyKind::GasGiant => (60.0, 60.0),
+            BodyKind::Moon => (30.0, 20.0),
+            BodyKind::Asteroid => (15.0, 20.0),
+        }
+    }
+
     /// Production per hour for a body (matter, energy, fuel) given its upgrades.
     pub fn production(&self, body: BodyId) -> (f64, f64, f64) {
         let b = &self.bodies[body.0 as usize];
         if b.owner.is_none() || b.shattered || b.gone {
             return (0.0, 0.0, 0.0);
         }
-        let kind = self.system.body(body).kind;
-        let base_m = if kind == BodyKind::Star { 0.0 } else { 60.0 };
+        let (base_m, base_e) = self.base_yield(body);
         let matter = base_m * (1.0 + b.level(Upgrade::Mining) as f64);
-        let energy = 20.0 + 60.0 * b.level(Upgrade::Solar) as f64 * self.solar_factor(body) + 60.0 * b.level(Upgrade::Reactor) as f64;
+        let energy = base_e + 60.0 * b.level(Upgrade::Solar) as f64 * self.solar_factor(body) + 60.0 * b.level(Upgrade::Reactor) as f64;
         let fuel = 120.0 * b.level(Upgrade::Refinery) as f64;
         let m = self.mods(b.owner.unwrap());
         (matter * m.matter, energy * m.energy, fuel * m.fuel)
