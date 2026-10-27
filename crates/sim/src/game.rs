@@ -1405,7 +1405,10 @@ impl Game {
             let b = &mut self.bodies[i];
             b.fuel += made;
             let max = b.def_max() * def_k;
-            b.def_hp = (b.def_hp + max * 0.1 * h).min(max);
+            // guns are repaired only while nobody is shooting at them
+            if !b.in_combat {
+                b.def_hp = (b.def_hp + max * 0.1 * h).min(max);
+            }
         }
         // refuelling: ships parked at a friendly body draw from its stock; tankers top up friends
         for i in 0..self.ships.len() {
