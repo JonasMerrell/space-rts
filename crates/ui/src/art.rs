@@ -162,6 +162,9 @@ pub fn ship_tex(class: ShipClass, skin: &str, team: Option<usize>) -> Option<Tex
         ShipClass::Constructor => "tug",
         // a decoy is a scout-sized drone (enemies see it as its mimic class)
         ShipClass::Decoy => "scout",
+        // no ordnance sprites yet: the smallest hulls
+        ShipClass::Torpedo => "interceptor",
+        ShipClass::Slug => "scout",
     };
     let team = team.map(|t| TEAM_NAMES[t % 4]).unwrap_or("neutral");
     let skin = if SKINS.contains(&skin) { skin } else { "vanguard" };

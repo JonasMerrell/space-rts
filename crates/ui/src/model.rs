@@ -55,10 +55,14 @@ pub enum ShipClass {
     Constructor,
     /// Advanced tier: unarmed drone that looks like a warship to enemy sensors.
     Decoy,
+    /// Advanced tier: uncrewed hunter-killer; send it on an intercept.
+    Torpedo,
+    /// Advanced tier: mass-driver slug; send it at a body and it hits.
+    Slug,
 }
 
 impl ShipClass {
-    pub const ALL: [ShipClass; 8] = [
+    pub const ALL: [ShipClass; 10] = [
         ShipClass::Scout,
         ShipClass::Interceptor,
         ShipClass::Gunship,
@@ -67,6 +71,8 @@ impl ShipClass {
         ShipClass::Tanker,
         ShipClass::Constructor,
         ShipClass::Decoy,
+        ShipClass::Torpedo,
+        ShipClass::Slug,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -78,6 +84,8 @@ impl ShipClass {
             ShipClass::Tanker => "Tanker",
             ShipClass::Constructor => "Constructor",
             ShipClass::Decoy => "Decoy",
+            ShipClass::Torpedo => "Torpedo",
+            ShipClass::Slug => "Slug",
         }
     }
 }
@@ -653,7 +661,7 @@ pub struct StationsView {
 }
 
 /// Station kinds (= sim `StationKind`), also the icon names `station_<lowercase>`.
-pub const STATION_KINDS: [&str; 9] = ["Shipyard", "FuelDepot", "Telescope", "Scanner", "Defense", "Relay", "Gravimetric", "Interdiction", "LaserBattery"];
+pub const STATION_KINDS: [&str; 10] = ["Shipyard", "FuelDepot", "Telescope", "Scanner", "Defense", "Relay", "Gravimetric", "Interdiction", "LaserBattery", "MassDriver"];
 
 /// A special action a ship or station has (advanced tier: go dark, decoy look, lidar sweep...).
 /// Shown as a button; tapping it sends `UiAction::ShipAbility` / `StationAbility` with `key`.

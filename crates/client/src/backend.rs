@@ -800,6 +800,8 @@ fn ship_class(c: g::ShipClass) -> m::ShipClass {
         g::ShipClass::Tanker => m::ShipClass::Tanker,
         g::ShipClass::Constructor => m::ShipClass::Constructor,
         g::ShipClass::Decoy => m::ShipClass::Decoy,
+        g::ShipClass::Torpedo => m::ShipClass::Torpedo,
+        g::ShipClass::Slug => m::ShipClass::Slug,
     }
 }
 
@@ -813,6 +815,8 @@ fn sim_class(c: m::ShipClass) -> g::ShipClass {
         m::ShipClass::Tanker => g::ShipClass::Tanker,
         m::ShipClass::Constructor => g::ShipClass::Constructor,
         m::ShipClass::Decoy => g::ShipClass::Decoy,
+        m::ShipClass::Torpedo => g::ShipClass::Torpedo,
+        m::ShipClass::Slug => g::ShipClass::Slug,
     }
 }
 
@@ -1307,8 +1311,10 @@ impl Backend for ClientBackend {
             }
             UiAction::StationAbility { body, key } => {
                 let station = self.game.as_ref().and_then(|g| g.stations.iter().find(|st| st.owner == self.me && st.body == SimBody(body) && st.kind == StationKind::Scanner).map(|st| st.id));
-                if let (Some(code), Some(station), "lidar") = (code, station, key.as_str()) {
-                    self.send(ClientMsg::Cmd { code, cmd: Command::LidarSweep { station } });
+                match (code, station, key.as_str()) {
+                    (Some(code), Some(station), "lidar") => self.send(ClientMsg::Cmd { code, cmd: Command::LidarSweep { station } }),
+                    (Some(code), _, "slug") => self.send(ClientMsg::Cmd { code, cmd: Command::LoadSlug { body: SimBody(body) } }),
+                    _ => {}
                 }
             }
             UiAction::SetOrder { ship, retreat } => {
@@ -1635,7 +1641,7 @@ impl Backend for ClientBackend {
             g::ShipClass::ALL
                 .iter()
                 .filter(|c| g.yard_level(self.me, b) >= c.stats().min_shipyard)
-                .filter(|c| c.needs().is_none_or(|t| g.has_tech(self.me, t)))
+                .filter(|c| **c != g::ShipClass::Slug && c.needs().is_none_or(|t| g.has_tech(self.me, t)))
                 .map(|&c| {
                     let s = c.stats();
                     (ship_class(c), m::Cost { matter: s.matter, energy: s.energy, seconds: s.build_time })
@@ -1837,6 +1843,16 @@ impl Backend for ClientBackend {
                 let note = if sweeping { "sweeping: everything in 3× range shows".to_string() } else { "3× range for 1 h, sees cloaks · lights us up".to_string() };
                 actions.push(m::Ability { key: "lidar".into(), label: "LIDAR SWEEP".into(), on: sweeping, blocker: g.sweep_blocker(me, sc.id).filter(|_| !sweeping), note });
             }
+        }
+        if g.stations.iter().any(|st| st.owner == me && st.body == b && st.kind == StationKind::MassDriver && st.active(g.t)) {
+            let (mm, ee) = sim::ordnance::SLUG_COST;
+            actions.push(m::Ability {
+                key: "slug".into(),
+                label: "LOAD SLUG".into(),
+                on: false,
+                blocker: g.slug_blocker(me, b),
+                note: format!("{mm:.0}M {ee:.0}E · then tap it and pick a target body"),
+            });
         }
         Some(m::StationsView { here, options, present, constructors: g.constructors_at(me, b), workers, actions })
     }

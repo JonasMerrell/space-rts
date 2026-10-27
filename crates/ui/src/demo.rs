@@ -431,6 +431,8 @@ fn ship_cost(c: ShipClass) -> Cost {
         ShipClass::Tanker => (100.0, 30.0, 60.0),
         ShipClass::Constructor => (100.0, 50.0, 30.0),
         ShipClass::Decoy => (40.0, 30.0, 10.0),
+        ShipClass::Torpedo => (120.0, 80.0, 20.0),
+        ShipClass::Slug => (150.0, 300.0, 0.0),
     };
     Cost { matter: m, energy: e, seconds: min * 60.0 }
 }
@@ -791,7 +793,7 @@ impl Backend for DemoBackend {
             .map(|(n, l)| UpgradeInfo { name: n.to_string(), level: l, max: 3, next: (l < 3).then(|| upgrade_cost(l + 1)) })
             .collect();
         let yard = lv[4];
-        let buildable = ShipClass::ALL.iter().filter(|c| yard >= 1 && **c != ShipClass::Decoy && (**c != ShipClass::Dreadnought || yard >= 3)).map(|&c| (c, ship_cost(c))).collect();
+        let buildable = ShipClass::ALL.iter().filter(|c| yard >= 1 && !matches!(**c, ShipClass::Decoy | ShipClass::Torpedo | ShipClass::Slug) && (**c != ShipClass::Dreadnought || yard >= 3)).map(|&c| (c, ship_cost(c))).collect();
         let mut power: Vec<(PlayerId, f64)> = vec![];
         for s in v.ships.iter().filter(|s| s.parked_at == Some(id) && s.trajectory.is_none()) {
             match power.iter_mut().find(|p| p.0 == s.owner) {

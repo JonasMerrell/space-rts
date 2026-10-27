@@ -26,6 +26,10 @@ pub enum ShipClass {
     Constructor,
     /// advanced tier: unarmed drone that shows to enemy sensors as `Ship::mimic` (see cloak.rs)
     Decoy,
+    /// advanced tier: uncrewed hunter-killer, detonates near enemy ships (see ordnance.rs)
+    Torpedo,
+    /// advanced tier: mass-driver slug, hits the body it's sent to instead of braking
+    Slug,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,7 +65,7 @@ pub struct ClassStats {
 }
 
 impl ShipClass {
-    pub const ALL: [ShipClass; 8] = [
+    pub const ALL: [ShipClass; 10] = [
         ShipClass::Scout,
         ShipClass::Interceptor,
         ShipClass::Gunship,
@@ -70,12 +74,16 @@ impl ShipClass {
         ShipClass::Tanker,
         ShipClass::Constructor,
         ShipClass::Decoy,
+        ShipClass::Torpedo,
+        ShipClass::Slug,
     ];
 
     /// Research needed before a shipyard can build this class.
     pub fn needs(self) -> Option<Tech> {
         match self {
             ShipClass::Decoy => Some(Tech::DecoyDrones),
+            ShipClass::Torpedo => Some(Tech::Torpedoes),
+            ShipClass::Slug => Some(Tech::MassDrivers),
             _ => None,
         }
     }
@@ -106,6 +114,9 @@ impl ShipClass {
             Constructor => s("Constructor", 50.0, 0.0, Weapon::None, 30.0, 120.0, 100.0, 50.0, 30.0, 0.8, 1),
             // signature is the mimicked class's (see fog::signature); this is the default look
             Decoy => s("Decoy", 10.0, 0.0, Weapon::None, 4.0, 40.0, 40.0, 30.0, 10.0, 1.0, 1),
+            Torpedo => s("Torpedo", 15.0, 0.0, Weapon::None, 4.0, 60.0, 120.0, 80.0, 20.0, 0.3, 1),
+            // the driver's kick is its "fuel": ve 1000 km/s gives it Δv to reach anything
+            Slug => ClassStats { ve: 1000.0, ..s("Slug", 5.0, 0.0, Weapon::None, 20.0, 20.0, 0.0, 0.0, 0.0, 0.2, 1) },
         }
     }
 
@@ -113,7 +124,7 @@ impl ShipClass {
     pub fn vs(self, target: ShipClass) -> f64 {
         use ShipClass::*;
         match (self, target) {
-            (Interceptor, Bomber) | (Interceptor, Scout) => 2.0,
+            (Interceptor, Bomber) | (Interceptor, Scout) | (Interceptor, Torpedo) => 2.0,
             (Interceptor, Gunship) | (Interceptor, Dreadnought) => 0.5,
             (Gunship, Interceptor) => 2.0,
             (Gunship, Dreadnought) => 0.75,
@@ -161,6 +172,9 @@ impl ShipClass {
         }
         if self == ShipClass::Tanker {
             out += " Refuels friendly ships parked with it.";
+        }
+        if self == ShipClass::Torpedo {
+            out += &format!(" Send it on an intercept: it detonates within {:.0} km of an enemy ship for {:.0} damage (2× vs Dreadnoughts).", crate::ordnance::DETONATE_RANGE, crate::ordnance::TORPEDO_DAMAGE);
         }
         if self == ShipClass::Decoy {
             out += " Shows to enemy sensors as the warship class you pick, burns and all, until a scanning station, Deep-field interferometry or a fight sees through it.";
@@ -602,6 +616,9 @@ pub struct Game {
     /// orbital minefields (see bastion.rs)
     #[serde(default)]
     pub minefields: Vec<crate::bastion::Minefield>,
+    /// mass driver reloads and interdiction grid kills (see ordnance.rs)
+    #[serde(default)]
+    pub station_shots: Vec<crate::ordnance::Shot>,
 }
 
 /// Commands players send. Applied at the current game time.
@@ -627,6 +644,8 @@ pub enum Command {
     LidarSweep { station: crate::station::StationId },
     /// Seed (or top up) an orbital minefield with a construction ship parked there.
     LayMines { body: BodyId },
+    /// Load a slug at your mass driver there (it appears as a ship: send it at a body).
+    LoadSlug { body: BodyId },
     BuildStation { body: BodyId, kind: StationKind },
     Chat { text: String },
     Extend { seconds: f64 },
@@ -714,6 +733,7 @@ impl Game {
             drifts: vec![],
             sweeps: vec![],
             minefields: vec![],
+            station_shots: vec![],
         };
         let _ = g.add_player(host_name, None);
         g
@@ -935,6 +955,7 @@ impl Game {
             | Command::CancelJob { body, .. }
             | Command::MoveJob { body, .. }
             | Command::LayMines { body }
+            | Command::LoadSlug { body }
                 if bad(body) =>
             {
                 return Err("no such body".into())
@@ -1063,6 +1084,7 @@ impl Game {
             Command::TransferPlanned { ships, to, depart_t, hint } => self.transfer(player, &ships, to, Some(depart_t), Some(hint)),
             Command::Reroute { ships, to, depart_t, aim_t } => self.reroute(player, &ships, crate::reroute::Hint { to, depart_t, aim_t }),
             Command::Intercept { ships, target, depart_t, arrive_t, matched } => {
+                self.no_slug(&ships)?;
                 self.order_intercept(player, &ships, crate::intercept::Hint { target, depart_t, arrive_t, matched })
             }
             Command::CancelDeparture { ship } => {
@@ -1104,6 +1126,7 @@ impl Game {
             Command::SetDecoy { ship, looks_like } => self.set_decoy(player, ship, looks_like),
             Command::LidarSweep { station } => self.lidar_sweep(player, station),
             Command::LayMines { body } => self.lay_mines(player, body),
+            Command::LoadSlug { body } => self.load_slug(player, body).map(|_| ()),
             Command::BuildStation { body, kind } => self.build_station(player, body, kind).map(|_| ()),
             Command::SetOrder { ship, order } => {
                 self.own_ship(player, ship)?;
@@ -1120,6 +1143,9 @@ impl Game {
                 }
                 if yard < st.min_shipyard {
                     return Err(format!("needs shipyard level {}", st.min_shipyard));
+                }
+                if class == ShipClass::Slug {
+                    return Err("slugs are loaded at a mass driver".into());
                 }
                 if let Some(t) = class.needs().filter(|&t| !self.has_tech(player, t)) {
                     return Err(format!("needs {}", t.label()));
@@ -1291,6 +1317,7 @@ impl Game {
                 self.stations_tick(TICK);
                 self.mines_tick(TICK);
                 self.combat_tick(TICK);
+                self.ordnance_tick();
                 self.fleet_tick(TICK);
                 self.ownership();
                 self.update_intel();
@@ -1384,6 +1411,10 @@ impl Game {
                     return;
                 }
                 match tr.end {
+                    End::Capture { body, rp, vp, .. } if ship.class == ShipClass::Slug && ship.route.is_empty() => {
+                        let _ = rp;
+                        self.slug_impact(id, body, vp);
+                    }
                     End::Capture { body, rp, vp, .. } => {
                         let dv = vp - circular_speed(sys.body(body).mu, rp);
                         let need = rocket(ship.fuel, dv);

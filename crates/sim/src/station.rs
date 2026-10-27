@@ -23,6 +23,8 @@ pub enum StationKind {
     Interdiction,
     /// advanced tier: long-range laser on a body you own
     LaserBattery,
+    /// advanced tier: loads guided slugs (see ordnance.rs)
+    MassDriver,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -66,7 +68,7 @@ pub const DEPOT_START: f64 = 300.0;
 pub const STATION_YARD_LEVEL: u8 = 2;
 
 impl StationKind {
-    pub const ALL: [StationKind; 9] = [
+    pub const ALL: [StationKind; 10] = [
         StationKind::Shipyard,
         StationKind::FuelDepot,
         StationKind::Telescope,
@@ -76,6 +78,7 @@ impl StationKind {
         StationKind::Gravimetric,
         StationKind::Interdiction,
         StationKind::LaserBattery,
+        StationKind::MassDriver,
     ];
 
     pub fn label(self) -> &'static str {
@@ -89,6 +92,7 @@ impl StationKind {
             StationKind::Gravimetric => "Gravimetric array",
             StationKind::Interdiction => "Interdiction grid",
             StationKind::LaserBattery => "Phased laser battery",
+            StationKind::MassDriver => "Mass driver",
         }
     }
     pub fn describe(self) -> &'static str {
@@ -102,6 +106,7 @@ impl StationKind {
             StationKind::Gravimetric => "Detects ships by their mass, cloaked or not: dreadnoughts from 400,000 km, a scout from ~80,000 km.",
             StationKind::Interdiction => "Shoots down incoming torpedoes and mass-driver slugs, and halves asteroid impacts here by fragmenting them.",
             StationKind::LaserBattery => "Laser battery on a body you own: hits ships out to 40,000 km, weaker with distance.",
+            StationKind::MassDriver => "Loads a guided 20 t slug every 6 h. Send it at a body: it hits everything hostile in that orbit, harder the faster it arrives.",
         }
     }
     /// (matter, energy, build seconds for one worker)
@@ -116,12 +121,14 @@ impl StationKind {
             StationKind::Gravimetric => (500.0, 500.0, 3.0 * 3600.0),
             StationKind::Interdiction => (600.0, 600.0, 4.0 * 3600.0),
             StationKind::LaserBattery => (1000.0, 1200.0, 6.0 * 3600.0),
+            StationKind::MassDriver => (800.0, 600.0, 5.0 * 3600.0),
         }
     }
     pub fn max_hp(self) -> f64 {
         match self {
             StationKind::Defense => 400.0,
             StationKind::LaserBattery => 300.0,
+            StationKind::MassDriver => 300.0,
             StationKind::Interdiction => 250.0,
             StationKind::Shipyard => 300.0,
             _ => 150.0,
@@ -142,6 +149,7 @@ impl StationKind {
             StationKind::Gravimetric => Some(Tech::GravimetricArray),
             StationKind::Interdiction => Some(Tech::InterdictionGrid),
             StationKind::LaserBattery => Some(Tech::PhasedLasers),
+            StationKind::MassDriver => Some(Tech::MassDrivers),
             _ => None,
         }
     }

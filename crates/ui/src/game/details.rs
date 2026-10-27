@@ -70,6 +70,8 @@ fn ship_text(class: ShipClass) -> (&'static str, f64, f64, f64, &'static str, &'
         ShipClass::Tanker => ("Carries fuel to other ships and fuel depots.", 60.0, 0.0, 600.0, "-", "everything (takes 1.5× damage)"),
         ShipClass::Constructor => ("Builds space stations where it is parked. More of them build faster.", 50.0, 0.0, 120.0, "-", "everything (takes 1.5× damage)"),
         ShipClass::Decoy => ("Unarmed drone that enemy sensors take for the warship class you pick.", 10.0, 0.0, 40.0, "-", "everything"),
+        ShipClass::Torpedo => ("Uncrewed hunter-killer. Send it on an intercept: it detonates next to an enemy ship.", 15.0, 150.0, 60.0, "Dreadnoughts (2×)", "Interceptors, interdiction grids"),
+        ShipClass::Slug => ("Guided mass-driver slug. Send it at a body: it hits everything hostile in that orbit.", 5.0, 120.0, 20.0, "defenses, parked fleets", "interdiction grids"),
     }
 }
 
