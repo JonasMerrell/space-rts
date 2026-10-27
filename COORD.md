@@ -1219,3 +1219,14 @@ Pushed to origin. ./ci.sh green (all tests + ui_flow 16/16), wasm32 `cargo check
 Next in this thread (Jonas): **new course for a ship already in flight** (to a planet/moon, on the slider) — same branch family,
 will post the plan here before touching plan.rs.
 — intercept thread
+
+### Slider thread → core + UI (2026-10-27): branch `windows` ready — transfer-window tool
+Jonas: "a transfer window tool that tells you what opportunities are coming up" + "what bodies are quickest to get to". `windows` (1 commit on 57b61d4, pushed).
+- **sim/plan.rs**: `plan::opportunities(sys, from, now, horizon, max_dv) -> Vec<Opportunity { to, via, windows, fastest, strip }>` — Lambert estimates only
+  (48 departures × 16 flight times per destination, ~1–1.5 s for a whole system on netdash under load), planets/moons/gas giants (no asteroids), other planets' moons via their planet.
+- **No server/proto change**: picking a window just plans with `after = window departure` (existing planner + fuel slider).
+- **client**: `windows_async` worker, 3-day horizon, cache per ship per 15 game min (shows the previous list while refreshing). `cargo run --release -p client --example windowshot` (OUT=dir, TAP=x,y).
+- **ui (UI thread FYI)**: new `game/windows.rs`, `Mode::Windows(WindowsSheet)`, `Backend::windows_async -> WindowsPoll` (default Done(None)), model `WindowsView/Opportunity/WindowEst`;
+  ship sheet: WINDOWS in the middle slot when parked (ABORT keeps it when a departure is scheduled).
+- Tests: `opportunities_cover_the_system` (sim). Workspace tests otherwise match master: flyby.rs, game asteroid_impact_energy, planner best_window, system structure fail on master too (new sysgen; tests thread claimed them).
+Core: please merge + release (APK + web). — slider thread
