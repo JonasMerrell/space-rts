@@ -49,6 +49,8 @@ pub struct DemoBackend {
     /// Upgrade levels per body (index = model::UPGRADES).
     levels: std::collections::HashMap<BodyId, [u8; 8]>,
     queue: Vec<(BodyId, String, f64, ShipClass)>,
+    /// upgrade lane, side by side with the shipyard: (body, index into UPGRADES, start, done)
+    up_queue: Vec<(BodyId, usize, f64, f64)>,
     /// waiting for funds: (id, body, label, cost); the demo never funds them
     waiting: Vec<(u32, BodyId, String, Cost)>,
     user: String,
@@ -82,6 +84,7 @@ impl DemoBackend {
             lobby: None,
             levels: std::collections::HashMap::new(),
             queue: vec![],
+            up_queue: vec![],
             waiting: vec![],
             user: String::new(),
             techs_done: vec![0, 4, 8, 9, 16],
@@ -445,6 +448,12 @@ impl Backend for DemoBackend {
                 }
             }
         }
+        let (ups, rest): (Vec<_>, Vec<_>) = self.up_queue.drain(..).partition(|q| q.3 <= now);
+        self.up_queue = rest;
+        for (body, i, _, _) in ups {
+            let lv = self.levels.entry(body).or_insert([1, 1, 0, 1, 1, 0, 0, 2]);
+            lv[i] = (lv[i] + 1).min(3);
+        }
         let (done, rest): (Vec<_>, Vec<_>) = self.queue.drain(..).partition(|q| q.2 <= now);
         self.queue = rest;
         if let Some(v) = self.view.as_mut() {
@@ -632,6 +641,17 @@ impl Backend for DemoBackend {
             }
             UiAction::CancelJob { body, index } => {
                 let ids: Vec<usize> = (0..self.queue.len()).filter(|&i| self.queue[i].0 == body).collect();
+                // indices past the ships are the upgrade lane
+                if index >= ids.len() {
+                    let ups: Vec<usize> = (0..self.up_queue.len()).filter(|&i| self.up_queue[i].0 == body).collect();
+                    if let Some(&qi) = ups.get(index - ids.len()) {
+                        let (_, _, start, done) = self.up_queue.remove(qi);
+                        for q in self.up_queue.iter_mut().filter(|q| q.0 == body && q.3 > done) {
+                            q.2 -= done - start;
+                            q.3 -= done - start;
+                        }
+                    }
+                }
                 if let Some(&qi) = ids.get(index) {
                     let (_, _, done, class) = self.queue.remove(qi);
                     let c = ship_cost(class);
@@ -662,14 +682,17 @@ impl Backend for DemoBackend {
             }
             UiAction::Upgrade { body, upgrade } => {
                 if let Some(i) = UPGRADES.iter().position(|u| *u == upgrade) {
-                    let lv = self.levels.entry(body).or_insert([1, 1, 0, 1, 1, 0, 0, 2]);
-                    let c = upgrade_cost(lv[i] + 1);
-                    if lv[i] < 3 {
-                        lv[i] += 1;
+                    let now = self.now();
+                    let lv = self.levels.entry(body).or_insert([1, 1, 0, 1, 1, 0, 0, 2])[i];
+                    let pending = self.up_queue.iter().filter(|q| q.0 == body && q.1 == i).count() as u8;
+                    let c = upgrade_cost(lv + pending + 1);
+                    if lv + pending < 3 {
                         if let Some(v) = self.view.as_mut() {
                             v.resources.matter -= c.matter;
                             v.resources.energy -= c.energy;
                         }
+                        let start = self.up_queue.iter().filter(|q| q.0 == body).map(|q| q.3).fold(now, f64::max);
+                        self.up_queue.push((body, i, start, start + c.seconds));
                     }
                 }
             }
@@ -761,7 +784,16 @@ impl Backend for DemoBackend {
         Some(BodyInfo {
             upgrades,
             buildable,
-            queue: self.queue.iter().filter(|q| q.0 == id).map(|q| (q.1.clone(), q.2)).collect(),
+            queue: {
+                let mut prev: Option<f64> = None;
+                let ships = self.queue.iter().filter(|q| q.0 == id).map(|q| {
+                    let start = prev.unwrap_or((q.2 - ship_cost(q.3).seconds).min(self.now()));
+                    prev = Some(q.2);
+                    QueueItem { label: q.1.clone(), ship: Some(q.3), start_t: start, done_t: q.2 }
+                });
+                let ups = self.up_queue.iter().filter(|q| q.0 == id).map(|q| QueueItem { label: UPGRADES[q.1].to_string(), ship: None, start_t: q.2, done_t: q.3 });
+                ships.collect::<Vec<_>>().into_iter().chain(ups).collect()
+            },
             waiting: self
                 .waiting
                 .iter()
@@ -794,7 +826,7 @@ impl Backend for DemoBackend {
             .filter(|b| b.owner == Some(v.me))
             .filter_map(|b| {
                 let level = self.levels.get(&b.id).copied().unwrap_or([1, 1, 0, 1, 1, 0, 0, 2])[7];
-                let busy = self.research_run.iter().find(|r| r.1 == b.id && r.2 > now).map(|r| (DEMO_TECHS[r.0].1.to_string(), r.2));
+                let busy = self.research_run.iter().filter(|r| r.1 == b.id && r.2 > now).map(|r| (DEMO_TECHS[r.0].1.to_string(), r.2)).collect();
                 (level > 0).then(|| LabInfo { body: b.id, name: b.name.clone(), level, busy })
             })
             .collect();
@@ -812,9 +844,9 @@ impl Backend for DemoBackend {
                 } else if i % 4 != 0 && !done(i - 1) {
                     TechState::Locked(format!("needs {}", DEMO_TECHS[i - 1].1))
                 } else {
-                    match labs.iter().filter(|l| l.busy.is_none() && l.level >= min_lab).max_by_key(|l| l.level) {
+                    // a lab with a free slot, else the best busy one (it queues there)
+                    match labs.iter().filter(|l| l.has_free_slot() && l.level >= min_lab).max_by_key(|l| l.level).or_else(|| labs.iter().filter(|l| l.level >= min_lab).max_by_key(|l| l.level)) {
                         Some(l) => TechState::Ready { lab: l.body },
-                        None if labs.iter().any(|l| l.level >= min_lab) => TechState::Locked("all labs busy".into()),
                         None => TechState::Locked(format!("needs lab level {min_lab}")),
                     }
                 };

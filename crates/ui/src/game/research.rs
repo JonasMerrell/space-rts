@@ -86,9 +86,15 @@ pub fn research_screen(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, vi
         cel::round_rect(lr, 6.0 * s(), Color::new(1.0, 1.0, 1.0, 0.05));
         icon("research", vec2(lr.x + 15.0 * s(), lr.center().y), 20.0 * s(), WHITE);
         text(&format!("{} · LAB {}", lab.name.to_uppercase(), lab.level), lr.x + 32.0 * s(), lr.center().y, 13.0, PAPER, FontKind::Title, Align::Left);
-        let (status, col) = match &lab.busy {
-            Some((name, t)) => (format!("{name} · {}", fmt_dur(t - view.now)), ACCENT),
-            None => ("idle".to_string(), GOOD),
+        let slots = lab.level.max(1) as usize;
+        let (status, col) = match lab.busy.as_slice() {
+            [] => ("idle".to_string(), GOOD),
+            [(name, t)] if slots == 1 => (format!("{name} · {}", fmt_dur(t - view.now)), ACCENT),
+            // several slots: how many run, and the next to finish
+            all => {
+                let (name, t) = all.iter().min_by(|a, b| a.1.total_cmp(&b.1)).unwrap();
+                (format!("{}/{slots} · {name} {}", all.len(), fmt_dur(t - view.now)), ACCENT)
+            }
         };
         text(&status, lr.x + lr.w - 10.0 * s(), lr.center().y, 13.0, col, FontKind::Body, Align::Right);
         y += 36.0 * s();
@@ -143,11 +149,11 @@ pub fn research_screen(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, vi
     }
     for (i, t) in techs.iter().enumerate() {
         let cr = Rect::new(r.x + pad, y + i as f32 * (ch + cg), r.w - 2.0 * pad, ch);
-        tech_card(g, inp, view, t, cr, spine_x);
+        tech_card(g, inp, view, &rv.labs, t, cr, spine_x);
     }
 }
 
-fn tech_card(g: &mut GameScreen, inp: &mut Input, view: &GameView, t: &TechInfo, cr: Rect, spine_x: f32) {
+fn tech_card(g: &mut GameScreen, inp: &mut Input, view: &GameView, labs: &[LabInfo], t: &TechInfo, cr: Rect, spine_x: f32) {
     let done = t.state == TechState::Done;
     let locked = matches!(t.state, TechState::Locked(_));
     let inner = Rect::new(cr.x + 34.0 * s(), cr.y, cr.w - 34.0 * s(), cr.h);
@@ -198,6 +204,8 @@ fn tech_card(g: &mut GameScreen, inp: &mut Input, view: &GameView, t: &TechInfo,
         }
         TechState::Ready { lab } => {
             let br = Rect::new(rc.x, rc.center().y - 20.0 * s(), rc.w, 40.0 * s());
+            // can't pay yet, or every slot at the lab is busy: it waits and starts by itself
+            let ok = ok && labs.iter().find(|l| l.body == *lab).is_none_or(|l| l.has_free_slot());
             if widgets::button(inp, br, if ok { "RESEARCH" } else { "QUEUE" }, if ok { Style::Primary } else { Style::Secondary }) {
                 art::sfx(if ok { "purchase" } else { "menu_select" });
                 g.emit(UiAction::Research { body: *lab, tech: t.id.clone() });

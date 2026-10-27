@@ -100,7 +100,7 @@ pub fn draw(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameVi
     match &d {
         Detail::Queue { body } => {
             inked("BUILD QUEUE", x, y, 22.0, PAPER, Align::Left);
-            let total = info.queue.last().map(|q| q.1 - view.now).unwrap_or(0.0);
+            let total = info.queue.iter().map(|q| q.done_t - view.now).fold(0.0, f64::max);
             text(&format!("{} item(s) · all done in {}", info.queue.len() + info.waiting.len(), fmt_dur(total.max(0.0))), x + w, y, 13.0, MUTED, FontKind::Title, Align::Right);
             y += 26.0 * s();
             if info.queue.is_empty() && info.waiting.is_empty() {
@@ -109,62 +109,64 @@ pub fn draw(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameVi
             let player = view.player(view.me);
             let skin = player.map(|p| art::skin_of(&p.faction)).unwrap_or("vanguard");
             let row_h = 46.0 * s();
-            let mut max_rows = (((r.y + r.h - 64.0 * s()) - y) / row_h).floor().max(1.0) as usize;
             // leave room for the waiting-for-funds list
-            if !info.waiting.is_empty() {
-                max_rows = max_rows.saturating_sub(info.waiting.len().min(3) + 1).max(1);
-            }
-            let mut start = view.now;
-            for (i, (label, done)) in info.queue.iter().enumerate().take(max_rows) {
-                let class = ShipClass::ALL.iter().copied().find(|c| c.label() == label.as_str());
-                // Job i runs after job i-1; the first has been running for (its build time - remaining).
-                let dur = class
-                    .and_then(|c| info.buildable.iter().find(|b| b.0 == c))
-                    .map(|b| b.1.seconds)
-                    .unwrap_or((done - start).max(1.0));
-                let begin = if i == 0 { done - dur } else { start };
-                let frac = ((view.now - begin) / (done - begin).max(1.0)).clamp(0.0, 1.0) as f32;
-                start = *done;
-                let rr = Rect::new(x - 6.0 * s(), y, w + 12.0 * s(), row_h - 6.0 * s());
-                cel::round_rect(rr, 6.0 * s(), Color::new(1.0, 1.0, 1.0, if i == 0 { 0.08 } else { 0.04 }));
-                let ic = vec2(rr.x + 20.0 * s(), rr.center().y);
-                match class.and_then(|c| art::ship_tex(c, skin, player.map(|p| p.color))) {
-                    Some(t) => art::draw_centered(&t, ic, vec2(30.0, 30.0) * s(), -0.5, WHITE),
-                    None => {
-                        if let Some(t) = art::tex("sprites/icons/upgrades.png") {
-                            art::draw_centered(&t, ic, vec2(24.0, 24.0) * s(), 0.0, WHITE);
+            let reserve = if info.waiting.is_empty() { 0.0 } else { (info.waiting.len().min(2) as f32 + 0.6) * row_h };
+            let bottom = r.y + r.h - 80.0 * s() - reserve;
+            // the shipyard and the upgrades are two lanes that build side by side
+            for (title, upgrades) in [("SHIPYARD", false), ("UPGRADES", true)] {
+                let lane: Vec<usize> = (0..info.queue.len()).filter(|&i| info.queue[i].upgrade() == upgrades).collect();
+                if lane.is_empty() {
+                    continue;
+                }
+                text(title, x, y + 6.0 * s(), 13.0, MUTED, FontKind::Title, Align::Left);
+                y += 20.0 * s();
+                for (k, &i) in lane.iter().enumerate() {
+                    if y + row_h > bottom.max(y + 1.0) && k > 0 {
+                        text(&format!("+{} more", lane.len() - k), x, y + 6.0 * s(), 13.0, MUTED, FontKind::Body, Align::Left);
+                        y += 22.0 * s();
+                        break;
+                    }
+                    let q = &info.queue[i];
+                    let running = q.start_t <= view.now;
+                    let frac = ((view.now - q.start_t) / (q.done_t - q.start_t).max(1.0)).clamp(0.0, 1.0) as f32;
+                    let rr = Rect::new(x - 6.0 * s(), y, w + 12.0 * s(), row_h - 6.0 * s());
+                    cel::round_rect(rr, 6.0 * s(), Color::new(1.0, 1.0, 1.0, if running { 0.08 } else { 0.04 }));
+                    let ic = vec2(rr.x + 20.0 * s(), rr.center().y);
+                    match q.ship.and_then(|c| art::ship_tex(c, skin, player.map(|p| p.color))) {
+                        Some(t) => art::draw_centered(&t, ic, vec2(30.0, 30.0) * s(), -0.5, WHITE),
+                        None => {
+                            if let Some(t) = art::tex("sprites/icons/upgrades.png") {
+                                art::draw_centered(&t, ic, vec2(24.0, 24.0) * s(), 0.0, WHITE);
+                            }
                         }
                     }
-                }
-                text(&format!("{}. {}", i + 1, label.to_uppercase()), rr.x + 40.0 * s(), rr.y + 13.0 * s(), 13.0, PAPER, FontKind::Title, Align::Left);
-                let eta = if i == 0 { format!("{} left", fmt_dur(done - view.now)) } else { format!("ready in {}", fmt_dur(done - view.now)) };
-                text(&eta, rr.x + rr.w - 112.0 * s(), rr.y + 13.0 * s(), 12.0, MUTED, FontKind::Body, Align::Right);
-                widgets::bar(Rect::new(rr.x + 40.0 * s(), rr.y + 26.0 * s(), rr.w - 156.0 * s(), 6.0 * s()), frac, if i == 0 { ACCENT } else { Color::new(1.0, 1.0, 1.0, 0.25) });
-                // reorder: up / down
-                let n = info.queue.len();
-                for (k, (dir, to)) in [(-1.0f32, i.checked_sub(1)), (1.0, (i + 1 < n).then_some(i + 1))].into_iter().enumerate() {
-                    let br = Rect::new(rr.x + rr.w - 100.0 * s() + k as f32 * 34.0 * s(), rr.y + 5.0 * s(), 30.0 * s(), rr.h - 10.0 * s());
-                    let Some(to) = to else { continue };
-                    if widgets::button(inp, br, "", Style::Secondary) {
-                        art::sfx("menu_select");
-                        g.emit(UiAction::MoveJob { body: *body, from: i, to });
+                    text(&format!("{}. {}", k + 1, q.label.to_uppercase()), rr.x + 40.0 * s(), rr.y + 13.0 * s(), 13.0, PAPER, FontKind::Title, Align::Left);
+                    let eta = if running { format!("{} left", fmt_dur(q.done_t - view.now)) } else { format!("ready in {}", fmt_dur(q.done_t - view.now)) };
+                    text(&eta, rr.x + rr.w - 112.0 * s(), rr.y + 13.0 * s(), 12.0, MUTED, FontKind::Body, Align::Right);
+                    widgets::bar(Rect::new(rr.x + 40.0 * s(), rr.y + 26.0 * s(), rr.w - 156.0 * s(), 6.0 * s()), frac, if running { ACCENT } else { Color::new(1.0, 1.0, 1.0, 0.25) });
+                    // reorder within the lane: up / down
+                    let prev = k.checked_sub(1).map(|j| lane[j]);
+                    let next = lane.get(k + 1).copied();
+                    for (b, (dir, to)) in [(-1.0f32, prev), (1.0, next)].into_iter().enumerate() {
+                        let br = Rect::new(rr.x + rr.w - 100.0 * s() + b as f32 * 34.0 * s(), rr.y + 5.0 * s(), 30.0 * s(), rr.h - 10.0 * s());
+                        let Some(to) = to else { continue };
+                        if widgets::button(inp, br, "", Style::Secondary) {
+                            art::sfx("menu_select");
+                            g.emit(UiAction::MoveJob { body: *body, from: i, to });
+                        }
+                        let c = br.center();
+                        // chevron: apex up for "earlier", down for "later"
+                        let a = 3.5 * s() * dir;
+                        draw_line(c.x - 6.0 * s(), c.y - a, c.x, c.y + a, 2.0 * s(), PAPER);
+                        draw_line(c.x, c.y + a, c.x + 6.0 * s(), c.y - a, 2.0 * s(), PAPER);
                     }
-                    let c = br.center();
-                    // chevron: apex up for "earlier", down for "later"
-                    let a = 3.5 * s() * dir;
-                    draw_line(c.x - 6.0 * s(), c.y - a, c.x, c.y + a, 2.0 * s(), PAPER);
-                    draw_line(c.x, c.y + a, c.x + 6.0 * s(), c.y - a, 2.0 * s(), PAPER);
+                    let xr = vec2(rr.x + rr.w - 20.0 * s(), rr.center().y);
+                    if widgets::round_button(inp, xr, 11.0 * s(), "X", PAPER, 0) {
+                        art::sfx("menu_close");
+                        g.emit(UiAction::CancelJob { body: *body, index: i });
+                    }
+                    y += row_h;
                 }
-                let xr = vec2(rr.x + rr.w - 20.0 * s(), rr.center().y);
-                if widgets::round_button(inp, xr, 11.0 * s(), "X", PAPER, 0) {
-                    art::sfx("menu_close");
-                    g.emit(UiAction::CancelJob { body: *body, index: i });
-                }
-                y += row_h;
-            }
-            if info.queue.len() > max_rows {
-                text(&format!("+{} more", info.queue.len() - max_rows), x, y + 8.0 * s(), 13.0, MUTED, FontKind::Body, Align::Left);
-                y += 22.0 * s();
             }
             if !info.waiting.is_empty() {
                 waiting_rows(g, inp, view, info, x, w, &mut y, r.y + r.h - 80.0 * s());
