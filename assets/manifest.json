@@ -465,6 +465,144 @@
     ]
    ],
    "guns_px": []
+  },
+  "decoy": {
+   "size": 0.45,
+   "role": "decoy drone: looks like a warship on sensors",
+   "beats": null,
+   "weak_to": null,
+   "px": 128,
+   "facing": "+x",
+   "skins": {
+    "vanguard": {
+     "blue": "sprites/ships/vanguard/decoy_blue.png",
+     "red": "sprites/ships/vanguard/decoy_red.png",
+     "green": "sprites/ships/vanguard/decoy_green.png",
+     "yellow": "sprites/ships/vanguard/decoy_yellow.png",
+     "neutral": "sprites/ships/vanguard/decoy_neutral.png"
+    },
+    "hive": {
+     "blue": "sprites/ships/hive/decoy_blue.png",
+     "red": "sprites/ships/hive/decoy_red.png",
+     "green": "sprites/ships/hive/decoy_green.png",
+     "yellow": "sprites/ships/hive/decoy_yellow.png",
+     "neutral": "sprites/ships/hive/decoy_neutral.png"
+    },
+    "prism": {
+     "blue": "sprites/ships/prism/decoy_blue.png",
+     "red": "sprites/ships/prism/decoy_red.png",
+     "green": "sprites/ships/prism/decoy_green.png",
+     "yellow": "sprites/ships/prism/decoy_yellow.png",
+     "neutral": "sprites/ships/prism/decoy_neutral.png"
+    },
+    "junker": {
+     "blue": "sprites/ships/junker/decoy_blue.png",
+     "red": "sprites/ships/junker/decoy_red.png",
+     "green": "sprites/ships/junker/decoy_green.png",
+     "yellow": "sprites/ships/junker/decoy_yellow.png",
+     "neutral": "sprites/ships/junker/decoy_neutral.png"
+    }
+   },
+   "icon": "sprites/icons/ship_decoy.png",
+   "engines_px": [
+    [
+     -37.7,
+     0.0
+    ]
+   ],
+   "guns_px": []
+  },
+  "torpedo": {
+   "size": 0.4,
+   "role": "guided torpedo",
+   "beats": null,
+   "weak_to": null,
+   "px": 128,
+   "facing": "+x",
+   "skins": {
+    "vanguard": {
+     "blue": "sprites/ships/vanguard/torpedo_blue.png",
+     "red": "sprites/ships/vanguard/torpedo_red.png",
+     "green": "sprites/ships/vanguard/torpedo_green.png",
+     "yellow": "sprites/ships/vanguard/torpedo_yellow.png",
+     "neutral": "sprites/ships/vanguard/torpedo_neutral.png"
+    },
+    "hive": {
+     "blue": "sprites/ships/hive/torpedo_blue.png",
+     "red": "sprites/ships/hive/torpedo_red.png",
+     "green": "sprites/ships/hive/torpedo_green.png",
+     "yellow": "sprites/ships/hive/torpedo_yellow.png",
+     "neutral": "sprites/ships/hive/torpedo_neutral.png"
+    },
+    "prism": {
+     "blue": "sprites/ships/prism/torpedo_blue.png",
+     "red": "sprites/ships/prism/torpedo_red.png",
+     "green": "sprites/ships/prism/torpedo_green.png",
+     "yellow": "sprites/ships/prism/torpedo_yellow.png",
+     "neutral": "sprites/ships/prism/torpedo_neutral.png"
+    },
+    "junker": {
+     "blue": "sprites/ships/junker/torpedo_blue.png",
+     "red": "sprites/ships/junker/torpedo_red.png",
+     "green": "sprites/ships/junker/torpedo_green.png",
+     "yellow": "sprites/ships/junker/torpedo_yellow.png",
+     "neutral": "sprites/ships/junker/torpedo_neutral.png"
+    }
+   },
+   "icon": "sprites/icons/ship_torpedo.png",
+   "engines_px": [
+    [
+     -56.9,
+     0.0
+    ]
+   ],
+   "guns_px": [
+    [
+     55.9,
+     0.0
+    ]
+   ]
+  },
+  "slug": {
+   "size": 0.3,
+   "role": "mass-driver slug (unpowered)",
+   "beats": null,
+   "weak_to": null,
+   "px": 128,
+   "facing": "+x",
+   "skins": {
+    "vanguard": {
+     "blue": "sprites/ships/vanguard/slug_blue.png",
+     "red": "sprites/ships/vanguard/slug_red.png",
+     "green": "sprites/ships/vanguard/slug_green.png",
+     "yellow": "sprites/ships/vanguard/slug_yellow.png",
+     "neutral": "sprites/ships/vanguard/slug_neutral.png"
+    },
+    "hive": {
+     "blue": "sprites/ships/hive/slug_blue.png",
+     "red": "sprites/ships/hive/slug_red.png",
+     "green": "sprites/ships/hive/slug_green.png",
+     "yellow": "sprites/ships/hive/slug_yellow.png",
+     "neutral": "sprites/ships/hive/slug_neutral.png"
+    },
+    "prism": {
+     "blue": "sprites/ships/prism/slug_blue.png",
+     "red": "sprites/ships/prism/slug_red.png",
+     "green": "sprites/ships/prism/slug_green.png",
+     "yellow": "sprites/ships/prism/slug_yellow.png",
+     "neutral": "sprites/ships/prism/slug_neutral.png"
+    },
+    "junker": {
+     "blue": "sprites/ships/junker/slug_blue.png",
+     "red": "sprites/ships/junker/slug_red.png",
+     "green": "sprites/ships/junker/slug_green.png",
+     "yellow": "sprites/ships/junker/slug_yellow.png",
+     "neutral": "sprites/ships/junker/slug_neutral.png"
+    }
+   },
+   "icon": "sprites/icons/ship_slug.png",
+   "engines_px": [],
+   "guns_px": []
   }
  },
  "stations": {
@@ -690,6 +828,216 @@
      "neutral": "sprites/stations/asteroid_drive_neutral.png"
     }
    }
+  },
+  "gravimetric": {
+   "role": "gravimetric sensor: detects mass, even cloaked ships",
+   "px": 192,
+   "skins": {
+    "vanguard": {
+     "blue": "sprites/stations/vanguard/gravimetric_blue.png",
+     "red": "sprites/stations/vanguard/gravimetric_red.png",
+     "green": "sprites/stations/vanguard/gravimetric_green.png",
+     "yellow": "sprites/stations/vanguard/gravimetric_yellow.png",
+     "neutral": "sprites/stations/vanguard/gravimetric_neutral.png"
+    },
+    "hive": {
+     "blue": "sprites/stations/hive/gravimetric_blue.png",
+     "red": "sprites/stations/hive/gravimetric_red.png",
+     "green": "sprites/stations/hive/gravimetric_green.png",
+     "yellow": "sprites/stations/hive/gravimetric_yellow.png",
+     "neutral": "sprites/stations/hive/gravimetric_neutral.png"
+    },
+    "prism": {
+     "blue": "sprites/stations/prism/gravimetric_blue.png",
+     "red": "sprites/stations/prism/gravimetric_red.png",
+     "green": "sprites/stations/prism/gravimetric_green.png",
+     "yellow": "sprites/stations/prism/gravimetric_yellow.png",
+     "neutral": "sprites/stations/prism/gravimetric_neutral.png"
+    },
+    "junker": {
+     "blue": "sprites/stations/junker/gravimetric_blue.png",
+     "red": "sprites/stations/junker/gravimetric_red.png",
+     "green": "sprites/stations/junker/gravimetric_green.png",
+     "yellow": "sprites/stations/junker/gravimetric_yellow.png",
+     "neutral": "sprites/stations/junker/gravimetric_neutral.png"
+    }
+   },
+   "icon": "sprites/icons/station_gravimetric.png"
+  },
+  "interdiction": {
+   "role": "interdiction grid / minefield node",
+   "px": 192,
+   "skins": {
+    "vanguard": {
+     "blue": "sprites/stations/vanguard/interdiction_blue.png",
+     "red": "sprites/stations/vanguard/interdiction_red.png",
+     "green": "sprites/stations/vanguard/interdiction_green.png",
+     "yellow": "sprites/stations/vanguard/interdiction_yellow.png",
+     "neutral": "sprites/stations/vanguard/interdiction_neutral.png"
+    },
+    "hive": {
+     "blue": "sprites/stations/hive/interdiction_blue.png",
+     "red": "sprites/stations/hive/interdiction_red.png",
+     "green": "sprites/stations/hive/interdiction_green.png",
+     "yellow": "sprites/stations/hive/interdiction_yellow.png",
+     "neutral": "sprites/stations/hive/interdiction_neutral.png"
+    },
+    "prism": {
+     "blue": "sprites/stations/prism/interdiction_blue.png",
+     "red": "sprites/stations/prism/interdiction_red.png",
+     "green": "sprites/stations/prism/interdiction_green.png",
+     "yellow": "sprites/stations/prism/interdiction_yellow.png",
+     "neutral": "sprites/stations/prism/interdiction_neutral.png"
+    },
+    "junker": {
+     "blue": "sprites/stations/junker/interdiction_blue.png",
+     "red": "sprites/stations/junker/interdiction_red.png",
+     "green": "sprites/stations/junker/interdiction_green.png",
+     "yellow": "sprites/stations/junker/interdiction_yellow.png",
+     "neutral": "sprites/stations/junker/interdiction_neutral.png"
+    }
+   },
+   "icon": "sprites/icons/station_interdiction.png"
+  },
+  "laser_battery": {
+   "role": "laser battery: long-range beam defense",
+   "px": 192,
+   "skins": {
+    "vanguard": {
+     "blue": "sprites/stations/vanguard/laser_battery_blue.png",
+     "red": "sprites/stations/vanguard/laser_battery_red.png",
+     "green": "sprites/stations/vanguard/laser_battery_green.png",
+     "yellow": "sprites/stations/vanguard/laser_battery_yellow.png",
+     "neutral": "sprites/stations/vanguard/laser_battery_neutral.png"
+    },
+    "hive": {
+     "blue": "sprites/stations/hive/laser_battery_blue.png",
+     "red": "sprites/stations/hive/laser_battery_red.png",
+     "green": "sprites/stations/hive/laser_battery_green.png",
+     "yellow": "sprites/stations/hive/laser_battery_yellow.png",
+     "neutral": "sprites/stations/hive/laser_battery_neutral.png"
+    },
+    "prism": {
+     "blue": "sprites/stations/prism/laser_battery_blue.png",
+     "red": "sprites/stations/prism/laser_battery_red.png",
+     "green": "sprites/stations/prism/laser_battery_green.png",
+     "yellow": "sprites/stations/prism/laser_battery_yellow.png",
+     "neutral": "sprites/stations/prism/laser_battery_neutral.png"
+    },
+    "junker": {
+     "blue": "sprites/stations/junker/laser_battery_blue.png",
+     "red": "sprites/stations/junker/laser_battery_red.png",
+     "green": "sprites/stations/junker/laser_battery_green.png",
+     "yellow": "sprites/stations/junker/laser_battery_yellow.png",
+     "neutral": "sprites/stations/junker/laser_battery_neutral.png"
+    }
+   },
+   "icon": "sprites/icons/station_laser_battery.png"
+  },
+  "mass_driver": {
+   "role": "mass driver: fires slugs",
+   "px": 192,
+   "skins": {
+    "vanguard": {
+     "blue": "sprites/stations/vanguard/mass_driver_blue.png",
+     "red": "sprites/stations/vanguard/mass_driver_red.png",
+     "green": "sprites/stations/vanguard/mass_driver_green.png",
+     "yellow": "sprites/stations/vanguard/mass_driver_yellow.png",
+     "neutral": "sprites/stations/vanguard/mass_driver_neutral.png"
+    },
+    "hive": {
+     "blue": "sprites/stations/hive/mass_driver_blue.png",
+     "red": "sprites/stations/hive/mass_driver_red.png",
+     "green": "sprites/stations/hive/mass_driver_green.png",
+     "yellow": "sprites/stations/hive/mass_driver_yellow.png",
+     "neutral": "sprites/stations/hive/mass_driver_neutral.png"
+    },
+    "prism": {
+     "blue": "sprites/stations/prism/mass_driver_blue.png",
+     "red": "sprites/stations/prism/mass_driver_red.png",
+     "green": "sprites/stations/prism/mass_driver_green.png",
+     "yellow": "sprites/stations/prism/mass_driver_yellow.png",
+     "neutral": "sprites/stations/prism/mass_driver_neutral.png"
+    },
+    "junker": {
+     "blue": "sprites/stations/junker/mass_driver_blue.png",
+     "red": "sprites/stations/junker/mass_driver_red.png",
+     "green": "sprites/stations/junker/mass_driver_green.png",
+     "yellow": "sprites/stations/junker/mass_driver_yellow.png",
+     "neutral": "sprites/stations/junker/mass_driver_neutral.png"
+    }
+   },
+   "icon": "sprites/icons/station_mass_driver.png"
+  },
+  "laser_launch": {
+   "role": "laser launch: boosts departing ships",
+   "px": 192,
+   "skins": {
+    "vanguard": {
+     "blue": "sprites/stations/vanguard/laser_launch_blue.png",
+     "red": "sprites/stations/vanguard/laser_launch_red.png",
+     "green": "sprites/stations/vanguard/laser_launch_green.png",
+     "yellow": "sprites/stations/vanguard/laser_launch_yellow.png",
+     "neutral": "sprites/stations/vanguard/laser_launch_neutral.png"
+    },
+    "hive": {
+     "blue": "sprites/stations/hive/laser_launch_blue.png",
+     "red": "sprites/stations/hive/laser_launch_red.png",
+     "green": "sprites/stations/hive/laser_launch_green.png",
+     "yellow": "sprites/stations/hive/laser_launch_yellow.png",
+     "neutral": "sprites/stations/hive/laser_launch_neutral.png"
+    },
+    "prism": {
+     "blue": "sprites/stations/prism/laser_launch_blue.png",
+     "red": "sprites/stations/prism/laser_launch_red.png",
+     "green": "sprites/stations/prism/laser_launch_green.png",
+     "yellow": "sprites/stations/prism/laser_launch_yellow.png",
+     "neutral": "sprites/stations/prism/laser_launch_neutral.png"
+    },
+    "junker": {
+     "blue": "sprites/stations/junker/laser_launch_blue.png",
+     "red": "sprites/stations/junker/laser_launch_red.png",
+     "green": "sprites/stations/junker/laser_launch_green.png",
+     "yellow": "sprites/stations/junker/laser_launch_yellow.png",
+     "neutral": "sprites/stations/junker/laser_launch_neutral.png"
+    }
+   },
+   "icon": "sprites/icons/station_laser_launch.png"
+  },
+  "stargate": {
+   "role": "stargate: instant hop to a linked gate",
+   "px": 192,
+   "skins": {
+    "vanguard": {
+     "blue": "sprites/stations/vanguard/stargate_blue.png",
+     "red": "sprites/stations/vanguard/stargate_red.png",
+     "green": "sprites/stations/vanguard/stargate_green.png",
+     "yellow": "sprites/stations/vanguard/stargate_yellow.png",
+     "neutral": "sprites/stations/vanguard/stargate_neutral.png"
+    },
+    "hive": {
+     "blue": "sprites/stations/hive/stargate_blue.png",
+     "red": "sprites/stations/hive/stargate_red.png",
+     "green": "sprites/stations/hive/stargate_green.png",
+     "yellow": "sprites/stations/hive/stargate_yellow.png",
+     "neutral": "sprites/stations/hive/stargate_neutral.png"
+    },
+    "prism": {
+     "blue": "sprites/stations/prism/stargate_blue.png",
+     "red": "sprites/stations/prism/stargate_red.png",
+     "green": "sprites/stations/prism/stargate_green.png",
+     "yellow": "sprites/stations/prism/stargate_yellow.png",
+     "neutral": "sprites/stations/prism/stargate_neutral.png"
+    },
+    "junker": {
+     "blue": "sprites/stations/junker/stargate_blue.png",
+     "red": "sprites/stations/junker/stargate_red.png",
+     "green": "sprites/stations/junker/stargate_green.png",
+     "yellow": "sprites/stations/junker/stargate_yellow.png",
+     "neutral": "sprites/stations/junker/stargate_neutral.png"
+    }
+   },
+   "icon": "sprites/icons/station_stargate.png"
   }
  },
  "bodies": {

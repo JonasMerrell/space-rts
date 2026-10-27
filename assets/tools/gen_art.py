@@ -323,6 +323,46 @@ def ship_tug(d):
     d.cockpit(0.3, 0, 0.13, 0.1)
 
 
+# advanced tier (rules 2): decoy drone, torpedo, mass-driver slug
+def ship_decoy(d):
+    # a small drone with a fake "big ship" emitter: thin hull, one big glowing reflector fan
+    d.engine(-0.55, 0, 0.1)
+    c = d.c
+    if not d.icon:
+        for r in (0.55, 0.75):
+            c.new_path(); c.arc(-0.05, 0, r, -0.6, 0.6)
+            c.set_source_rgb(*d.glass); c.set_line_width(3 * C.PX); c.set_dash([6 * C.PX, 5 * C.PX]); c.stroke()
+            c.set_dash([])
+    d.hull([(0.55, 0), (0.25, 0.12), (-0.45, 0.12), (-0.55, 0)], stripe=False)
+    pf = lambda cc: (cc.move_to(-0.05, 0), cc.arc(-0.05, 0, 0.42, -0.75, 0.75), cc.close_path())
+    d.part(pf, (lighter(d.glass, .5), d.glass), shift=0.05)
+    d.cockpit(0.3, 0, 0.08, 0.05)
+
+
+def ship_torpedo(d):
+    # long thin warhead with fins: nose cone in team colour, one fat engine
+    d.engine(-0.85, 0, 0.13)
+    for s in (1, -1):
+        d.part(poly([(-0.45, s * 0.1), (-0.75, s * 0.36), (-0.82, s * 0.36), (-0.7, s * 0.1)]), d.metal, shift=0.03)
+    d.hull([(0.55, 0), (0.4, 0.12), (-0.78, 0.12), (-0.82, 0)], stripe=False)
+    d.part(poly([(0.95, 0), (0.55, 0.13), (0.55, -0.13)]), d.team, shift=0.04)
+    if not d.icon:
+        for x in (0.1, -0.25):
+            line(d.c, [(x, -0.11), (x, 0.11)], 2 * C.PX, darker(d.metal[1], 0.6))
+    d.guns.append((0.95, 0))
+
+
+def ship_slug(d):
+    # an unpowered mass-driver slug: a dense tumbling ingot with motion streaks
+    c = d.c
+    if not d.icon:
+        for y in (-0.18, 0.0, 0.18):
+            line(c, [(-0.95, y), (-0.45, y)], 3 * C.PX, d.glass)
+    pf = d.shape([(0.55, 0.0), (0.35, 0.3), (-0.35, 0.3), (-0.45, 0.0), (-0.35, -0.3), (0.35, -0.3)]) if d.skin == "hive" else poly([(0.55, 0.0), (0.35, 0.3), (-0.35, 0.3), (-0.45, 0.0), (-0.35, -0.3), (0.35, -0.3)])
+    d.part(pf, d.metal, shift=0.1)
+    d.part(rrect(0.0, 0.0, 0.3, 0.16, 0.03), d.team, shift=0.04)
+
+
 SHIPS = {
     # name: (fn, relative size, role, beats, weak_to)
     "interceptor": (ship_interceptor, 0.55, "fast light fighter, kinetic cannons", "bomber", "gunship"),
@@ -332,14 +372,22 @@ SHIPS = {
     "tanker": (ship_tanker, 1.0, "carries fuel between depots", None, None),
     "freighter": (ship_freighter, 1.0, "carries matter (cargo)", None, None),
     "tug": (ship_tug, 0.7, "asteroid drive / pusher", None, None),
+    "decoy": (ship_decoy, 0.45, "decoy drone: looks like a warship on sensors", None, None),
+    "torpedo": (ship_torpedo, 0.4, "guided torpedo", None, None),
+    "slug": (ship_slug, 0.3, "mass-driver slug (unpowered)", None, None),
 }
 
 SHIP_PX = 128
 SHIP_UNIT = SHIP_PX * 0.46
 
 
+ONLY = None  # set by --only: generate just these ship classes / station kinds
+
+
 def gen_ships():
     for cls, (fn, size, role, beats, weak) in SHIPS.items():
+        if ONLY and cls not in ONLY:
+            continue
         entry = {"size": size, "role": role, "beats": beats, "weak_to": weak, "px": SHIP_PX,
                  "facing": "+x", "skins": {}, "icon": f"sprites/icons/ship_{cls}.png"}
         for skin in SKINS:
@@ -481,6 +529,108 @@ def drop_path(x, y, r):
     return f
 
 
+# advanced tier stations
+def st_gravimetric(d):
+    # mass sensor: a heavy core ring with four pendulum masses on long booms
+    c = d.c
+    for i in range(4):
+        a = i * math.pi / 2 + math.pi / 4
+        e = (math.cos(a) * 0.82, math.sin(a) * 0.82)
+        inked_line(c, [(0, 0), e], 0.04, d.metal[1], lw=2.4 * C.PX)
+        d.part(d.round_(e[0], e[1], 0.14), d.metal, shift=0.04)
+    if not d.icon:
+        for r in (0.95, 1.05):
+            ink(c, circle(0, 0, r), 1.4 * C.PX, d.glass)
+    d.part(d.round_(0, 0, 0.42), d.team, shift=0.12)
+    d.part(d.round_(0, 0, 0.22), (lighter(d.glass, .5), d.glass), shift=0.06)
+    fill(c, circle(0, 0, 0.07), INK)
+
+
+def st_interdiction(d):
+    # interdiction grid / minefield node: a spiky mine-layer with a dashed net around it
+    c = d.c
+    if not d.icon:
+        c.new_path(); c.arc(0, 0, 0.9, 0, 2 * math.pi)
+        c.set_source_rgb(*d.accent); c.set_line_width(3 * C.PX); c.set_dash([5 * C.PX, 7 * C.PX]); c.stroke(); c.set_dash([])
+        for i in range(6):  # little mines on the net
+            a = i * math.pi / 3
+            m = star_burst(math.cos(a) * 0.9, math.sin(a) * 0.9, 0.11, 0.06, 6)
+            fill(c, m, d.team[1]); ink(c, m, 1.6 * C.PX)
+    spikes = star_burst(0, 0, 0.62, 0.38, 8)
+    d.part(spikes, d.team, shift=0.1)
+    d.part(d.round_(0, 0, 0.26), d.metal, shift=0.06)
+    fill(c, circle(0, 0, 0.09), d.accent if not d.icon else (.7, .7, .7)); ink(c, circle(0, 0, 0.09), 2 * C.PX)
+
+
+def st_laser_battery(d):
+    # laser battery: a capacitor bank (team) with one long emitter barrel and a lens
+    c = d.c
+    for y in (0.62, -0.62):
+        d.panel(-0.45, y, 0.8, 0.2)
+    for x in (-0.55, -0.2):
+        for y in (0.22, -0.22):
+            d.tank(x, y, 0.17, team=True)
+    inked_line(c, [(0.0, 0.0), (0.95, 0.0)], 0.14, d.metal[1], lw=2.6 * C.PX)
+    d.part(d.round_(0.05, 0, 0.3), d.metal, shift=0.08)
+    pf = ellipse(0.95, 0, 0.08, 0.16)
+    d.part(pf, (lighter(d.glass, .6), d.glass), shift=0.03)
+    if not d.icon:
+        line(c, [(1.03, 0), (1.09, 0)], 4 * C.PX, d.accent)
+    d.guns.append((1.0, 0))
+
+
+def st_mass_driver(d):
+    # mass driver: a long rail of coil rings with a slug in the breech
+    c = d.c
+    for y in (0.14, -0.14):
+        inked_line(c, [(-0.85, y), (0.95, y)], 0.07, d.metal[1], lw=2.4 * C.PX)
+    for x in (-0.6, -0.3, 0.0, 0.3, 0.6, 0.9):
+        d.part(rrect(x, 0, 0.1, 0.5, 0.03), d.team if x in (0.0, 0.6) else d.metal, shift=0.03)
+    d.container(-0.85, 0, 0.36, 0.6, team=True)
+    d.part(rrect(-0.45, 0, 0.18, 0.12, 0.02), d.metal, shift=0.02)
+    if not d.icon:
+        fill(c, circle(-0.45, 0, 0.03), d.accent)
+
+
+def st_laser_launch(d):
+    # laser launch: a big upward-facing mirror dish on a truss with a bright beam out of it
+    c = d.c
+    if not d.icon:
+        c.new_path(); c.move_to(0.1, -0.08); c.line_to(1.05, -0.3); c.line_to(1.05, 0.3); c.line_to(0.1, 0.08); c.close_path()
+        c.set_source_rgba(*d.glass, 0.35); c.fill()
+    for y in (0.7, -0.7):
+        d.panel(-0.55, y, 0.7, 0.22)
+    inked_line(c, [(-0.55, -0.6), (-0.55, 0.6)], 0.06, d.metal[1], lw=2.4 * C.PX)
+    pf = lambda cc: (cc.move_to(-0.2, 0), cc.arc(-0.2, 0, 0.55, -1.0, 1.0), cc.close_path())
+    d.part(pf, (lighter(d.glass, .55), d.glass), shift=0.08)
+    d.part(d.round_(-0.62, 0, 0.18), d.team, shift=0.05)
+    fill(c, circle(0.12, 0, 0.06), d.accent if not d.icon else (.7, .7, .7)); ink(c, circle(0.12, 0, 0.06), 1.8 * C.PX)
+
+
+def st_stargate(d):
+    # stargate: a thick segmented ring (team) with anchor pylons and a swirling glass centre
+    c = d.c
+    if not d.icon:
+        fill(c, circle(0, 0, 0.62), d.glass, 0.35)
+        for k, r in enumerate((0.48, 0.33, 0.18)):
+            c.new_path(); c.arc(0, 0, r, k * 0.9, k * 0.9 + 4.0)
+            c.set_source_rgb(*lighter(d.glass, .4)); c.set_line_width(3 * C.PX); c.stroke()
+    c.new_path(); c.arc(0, 0, 0.78, 0, 2 * math.pi)
+    c.set_source_rgb(*INK); c.set_line_width(0.3); c.stroke()
+    c.new_path(); c.arc(0, 0, 0.78, 0, 2 * math.pi)
+    c.set_source_rgb(*d.team[0]); c.set_line_width(0.3 - 2 * C.LW * 0.8); c.stroke()
+    if not d.icon:
+        c.new_path(); c.arc(0, 0, 0.78, 0.3, 2.4)
+        c.set_source_rgb(*d.team[1]); c.set_line_width(0.3 - 2 * C.LW * 0.8); c.stroke()
+    for i in range(8):  # segments
+        a = i * math.pi / 4
+        line(c, [(math.cos(a) * 0.64, math.sin(a) * 0.64), (math.cos(a) * 0.92, math.sin(a) * 0.92)], 2 * C.PX)
+    for i in range(3):  # pylons
+        a = i * 2 * math.pi / 3 + math.pi / 6
+        d.part(d.round_(math.cos(a) * 0.98, math.sin(a) * 0.98, 0.12), d.metal, shift=0.03)
+        fill(c, circle(math.cos(a) * 0.98, math.sin(a) * 0.98, 0.04), d.accent if not d.icon else (.7, .7, .7))
+
+
 STATIONS = {
     "shipyard": (st_shipyard, "builds ships in orbit"),
     "fuel_depot": (st_fuel, "stores and refuels; can sit on an asteroid"),
@@ -488,6 +638,12 @@ STATIONS = {
     "scanner": (st_scanner, "scanning station: reveals small ships nearby"),
     "defense": (st_defense, "defense platform with three turrets"),
     "relay": (st_relay, "sensor relay: extends intel range"),
+    "gravimetric": (st_gravimetric, "gravimetric sensor: detects mass, even cloaked ships"),
+    "interdiction": (st_interdiction, "interdiction grid / minefield node"),
+    "laser_battery": (st_laser_battery, "laser battery: long-range beam defense"),
+    "mass_driver": (st_mass_driver, "mass driver: fires slugs"),
+    "laser_launch": (st_laser_launch, "laser launch: boosts departing ships"),
+    "stargate": (st_stargate, "stargate: instant hop to a linked gate"),
 }
 ST_PX = 192
 ST_UNIT = ST_PX * 0.46
@@ -495,6 +651,8 @@ ST_UNIT = ST_PX * 0.46
 
 def gen_stations():
     for name, (fn, role) in STATIONS.items():
+        if ONLY and name not in ONLY:
+            continue
         entry = {"role": role, "px": ST_PX, "skins": {}, "icon": f"sprites/icons/station_{name}.png"}
         for skin in SKINS:
             files = {}
@@ -1518,5 +1676,21 @@ def main():
     print("ok")
 
 
+def main_only(names):
+    """Regenerate just these ships/stations and merge them into the existing manifest."""
+    global ONLY
+    ONLY = set(names)
+    gen_ships(); gen_stations()
+    mp = os.path.join(C.ROOT, "manifest.json")
+    m = json.load(open(mp))
+    for k in ("ships", "stations"):
+        m.setdefault(k, {}).update(MANIFEST[k])
+    json.dump(m, open(mp, "w"), indent=1)
+    print("ok", sorted(ONLY))
+
+
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 2 and sys.argv[1] == "--only":
+        main_only(sys.argv[2].split(","))
+    else:
+        main()

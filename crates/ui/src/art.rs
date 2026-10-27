@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 pub const SKINS: [&str; 4] = ["vanguard", "hive", "prism", "junker"];
 const TEAM_NAMES: [&str; 4] = ["blue", "red", "green", "yellow"];
-const CLASSES: [&str; 6] = ["scout", "interceptor", "gunship", "bomber", "tanker", "tug"];
+const CLASSES: [&str; 9] = ["scout", "interceptor", "gunship", "bomber", "tanker", "tug", "decoy", "torpedo", "slug"];
 const PLANETS: [&str; 11] = [
     "planet_terran", "planet_ocean", "planet_desert", "planet_ice", "planet_lava", "planet_barren", "planet_toxic",
     "planet_jungle", "planet_gas_orange", "planet_gas_blue", "planet_gas_ringed",
@@ -20,11 +20,14 @@ const ASTEROIDS: [&str; 8] = [
     "asteroid_ice2",
 ];
 const STARS: [&str; 5] = ["star_yellow", "star_orange", "star_red", "star_blue", "star_white"];
-pub const ICONS: [&str; 27] = [
+pub const ICONS: [&str; 33] = [
     "matter", "energy", "fuel", "chat", "menu", "power", "telescope", "time", "alert", "fleet", "maneuver_node", "close",
     // research + stations
     "research", "check", "lock", "shield", "weapon_kinetic", "extraction",
     "station_shipyard", "station_fuel_depot", "station_telescope", "station_scanner", "station_defense", "station_relay",
+    // advanced tier stations
+    "station_gravimetric", "station_interdiction", "station_laser_battery", "station_mass_driver", "station_laser_launch",
+    "station_stargate",
     // advanced research branches
     "target", "eye", "eye_off",
 ];
@@ -160,11 +163,10 @@ pub fn ship_tex(class: ShipClass, skin: &str, team: Option<usize>) -> Option<Tex
         ShipClass::Tanker => "tanker",
         // the assets' tug: a stubby work boat with grapples
         ShipClass::Constructor => "tug",
-        // a decoy is a scout-sized drone (enemies see it as its mimic class)
-        ShipClass::Decoy => "scout",
-        // no ordnance sprites yet: the smallest hulls
-        ShipClass::Torpedo => "interceptor",
-        ShipClass::Slug => "scout",
+        // a decoy drone (enemies see it as its mimic class), torpedo, mass-driver slug
+        ShipClass::Decoy => "decoy",
+        ShipClass::Torpedo => "torpedo",
+        ShipClass::Slug => "slug",
     };
     let team = team.map(|t| TEAM_NAMES[t % 4]).unwrap_or("neutral");
     let skin = if SKINS.contains(&skin) { skin } else { "vanguard" };
