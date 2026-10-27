@@ -186,7 +186,7 @@ fn nelder_mead(f: &dyn Fn(&[f64]) -> f64, start: &[f64], step: &[f64], iters: us
     let lerp = |a: &[f64], b: &[f64], t: f64| -> Vec<f64> { a.iter().zip(b).map(|(x, y)| x + (y - x) * t).collect() };
     for _ in 0..iters {
         pts.sort_by(|a, b| a.1.total_cmp(&b.1));
-        if pts[0].1 < tol * 0.1 || (pts[n].1 - pts[0].1).abs() < tol * 0.01 {
+        if pts[0].1 < tol || (pts[n].1 - pts[0].1).abs() < tol * 0.01 {
             break;
         }
         let mut c = vec![0.0; n];
@@ -223,6 +223,48 @@ fn nelder_mead(f: &dyn Fn(&[f64]) -> f64, start: &[f64], step: &[f64], iters: us
     pts.swap_remove(0)
 }
 
+/// Damped Newton on a 2-parameter aim whose result is a 2D miss vector (finite-difference
+/// Jacobian). Returns the parameters and the miss distance (1e12 when it never flew).
+fn newton(f: &dyn Fn(&[f64]) -> Option<V2>, eps: f64) -> (Vec<f64>, f64) {
+    let mut p = vec![0.0, 0.0];
+    let Some(mut m) = f(&p) else { return (p, 1e12) };
+    for _ in 0..14 {
+        if m.len() < 50.0 {
+            break;
+        }
+        let (Some(a), Some(b)) = (f(&[p[0] + eps, p[1]]), f(&[p[0], p[1] + eps])) else { break };
+        let (ja, jb) = ((a - m) * (1.0 / eps), (b - m) * (1.0 / eps));
+        let det = ja.x * jb.y - jb.x * ja.y;
+        if det.abs() < 1e-12 {
+            break;
+        }
+        // J d = -m
+        let d0 = (-m.x * jb.y + jb.x * m.y) / det;
+        let d1 = (-ja.x * m.y + m.x * ja.y) / det;
+        let mut k = 1.0;
+        let mut moved = false;
+        for _ in 0..6 {
+            let q = [p[0] + d0 * k, p[1] + d1 * k];
+            // keep the aim sane: a few tenths of a radian / of the speed
+            if q[0].abs() < 1.0 && q[1].abs() < 1.0 {
+                if let Some(mq) = f(&q) {
+                    if mq.len() < m.len() {
+                        p = q.to_vec();
+                        m = mq;
+                        moved = true;
+                        break;
+                    }
+                }
+            }
+            k *= 0.5;
+        }
+        if !moved {
+            break;
+        }
+    }
+    (p, m.len())
+}
+
 /// Plan exactly the intercept `hint` describes. Same inputs, same plan (the server re-plans
 /// orders with it). Err when there is no course for those times.
 pub fn plan_hinted(sys: &System, ch: &Chaser, tgt: &Trajectory, hint: Hint) -> Result<InterceptPlan, String> {
@@ -240,35 +282,40 @@ pub fn plan_hinted(sys: &System, ch: &Chaser, tgt: &Trajectory, hint: Hint) -> R
             // rotate the departure point around the parking orbit, scale the speed, add a radial kick
             Chaser::Parked(_) => {
                 let r = est.r.rotate(p[0]);
-                State { r, v: est.v.rotate(p[0]) * (1.0 + p[1]) + r.norm() * p[2], ..est }
+                State { r, v: est.v.rotate(p[0]) * (1.0 + p[1]) + r.norm() * p.get(2).copied().unwrap_or(0.0), ..est }
             }
             // nudge the burn vector
             Chaser::Flying(_) => State { v: est.v + V2 { x: p[0], y: p[1] } * base_v, ..est },
         }
     };
-    let miss = |st: &State| -> f64 {
-        let tr = predict(sys, *st, &[], None, horizon);
-        match (tr.end, abs_state(sys, &tr, ta)) {
-            (End::Horizon { .. }, Some((pc, _))) => pc.dist(pt),
-            // crashed or lost before the meeting
-            _ => 1e12,
+    // miss vector (chaser minus target at the meeting time); None = crashed or lost on the way
+    let miss_v = |p: &[f64]| -> Option<V2> {
+        let tr = predict(sys, make(p), &[], None, horizon);
+        match tr.end {
+            End::Horizon { .. } => abs_state(sys, &tr, ta).map(|(pc, _)| pc - pt),
+            _ => None,
         }
     };
+    let obj = |p: &[f64]| miss_v(p).map_or(1e12, |m| m.len());
+    // Newton on the two aim parameters (a dozen predictions when it works), Nelder–Mead otherwise
+    let (mut best, mut err) = newton(&miss_v, 2.0e-4);
     let step: Vec<f64> = match ch {
         Chaser::Parked(_) => vec![0.02, 0.01, 0.01 * base_v],
         Chaser::Flying(_) => vec![0.01, 0.01],
     };
-    let obj = |p: &[f64]| miss(&make(p));
-    let (mut best, mut err) = nelder_mead(&obj, &vec![0.0; step.len()], &step, 220, 50.0);
-    if err > HIT_KM {
-        // retry from the best point with a finer simplex
-        let fine: Vec<f64> = step.iter().map(|s| s * 0.1).collect();
-        let (b2, e2) = nelder_mead(&obj, &best, &fine, 220, 50.0);
+    let pad = |p: &[f64]| -> Vec<f64> { p.iter().copied().chain(std::iter::repeat(0.0)).take(step.len()).collect() };
+    // where Newton got stuck, then from scratch (the robust, slow way)
+    for (start, iters) in [(pad(&best), 120), (pad(&[]), 220)] {
+        if err <= HIT_KM {
+            break;
+        }
+        let (b2, e2) = nelder_mead(&obj, &start, &step, iters, 100.0);
         if e2 < err {
             best = b2;
             err = e2;
         }
     }
+    let best: Vec<f64> = best.into_iter().chain(std::iter::repeat(0.0)).take(3).collect();
     let depart = make(&best);
     let (depart_dv, depart_burn) = match ch {
         Chaser::Parked(a) => {
@@ -344,17 +391,17 @@ fn best_departure(sys: &System, ch: &Chaser, tgt: &Trajectory, now: f64, ta: f64
 /// sooner and costs more than the one before, all within `max_dv`. Empty when the target can't be
 /// reached (out of its known path, or out of fuel).
 pub fn options(sys: &System, ch: &Chaser, tgt: &Trajectory, target: ShipId, now: f64, max_dv: f64, matched: bool) -> Vec<InterceptPlan> {
-    let end = reach_end(tgt).min(now + 6.0 * 86_400.0);
+    let end = reach_end(tgt).min(now + 4.0 * 86_400.0);
     let first = now + LEAD + MIN_TOF;
     if end <= first {
         return vec![];
     }
-    // meeting-time grid, denser near now (log spacing), and the Pareto front of it
-    let n = 40;
+    // meeting-time grid, denser near now (quadratic spacing), and the Pareto front of it
+    let n = 60;
     let span = end - first;
     let mut front: Vec<(f64, f64, f64)> = vec![]; // (arrive, depart, est cost)
     for i in 0..n {
-        let ta = first + span * ((1.0 + 99.0 * i as f64 / (n - 1) as f64).ln() / 100f64.ln());
+        let ta = first + span * (i as f64 / (n - 1) as f64).powi(2);
         if let Some((td, c)) = best_departure(sys, ch, tgt, now, ta, matched) {
             if c <= max_dv && front.iter().all(|f| f.2 > c) {
                 front.push((ta, td, c));
@@ -465,12 +512,21 @@ impl Game {
         }
     }
 
-    /// Plan an intercept of `target` for `ship` (and its fleet) as player `p` would: the fleet's
-    /// thirstiest ship sets the Δv budget.
-    pub fn intercept_options(&self, p: crate::game::PlayerId, ship: ShipId, target: ShipId, now: f64, matched: bool) -> Vec<InterceptPlan> {
-        let (Some(s), Some(tgt)) = (self.ship(ship), self.known_path(p, target)) else { return vec![] };
+    /// The path of ship `id` in a fogged view (`view_for`, as the client holds it: what's in it is
+    /// what the player knows; vision itself isn't sent).
+    pub fn view_path(&self, id: ShipId) -> Option<Trajectory> {
+        match &self.ship(id)?.state {
+            ShipState::Flying(f) => Some(f.compute(&self.system)),
+            ShipState::Parked { .. } => None,
+        }
+    }
+
+    /// Plan an intercept of `target` (whose known path is `tgt`) for `ship` and its fleet: the
+    /// fleet's thirstiest ship sets the Δv budget.
+    pub fn intercept_options(&self, ship: ShipId, target: ShipId, tgt: &Trajectory, now: f64, matched: bool) -> Vec<InterceptPlan> {
+        let Some(s) = self.ship(ship) else { return vec![] };
         let budget = self.with_fleetmates(ship).iter().filter_map(|&id| self.ship(id)).map(|m| m.dv_left()).fold(s.dv_left(), f64::min);
-        options(&self.system, &Chaser::of(&self.system, s), &tgt, target, now, budget, matched)
+        options(&self.system, &Chaser::of(&self.system, s), tgt, target, now, budget, matched)
     }
 }
 
@@ -517,9 +573,8 @@ impl Game {
         if !together {
             return Err("ships must be in the same orbit or flying as one fleet".into());
         }
-        if hint.depart_t < self.t + 20.0 {
-            return Err("that departure time has passed, plan again".into());
-        }
+        // at high game speeds the planned departure may already have slipped by: burn right away
+        let hint = Hint { depart_t: hint.depart_t.max(self.t + 30.0), ..hint };
         let tgt = self.known_path(player, hint.target).ok_or("target is out of sensor range")?;
         let plan = plan_hinted(&self.system, &Chaser::of(&self.system, s0), &tgt, hint)?;
         if !plan.converged {
@@ -706,7 +761,7 @@ mod tests {
     fn intercept_ladder_meets_the_target_and_replays() {
         let (g, me, foe) = chase_game();
         let t0 = std::time::Instant::now();
-        let opts = g.intercept_options(0, me, foe, g.t, true);
+        let opts = g.intercept_options(me, foe, &g.known_path(0, foe).unwrap(), g.t, true);
         println!("{} options in {:?}", opts.len(), t0.elapsed());
         for o in &opts {
             println!("  dv {:.2}+{:.2} km/s, meet in {:.1} h, miss {:.0} km, closing {:.2} km/s", o.depart_dv, o.match_dv, (o.arrive_t() - g.t) / 3600.0, o.miss, o.closing);
@@ -749,7 +804,7 @@ mod tests {
     fn ordered_intercept_flies_to_the_target_and_follows_a_course_change() {
         // unarmed on both sides, so nobody dies before the course change
         let (mut g, me, foe) = chase_game_with(ShipClass::Scout, ShipClass::Tanker);
-        let opts = g.intercept_options(0, me, foe, g.t, true);
+        let opts = g.intercept_options(me, foe, &g.known_path(0, foe).unwrap(), g.t, true);
         let o = opts.last().expect("an option").clone();
         let h = o.hint;
         g.apply(0, Command::Intercept { ships: vec![me], target: foe, depart_t: h.depart_t, arrive_t: h.arrive_t, matched: true }).unwrap();
@@ -790,5 +845,54 @@ mod tests {
         let ((pc, _), (pt, _)) = (abs_ship(&g, me), abs_ship(&g, foe));
         println!("after re-plan: {:.0} km apart", pc.dist(pt));
         assert!(pc.dist(pt) < HIT_KM * 2.0);
+    }
+}
+
+#[cfg(test)]
+mod view_tests {
+    use super::tests::chase_game;
+    #[test]
+    fn plans_on_the_fogged_view() {
+        let (g, me, foe) = chase_game();
+        let v = g.view_for(0);
+        println!("in view: {}, vision has it: {}", v.ship(foe).is_some(), v.players[0].vision.ships.binary_search(&foe).is_ok());
+        let p = v.known_path(0, foe);
+        println!("known path: {:?}", p.as_ref().map(|t| t.end));
+        let o = v.intercept_options(me, foe, &v.view_path(foe).unwrap(), v.t, true);
+        println!("{} options", o.len());
+        assert!(!o.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod saved_tests {
+    use super::*;
+    /// INTERCEPT_GAME=path cargo test -p sim --release saved_game_front -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn saved_game_front() {
+        let Ok(path) = std::env::var("INTERCEPT_GAME") else { return };
+        let mut g: Game = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let t = g.t + 60.0;
+        g.advance_to(t);
+        let v = g.view_for(0);
+        let me = v.ships.iter().find(|s| s.owner == 0 && s.class == crate::game::ShipClass::Bomber).unwrap().id;
+        let foe = v.ships.iter().find(|s| s.owner == 1 && matches!(s.state, ShipState::Flying(_))).unwrap().id;
+        let tgt = v.known_path(0, foe).unwrap();
+        println!("target path end {:?} (+{:.1} h)", tgt.end, (tgt.end.t() - v.t) / 3600.0);
+        let ch = Chaser::of(&v.system, v.ship(me).unwrap());
+        for matched in [true, false] {
+            let end = reach_end(&tgt).min(v.t + 4.0 * 86_400.0);
+            let first = v.t + LEAD + MIN_TOF;
+            for i in 0..40 {
+                let ta = first + (end - first) * ((1.0 + 99.0 * i as f64 / 39.0).ln() / 100f64.ln());
+                if let Some((td, c)) = best_departure(&v.system, &ch, &tgt, v.t, ta, matched) {
+                    let t0 = std::time::Instant::now();
+                    let p = plan_hinted(&v.system, &ch, &tgt, Hint { target: foe, depart_t: td, arrive_t: ta, matched });
+                    let r = p.map(|p| format!("{:.2} miss {:.0}", p.total_dv(), p.miss)).unwrap_or_else(|e| e);
+                    println!("m={matched} ta +{:.1}h td +{:.1}h est {c:.2} -> {r} ({:?})", (ta - v.t) / 3600.0, (td - v.t) / 3600.0, t0.elapsed());
+                }
+            }
+        }
     }
 }

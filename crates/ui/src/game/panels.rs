@@ -386,9 +386,15 @@ pub fn sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameV
         }
         Mode::Aim(ast) => aim_bar(g, inp, view, ast),
         Mode::Impact(ip) => impact_sheet(g, inp, view, &ip),
-        Mode::Planning { target, .. } | Mode::Impacting { target, .. } => {
-            let name = view.body(target).map(|b| b.name.to_uppercase()).unwrap_or_default();
-            let label = if matches!(g.mode, Mode::Impacting { .. }) {
+        Mode::Planning { .. } | Mode::Impacting { .. } | Mode::Intercepting { .. } => {
+            let name = match g.mode {
+                Mode::Planning { target, .. } | Mode::Impacting { target, .. } => view.body(target).map(|b| b.name.to_uppercase()).unwrap_or_default(),
+                Mode::Intercepting { target, .. } => view.ship(target).map(|s| s.name.to_uppercase()).unwrap_or_default(),
+                _ => String::new(),
+            };
+            let label = if matches!(g.mode, Mode::Intercepting { .. }) {
+                format!("PLOTTING INTERCEPT OF {name}...")
+            } else if matches!(g.mode, Mode::Impacting { .. }) {
                 format!("COMPUTING IMPACT ON {name}...")
             } else {
                 format!("PLOTTING COURSE TO {name}...")
@@ -989,12 +995,23 @@ fn plan_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
     // course options (cheapest … fastest) get a fuel ↔ time slider under the title
     let slider = p.options.len() > 1;
     let oy = if slider { 56.0 * s() } else { 0.0 };
-    let r = sheet_rect(178.0 + if slider { 56.0 } else { 0.0 } + if p.fuel_problem.is_some() { 20.0 } else { 0.0 });
+    let icp = p.intercept.clone();
+    let extra = if p.fuel_problem.is_some() { 20.0 } else { 0.0 } + if icp.is_some() { 20.0 } else { 0.0 };
+    let r = sheet_rect(178.0 + if slider { 56.0 } else { 0.0 } + extra);
     inp.block(r);
     cel::panel(r, PANEL);
-    let target = view.body(p.target).map(|b| b.name.to_uppercase()).unwrap_or_default();
+    let target = match &icp {
+        Some(i) => view.ship(i.target).map(|s| s.name.to_uppercase()).unwrap_or_else(|| "CONTACT".into()),
+        None => view.body(p.target).map(|b| b.name.to_uppercase()).unwrap_or_default(),
+    };
     let via: Vec<String> = p.via.iter().filter_map(|&b| view.body(b)).map(|b| b.name.to_uppercase()).collect();
-    let title = if via.is_empty() { format!("COURSE TO {target}") } else { format!("COURSE TO {target} VIA {}", via.join(", ")) };
+    let title = if icp.is_some() {
+        format!("INTERCEPT {target}")
+    } else if via.is_empty() {
+        format!("COURSE TO {target}")
+    } else {
+        format!("COURSE TO {target} VIA {}", via.join(", "))
+    };
     inked(&title, r.x + 16.0 * s(), r.y + 24.0 * s(), 24.0, ACCENT, Align::Left);
     let mut p = p.clone();
     if slider {
@@ -1007,7 +1024,13 @@ fn plan_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
     let cols = [
         ("DEPART", if p.depart_t - view.now < 60.0 { "NOW".to_string() } else { format!("in {}", fmt_dur(p.depart_t - view.now)) }),
         // with the slider, what changes is when you get there; a lone course shows its flight time
-        if slider { ("ARRIVE", format!("in {}", fmt_dur(p.arrive_t - view.now))) } else { ("FLIGHT", fmt_dur(p.arrive_t - p.depart_t)) },
+        if icp.is_some() {
+            ("MEET", format!("in {}", fmt_dur(p.arrive_t - view.now)))
+        } else if slider {
+            ("ARRIVE", format!("in {}", fmt_dur(p.arrive_t - view.now)))
+        } else {
+            ("FLIGHT", fmt_dur(p.arrive_t - p.depart_t))
+        },
         ("DELTA-V", format!("{:.2} km/s", p.dv_depart + p.dv_mid + p.dv_capture)),
     ];
     let cw = (r.w - 32.0 * s()) / 3.0;
@@ -1030,6 +1053,15 @@ fn plan_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
         }
         text(&why, fr.x, fr.y + 26.0 * s(), 13.0, DANGER, FontKind::Body, Align::Left);
     }
+    if let Some(i) = &icp {
+        let y = fr.y + 26.0 * s() + if p.fuel_problem.is_some() { 20.0 * s() } else { 0.0 };
+        let line = if i.matched {
+            format!("CLOSING {:.1} km/s, MATCHES SPEED THERE AND STAYS WITH IT", i.closing)
+        } else {
+            format!("FLIES THROUGH AT {:.1} km/s (ONE PASS)", i.closing)
+        };
+        text(&line, fr.x, y, 13.0, PAPER, FontKind::Title, Align::Left);
+    }
 
     let by = r.y + r.h - 58.0 * s();
     let bw = (r.w - 4.0 * 12.0 * s()) / 3.0;
@@ -1039,10 +1071,18 @@ fn plan_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
     if widgets::button(inp, b(0), label, if ok && exact { Style::Primary } else { Style::Ghost }) && ok && exact {
         g.emit(UiAction::ScheduleTransfer(p.clone()));
         art::sfx("transfer_scheduled");
-        g.push_notice(Notice { kind: NoticeKind::Good, title: "Course laid in".into(), body: format!("Departing for {target}"), focus: None });
+        let body = if icp.is_some() { format!("Intercepting {target}") } else { format!("Departing for {target}") };
+        g.push_notice(Notice { kind: NoticeKind::Good, title: "Course laid in".into(), body, focus: None });
         g.mode = Mode::Idle;
     }
-    if widgets::button(inp, b(1), "NEXT WINDOW", Style::Secondary) {
+    if let Some(i) = &icp {
+        // instead of a later window: match speed at the meeting point, or fly straight through
+        let label = if i.matched { "FLY-THROUGH" } else { "MATCH SPEED" };
+        if widgets::button(inp, b(1), label, Style::Secondary) {
+            let (ship, tgt, m) = (p.ship, i.target, !i.matched);
+            g.intercept(view, ship, tgt, m);
+        }
+    } else if widgets::button(inp, b(1), "NEXT WINDOW", Style::Secondary) {
         let after = p.windows.iter().copied().find(|&w| w > p.depart_t + 60.0).unwrap_or(p.depart_t + 3600.0);
         let (ship, tgt) = (p.ship, p.target);
         g.plan(be, view, ship, tgt, after);
@@ -1148,8 +1188,23 @@ pub fn plan_world(p: &TransferPlan, be: &dyn Backend, view: &GameView, cam: &Cam
     let pts = poly(cam, &p.path, f64::MIN);
     cel::inked_path(&pts, 4.0 * s(), ACCENT);
     map::draw_flybys(&p.path, view, cam, f64::MIN, ACCENT);
+    // Intercept: the target's known path up to the meeting point and a crosshair there.
+    if let Some(i) = &p.intercept {
+        let pts: Vec<Vec2> = (0..=60)
+            .filter_map(|k| be.ship_pos(i.target, view.now + (p.arrive_t - view.now) * k as f64 / 60.0))
+            .map(|q| cam.to_screen(q))
+            .collect();
+        cel::dashed_path(&pts, 2.5 * s(), 7.0 * s(), DANGER);
+        let c = cam.to_screen(i.meet);
+        let r = 14.0 * s();
+        let ring: Vec<Vec2> = (0..=48).map(|k| c + Vec2::from_angle(k as f32 / 48.0 * std::f32::consts::TAU) * r).collect();
+        cel::inked_path(&ring, 2.5 * s(), DANGER);
+        for a in 0..4 {
+            let d = Vec2::from_angle(a as f32 * std::f32::consts::FRAC_PI_2);
+            draw_line(c.x + d.x * r * 0.5, c.y + d.y * r * 0.5, c.x + d.x * r * 1.6, c.y + d.y * r * 1.6, 2.5 * s(), DANGER);
+        }
+    } else if let Some(b) = view.body(p.target) {
     // Ghost of the target where it will be on arrival.
-    if let Some(b) = view.body(p.target) {
         let c = cam.to_screen(be.body_pos(p.target, p.arrive_t));
         let r = map::body_radius_px(b, cam);
         let ring: Vec<Vec2> = (0..=48).map(|i| c + Vec2::from_angle(i as f32 / 48.0 * std::f32::consts::TAU) * (r + 4.0 * s())).collect();

@@ -302,7 +302,7 @@ impl DemoBackend {
                     .collect(),
                 ..Default::default()
             };
-            return Some(TransferPlan { ship: s.id, target, depart_t, arrive_t, dv_depart: 0.4, dv_mid: 0.0, dv_capture: 0.2, fuel_needed: 12.0, fuel_have: 0.0, fuel_problem: None, path, via: vec![], label: String::new(), options: vec![], token: String::new(), windows: vec![depart_t] });
+            return Some(TransferPlan { ship: s.id, target, depart_t, arrive_t, dv_depart: 0.4, dv_mid: 0.0, dv_capture: 0.2, fuel_needed: 12.0, fuel_have: 0.0, fuel_problem: None, path, via: vec![], label: String::new(), options: vec![], token: String::new(), windows: vec![depart_t], intercept: None });
         }
         let at = (r1 + r2) / 2.0;
         let tof = PI * (at.powi(3) / MU).sqrt();
@@ -376,6 +376,7 @@ impl DemoBackend {
             options: vec![],
             token: String::new(),
             windows,
+            intercept: None,
         })
     }
 

@@ -46,6 +46,8 @@ pub enum Mode {
     Plan(TransferPlan),
     /// Waiting on `Backend::plan_transfer_async` ("plotting course...").
     Planning { ship: ShipId, target: BodyId, after: f64 },
+    /// Waiting on `Backend::plan_intercept_async` (our ship → enemy ship `target`).
+    Intercepting { ship: ShipId, target: ShipId, matched: bool },
     Nodes(NodeEdit),
     /// Our asteroid is picked; next tap on a planet/moon previews an impact.
     Aim(BodyId),
@@ -228,6 +230,7 @@ impl GameScreen {
             self.sound_cues(view);
             self.run_pending_plan(be_ref, view.now);
             self.run_pending_between(be_ref);
+            self.run_pending_intercept(be_ref);
             self.run_pending_impact(be_ref);
             // Scrubbed ahead: draw the forecast (sim run forward from what we know) instead of the
             // live view. `now` stays the real now.
@@ -332,7 +335,7 @@ impl GameScreen {
     fn selected_ship(&self) -> Option<ShipId> {
         match (&self.mode, self.selected) {
             (Mode::Plan(p), _) => Some(p.ship),
-            (Mode::Planning { ship, .. }, _) => Some(*ship),
+            (Mode::Planning { ship, .. }, _) | (Mode::Intercepting { ship, .. }, _) => Some(*ship),
             (Mode::Nodes(n), _) => Some(n.ship),
             (Mode::Target(s), _) => Some(*s),
             (_, Some(Focus::Ship(s))) => Some(s),
@@ -394,6 +397,10 @@ impl GameScreen {
                 let ship = *ship;
                 self.plan(be, view, ship, b, view.now);
             }
+            (Mode::Target(ship), Some(Focus::Ship(s))) if view.ship(s).is_some_and(|x| x.owner != view.me) => {
+                let ship = *ship;
+                self.intercept(view, ship, s, true);
+            }
             (Mode::Target(_), Some(Focus::Ship(s))) => self.pick_ship(view, s),
             (Mode::Target(_), None) => {
                 self.mode = Mode::Idle;
@@ -404,6 +411,13 @@ impl GameScreen {
                 if let (Some(Focus::Body(b)), Mode::Plan(pl)) = (hit, &self.mode) {
                     let ship = pl.ship;
                     self.plan(be, view, ship, b, view.now);
+                } else if let (Some(Focus::Ship(s)), Mode::Plan(pl)) = (hit, &self.mode) {
+                    let ship = pl.ship;
+                    if view.ship(s).is_some_and(|x| x.owner != view.me) {
+                        self.intercept(view, ship, s, pl.intercept.as_ref().is_none_or(|i| i.matched));
+                    } else {
+                        self.pick_ship(view, s);
+                    }
                 } else {
                     self.mode = Mode::Idle;
                 }
@@ -417,7 +431,7 @@ impl GameScreen {
             }
             (Mode::Aim(_), Some(_)) => self.say("Pick a planet or moon"),
             (Mode::Aim(_), None) | (Mode::Impact(_), _) => self.mode = Mode::Idle,
-            (Mode::Nodes(_), _) | (Mode::Planning { .. }, _) | (Mode::Impacting { .. }, _) => {}
+            (Mode::Nodes(_), _) | (Mode::Planning { .. }, _) | (Mode::Intercepting { .. }, _) | (Mode::Impacting { .. }, _) => {}
             (Mode::Idle, Some(Focus::Ship(s))) => self.pick_ship(view, s),
             (Mode::Idle, h) => self.selected = h,
         }
@@ -428,7 +442,7 @@ impl GameScreen {
         if view.ship(s).is_some_and(|sh| sh.owner == view.me) {
             self.mode = Mode::Target(s);
             crate::art::sfx("ui_click");
-            self.say("Tap a target");
+            self.say("Tap a planet, or an enemy ship to intercept");
         } else {
             self.mode = Mode::Idle;
         }
@@ -471,6 +485,34 @@ impl GameScreen {
         next.windows = p.windows.clone();
         self.plan_want = None;
         self.mode = Mode::Plan(next);
+    }
+
+    /// Plan an intercept of enemy ship `target` with our `ship` (or fleet token).
+    pub fn intercept(&mut self, view: &GameView, ship: ShipId, target: ShipId, matched: bool) {
+        if view.ship(ship).is_none_or(|s| s.owner != view.me) {
+            return;
+        }
+        crate::art::sfx("ui_click");
+        self.selected = Some(Focus::Ship(ship));
+        self.mode = Mode::Intercepting { ship, target, matched };
+        self.plan_drag = None;
+        self.plan_want = None;
+    }
+
+    fn run_pending_intercept(&mut self, be: &dyn Backend) {
+        let Mode::Intercepting { ship, target, matched } = self.mode else { return };
+        match be.plan_intercept_async(ship, target, matched) {
+            crate::PlanPoll::Pending => {}
+            crate::PlanPoll::Done(Some(plan)) => {
+                self.selected = Some(Focus::Ship(ship));
+                self.mode = Mode::Plan(plan);
+            }
+            crate::PlanPoll::Done(None) => {
+                crate::art::sfx("ui_error");
+                self.mode = Mode::Target(ship);
+                self.say("Can't intercept that (out of reach, fuel or sight)");
+            }
+        }
     }
 
     fn run_pending_impact(&mut self, be: &dyn Backend) {
