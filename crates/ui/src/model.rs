@@ -414,6 +414,40 @@ pub struct TransferPlan {
     pub windows: Vec<f64>,
 }
 
+/// Transfer-window tool: upcoming opportunities from where a ship is parked to every planet,
+/// moon and gas giant (estimates; tapping one plans the real course).
+#[derive(Clone, Debug)]
+pub struct WindowsView {
+    pub ship: ShipId,
+    pub from: BodyId,
+    /// The strips cover departures from `start` to `start + horizon`.
+    pub start: f64,
+    pub horizon: f64,
+    /// Δv the ship (the thirstiest ship of a fleet) has left, km/s.
+    pub budget: f64,
+    pub list: Vec<Opportunity>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Opportunity {
+    pub target: BodyId,
+    /// Bodies passed through on the way (moons of other planets go via their planet).
+    pub via: Vec<BodyId>,
+    /// Best departure windows in the horizon, soonest first.
+    pub windows: Vec<WindowEst>,
+    /// Earliest arrival that fits the fuel, leaving any time in the horizon.
+    pub fastest: Option<WindowEst>,
+    /// Estimated Δv (km/s) for departures evenly spaced over the horizon (a porkchop slice).
+    pub strip: Vec<f32>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct WindowEst {
+    pub depart_t: f64,
+    pub arrive_t: f64,
+    pub dv: f64,
+}
+
 #[derive(Clone, Debug)]
 pub struct LobbyInfo {
     pub code: String,

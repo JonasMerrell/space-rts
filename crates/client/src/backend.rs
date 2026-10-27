@@ -85,6 +85,9 @@ pub struct ClientBackend {
     /// fuel ↔ time slider: exact courses between two options, keyed by both tokens + fraction
     between: RefCell<HashMap<String, Option<m::TransferPlan>>>,
     between_jobs: RefCell<HashMap<String, Job<Option<m::TransferPlan>>>>,
+    /// transfer-window tool, keyed by ship and quarter hour
+    windows: RefCell<HashMap<(ShipId, i64), Option<m::WindowsView>>>,
+    windows_jobs: RefCell<HashMap<(ShipId, i64), Job<Option<m::WindowsView>>>>,
     /// asteroid impact previews keyed by (asteroid, target), and their background jobs
     impact_cache: RefCell<HashMap<(BodyId, BodyId), Option<m::ImpactPreview>>>,
     impact_jobs: RefCell<HashMap<(BodyId, BodyId), Job<Option<m::ImpactPreview>>>>,
@@ -144,6 +147,8 @@ impl ClientBackend {
             plan_jobs: RefCell::new(HashMap::new()),
             between: RefCell::new(HashMap::new()),
             between_jobs: RefCell::new(HashMap::new()),
+            windows: RefCell::new(HashMap::new()),
+            windows_jobs: RefCell::new(HashMap::new()),
             impact_cache: RefCell::new(HashMap::new()),
             impact_jobs: RefCell::new(HashMap::new()),
             reconnect_at: 0.0,
@@ -305,6 +310,7 @@ impl ClientBackend {
             self.last_event_seq = game.events_for(me).last().map(|e| e.seq).unwrap_or(0);
             self.was_running = false;
             self.plan_cache.borrow_mut().clear();
+            self.windows.borrow_mut().clear();
             self.between.borrow_mut().clear();
         self.impact_cache.borrow_mut().clear();
             self.impact_cache.borrow_mut().clear();
@@ -546,6 +552,26 @@ fn compute_plan(g: &Game, now: f64, ship: ShipId, target: BodyId, after: f64) ->
         p.options = list.clone();
     }
     all.into_iter().next()
+}
+
+/// Transfer-window tool: opportunities from where the ship is parked over the next 3 days.
+fn compute_windows(g: &Game, now: f64, ship: ShipId) -> Option<m::WindowsView> {
+    const HORIZON: f64 = 3.0 * 86_400.0;
+    let s = g.ship(lead(g, ship))?;
+    let from = s.parked_at()?;
+    let budget = g.with_fleetmates(s.id).iter().filter_map(|&id| g.ship(id)).map(|m| m.dv_left()).fold(s.dv_left(), f64::min);
+    let est = |w: &sim::plan::Window| m::WindowEst { depart_t: w.depart_t, arrive_t: w.arrive_t, dv: w.dv };
+    let list = sim::plan::opportunities(&g.system, from, now, HORIZON, budget)
+        .into_iter()
+        .map(|o| m::Opportunity {
+            target: o.to.0,
+            via: o.via.iter().map(|b| b.0).collect(),
+            windows: o.windows.iter().map(est).collect(),
+            fastest: o.fastest.as_ref().map(est),
+            strip: o.strip.iter().map(|&d| d as f32).collect(),
+        })
+        .collect();
+    Some(m::WindowsView { ship, from: from.0, start: now + 60.0, horizon: HORIZON, budget, list })
 }
 
 /// The exact course `f` of the way between two neighbouring slider options (see `plan::between`).
@@ -1229,6 +1255,38 @@ impl Backend for ClientBackend {
         let Some((game, now)) = self.plan_input(ship) else { return ui::PlanPoll::Done(None) };
         jobs.insert(key, Job::spawn(move || compute_plan(&game, now, ship, target, after.max(now))));
         ui::PlanPoll::Pending
+    }
+
+    fn windows_async(&self, ship: ShipId) -> ui::WindowsPoll {
+        let key = (ship, (self.now() / 900.0) as i64);
+        if let Some(v) = self.windows.borrow().get(&key) {
+            return ui::WindowsPoll::Done(v.clone());
+        }
+        let mut jobs = self.windows_jobs.borrow_mut();
+        if let Some(rx) = jobs.get(&key) {
+            return match rx.try_recv() {
+                Ok(res) => {
+                    jobs.remove(&key);
+                    let mut cache = self.windows.borrow_mut();
+                    cache.retain(|k, _| k.1 == key.1);
+                    cache.insert(key, res.clone());
+                    ui::WindowsPoll::Done(res)
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => ui::WindowsPoll::Pending,
+                Err(_) => {
+                    jobs.remove(&key);
+                    ui::WindowsPoll::Done(None)
+                }
+            };
+        }
+        // a new quarter hour: keep showing the last list while the fresh one is computed
+        let stale = self.windows.borrow().iter().find(|(k, _)| k.0 == ship).map(|(_, v)| v.clone());
+        let Some((game, now)) = self.plan_input(ship) else { return ui::WindowsPoll::Done(None) };
+        jobs.insert(key, Job::spawn(move || compute_windows(&game, now, ship)));
+        match stale {
+            Some(v) => ui::WindowsPoll::Done(v),
+            None => ui::WindowsPoll::Pending,
+        }
     }
 
     fn plan_between_async(&self, a: &m::TransferPlan, b: &m::TransferPlan, f: f32) -> ui::PlanPoll {

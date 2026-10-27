@@ -397,6 +397,7 @@ pub fn sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameV
             }
         }
         Mode::Aim(ast) => aim_bar(g, inp, view, ast),
+        Mode::Windows(_) => super::windows::windows_sheet(g, inp, be, view),
         Mode::Impact(ip) => impact_sheet(g, inp, view, &ip),
         Mode::Planning { target, .. } | Mode::Impacting { target, .. } => {
             let name = view.body(target).map(|b| b.name.to_uppercase()).unwrap_or_default();
@@ -1014,6 +1015,10 @@ fn ship_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
         let flying = sh.trajectory.is_some();
         if flying && widgets::button(inp, b(1), "ABORT", Style::Danger) {
             g.emit(UiAction::CancelFlight { ship: sh.id });
+        }
+        // where can it go, and when: the transfer-window tool
+        if !flying && sh.parked_at.is_some() && widgets::button(inp, b(1), "WINDOWS", Style::Secondary) {
+            g.mode = Mode::Windows(super::windows::WindowsSheet::new(sh.id));
         }
         if widgets::button(inp, b(2), "DONE", Style::Ghost) {
             g.mode = Mode::Idle;

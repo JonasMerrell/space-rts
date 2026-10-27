@@ -3,6 +3,7 @@
 pub mod details;
 pub mod endgame;
 pub mod fleet;
+pub mod windows;
 mod lobby;
 pub mod map;
 mod panels;
@@ -53,6 +54,8 @@ pub enum Mode {
     /// Waiting on `Backend::plan_impact_async`.
     Impacting { asteroid: BodyId, target: BodyId },
     Impact(ImpactPreview),
+    /// Transfer-window tool for one of our parked ships.
+    Windows(windows::WindowsSheet),
 }
 
 pub struct Toast {
@@ -354,6 +357,7 @@ impl GameScreen {
             (Mode::Planning { ship, .. }, _) => Some(*ship),
             (Mode::Nodes(n), _) => Some(n.ship),
             (Mode::Target(s), _) => Some(*s),
+            (Mode::Windows(w), _) => Some(w.ship),
             (_, Some(Focus::Ship(s))) => Some(s),
             _ => None,
         }
@@ -444,6 +448,12 @@ impl GameScreen {
             (Mode::Aim(_), Some(_)) => self.say("Pick a planet or moon"),
             (Mode::Aim(_), None) | (Mode::Impact(_), _) => self.mode = Mode::Idle,
             (Mode::Nodes(_), _) | (Mode::Planning { .. }, _) | (Mode::Impacting { .. }, _) => {}
+            // a tap on a body plans a course there (like picking a target), elsewhere closes it
+            (Mode::Windows(w), Some(Focus::Body(b))) => {
+                let ship = w.ship;
+                self.plan(be, view, ship, b, view.now);
+            }
+            (Mode::Windows(_), _) => self.mode = Mode::Idle,
             (Mode::Idle, Some(Focus::Ship(s))) => self.pick_ship(view, s),
             (Mode::Idle, h) => self.selected = h,
         }
