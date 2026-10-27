@@ -115,7 +115,7 @@ pub fn hud(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
 
 fn game_menu(g: &mut GameScreen, inp: &mut Input, view: &GameView, at: Rect) {
     let host = view.host == view.me;
-    let items = if host { 7 } else { 4 };
+    let items = if host { 9 } else { 5 };
     let bh = 44.0 * s();
     let pad = 10.0 * s();
     let r = Rect::new(at.x, at.y, at.w, pad + items as f32 * (bh + pad));
@@ -151,6 +151,14 @@ fn game_menu(g: &mut GameScreen, inp: &mut Input, view: &GameView, at: Rect) {
             g.emit(UiAction::SetSpeed { speed: v });
         }
     }
+    if widgets::button(inp, row(items - if host { 3 } else { 2 }), "BUG REPORT / IDEA", Style::Secondary) {
+        g.feedback = Some(super::endgame::FeedbackForm::new());
+        g.menu_open = false;
+        art::sfx("menu_open");
+    }
+    if host {
+        super::endgame::delete_row(g, inp, view, row(items - 2));
+    }
     if widgets::button(inp, row(items - 1), "LEAVE TO MENU", Style::Ghost) {
         g.menu_open = false;
         g.emit(UiAction::BackToMenu);
@@ -158,6 +166,9 @@ fn game_menu(g: &mut GameScreen, inp: &mut Input, view: &GameView, at: Rect) {
     // Tap elsewhere closes it.
     if inp.tap.is_some_and(|p| !r.contains(p)) {
         g.menu_open = false;
+    }
+    if !g.menu_open {
+        g.confirm_delete = false;
     }
 }
 
@@ -381,7 +392,7 @@ pub fn sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameV
         Mode::Nodes(ne) => node_sheet(g, inp, be, view, ne),
         Mode::Target(ship) => {
             if let Some(sh) = view.ship(ship) {
-                ship_sheet(g, inp, view, sh, true);
+                ship_sheet(g, inp, be, view, sh, true);
             }
         }
         Mode::Aim(ast) => aim_bar(g, inp, view, ast),
@@ -417,7 +428,7 @@ pub fn sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameV
         Mode::Idle => match g.selected {
             Some(Focus::Ship(id)) => {
                 if let Some(sh) = view.ship(id) {
-                    ship_sheet(g, inp, view, sh, false);
+                    ship_sheet(g, inp, be, view, sh, false);
                 }
             }
             Some(Focus::Body(id)) => {
@@ -835,8 +846,15 @@ fn ship_icon(view: &GameView, sh: &Ship, c: Vec2, px: f32) {
 }
 
 /// Compact bar while picking a target, so the map above stays tappable.
-fn target_bar(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship) {
-    let r = sheet_rect(112.0);
+fn target_bar(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView, sh: &Ship) {
+    // A constructor at a site with our stations still being built can leave once they're done.
+    let is_builder = sh.class == ShipClass::Constructor || sh.members.iter().any(|m| m.class == ShipClass::Constructor);
+    let done_at = sh.parked_at.filter(|_| is_builder && !map::is_flying(sh, view.now)).and_then(|b| be.construction_done(b)).filter(|&t| t > view.now);
+    if done_at.is_none() && g.leave_after.is_some_and(|l| l.0 == sh.id) {
+        g.leave_after = None;
+    }
+    let extra = if done_at.is_some() { 44.0 } else { 0.0 };
+    let r = sheet_rect(112.0 + extra);
     inp.block(r);
     cel::panel(r, PANEL);
     ship_icon(view, sh, vec2(r.x + 28.0 * s(), r.y + 28.0 * s()), 34.0 * s());
@@ -848,6 +866,24 @@ fn target_bar(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship) {
         None => "Tap a planet or moon to plot a course".to_string(),
     };
     text(&hint, r.x + 54.0 * s(), r.y + 40.0 * s(), 13.0, ACCENT, FontKind::Body, Align::Left);
+    if let Some(t) = done_at {
+        let on = g.leave_after.is_some_and(|l| l.0 == sh.id);
+        let cr = Rect::new(r.x + 12.0 * s(), r.y + 56.0 * s(), 190.0 * s(), 32.0 * s());
+        let paused = !t.is_finite();
+        let label = if paused { "LEAVE WHEN DONE (paused)" } else { "LEAVE WHEN DONE" };
+        if widgets::chip(inp, cr, label, on, ACCENT) && !paused {
+            g.leave_after = if on { None } else { Some((sh.id, t)) };
+            art::sfx(if on { "toggle_off" } else { "toggle_on" });
+        }
+        let note = if paused {
+            "build paused".to_string()
+        } else if on {
+            format!("then departs · {}", fmt_dur(t - view.now))
+        } else {
+            format!("station done in {}", fmt_dur(t - view.now))
+        };
+        text(&note, cr.x + cr.w + 10.0 * s(), cr.center().y, 12.0, if on { ACCENT } else { MUTED }, FontKind::Body, Align::Left);
+    }
     let by = r.y + r.h - 52.0 * s();
     let group = super::fleet::can_group(view, sh);
     let n = if group { 4 } else { 3 };
@@ -857,7 +893,7 @@ fn target_bar(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship) {
     let builds = sh.class == ShipClass::Constructor || sh.members.iter().any(|m| m.class == ShipClass::Constructor);
     let site = sh.parked_at.filter(|_| builds && !map::is_flying(sh, view.now));
     if let Some(body) = site {
-        if widgets::button(inp, b(0), "BUILD STATION", Style::Primary) {
+        if widgets::button(inp, b(0), if n > 3 { "BUILD" } else { "BUILD STATION" }, Style::Primary) {
             g.mode = Mode::Idle;
             g.selected = Some(Focus::Body(body));
             g.stations_for = Some(body);
@@ -901,10 +937,10 @@ fn ships_here_button(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &B
     }
 }
 
-fn ship_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship, targeting: bool) {
+fn ship_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView, sh: &Ship, targeting: bool) {
     let mine = sh.owner == view.me;
     if targeting {
-        return target_bar(g, inp, view, sh);
+        return target_bar(g, inp, be, view, sh);
     }
     let r = sheet_rect(if mine { 200.0 } else { 110.0 });
     inp.block(r);

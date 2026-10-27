@@ -431,6 +431,8 @@ pub struct GameResults {
 /// Everything the in-game screens draw.
 #[derive(Clone, Debug, Default)]
 pub struct GameView {
+    /// Join code of this war (for war-level actions like DeleteGame).
+    pub code: String,
     pub me: PlayerId,
     pub host: PlayerId,
     pub now: f64,
