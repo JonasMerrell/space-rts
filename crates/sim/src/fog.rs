@@ -418,6 +418,7 @@ impl Game {
         if !scanned {
             s.fuel = 0.0;
             s.route.clear();
+            s.intercept = None;
             match &mut s.state {
                 ShipState::Parked { departure, .. } => *departure = None,
                 ShipState::Flying(f) => {

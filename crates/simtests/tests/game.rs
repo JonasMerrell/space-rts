@@ -49,6 +49,7 @@ fn put_ship(g: &mut Game, owner: PlayerId, class: ShipClass, at: BodyId) -> Ship
         state: ShipState::Parked { body: at, departure: None },
         tech: Default::default(),
         last_burn_t: sim::game::no_burn(),
+        intercept: None,
     });
     id
 }
@@ -221,6 +222,7 @@ fn rocket_equation() {
             order: StandingOrder::Hold, route: vec![], state: ShipState::Parked { body: BodyId(1), departure: None },
             tech: Default::default(),
             last_burn_t: sim::game::no_burn(),
+        intercept: None,
         };
         let dv = full.dv_left();
         assert!((full.fuel_for(dv) - st.fuel_cap).abs() < 1e-9 * st.fuel_cap, "{c:?}");

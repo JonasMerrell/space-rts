@@ -401,6 +401,54 @@ pub fn between(sys: &System, ch: &Chaser, tgt: &Trajectory, a: Hint, b: Hint, f:
     p.converged.then_some(p)
 }
 
+/// A ship's standing intercept order.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Order {
+    pub target: ShipId,
+    pub matched: bool,
+    pub arrive_t: f64,
+    /// fingerprint of the target's course as the owner knew it when this was planned
+    pub known: u64,
+    /// the target is out of sensor range (the chaser coasts on)
+    pub lost: bool,
+}
+
+/// Fingerprint of what a (redacted) ship's course looks like: changes when it burns or parks.
+fn course_sig(s: &Ship) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut mix = |x: u64| h = (h ^ x).wrapping_mul(0x0100_0000_01b3);
+    match &s.state {
+        ShipState::Parked { body, .. } => mix(body.0 as u64),
+        ShipState::Flying(f) => {
+            for x in [f.start.t, f.start.v.x, f.start.v.y] {
+                mix(x.to_bits());
+            }
+            mix(f.dest.map_or(u64::MAX, |b| b.0 as u64));
+            for b in &f.burns {
+                mix(b.t.to_bits());
+                mix(b.prograde.to_bits());
+            }
+        }
+    }
+    h
+}
+
+/// Arrival times the server tries when it re-plans a chase on its own (cheap: estimates only).
+fn replan_times(now: f64, old: f64, end: f64) -> Vec<f64> {
+    let first = now + LEAD + MIN_TOF;
+    let mut v: Vec<f64> = vec![];
+    if old >= first && old <= end {
+        v.push(old);
+    }
+    for h in [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0] {
+        let t = now + LEAD + h * 3600.0;
+        if t >= first && t <= end {
+            v.push(t);
+        }
+    }
+    v
+}
+
 impl Game {
     /// The path player `p` knows for ship `id`: the fogged copy (burns only when scanned).
     /// None when `p` can't see it now.
@@ -426,6 +474,199 @@ impl Game {
     }
 }
 
+impl Game {
+    /// What player `p` knows of ship `id` (None when out of sight).
+    fn known_ship(&self, p: crate::game::PlayerId, id: ShipId) -> Option<Ship> {
+        let s = self.ship(id)?;
+        let v = &self.players.get(p as usize)?.vision;
+        if s.owner != p && v.ships.binary_search(&id).is_err() {
+            return None;
+        }
+        Some(self.redact(s, s.owner == p || v.scanned.binary_search(&id).is_ok()))
+    }
+
+    /// `Command::Intercept`: re-plan the course from its hint on what `player` knows, check fuel,
+    /// and send the ships (whole fleets) on it.
+    pub(crate) fn order_intercept(&mut self, player: crate::game::PlayerId, ships: &[ShipId], hint: Hint) -> Result<(), String> {
+        let ships = self.expand_fleets(ships);
+        let lead = *ships.first().ok_or("no ships")?;
+        for &id in &ships {
+            if self.ship(id).ok_or("no such ship")?.owner != player {
+                return Err("not your ship".into());
+            }
+        }
+        let t = self.ship(hint.target).ok_or("that ship is gone")?;
+        if t.owner == player {
+            return Err("that's one of ours".into());
+        }
+        let known = self.known_ship(player, hint.target).ok_or("target is out of sensor range")?;
+        if let Some(b) = known.parked_at() {
+            return Err(format!("target is in orbit of {}: plan a transfer there", self.system.body(b).name));
+        }
+        // one course for everyone: all parked at the same body, or one fleet in flight
+        let s0 = self.ship(lead).unwrap();
+        let mates = self.with_fleetmates(lead);
+        let together = ships.iter().all(|&id| {
+            let s = self.ship(id).unwrap();
+            match (s0.parked_at(), s.parked_at()) {
+                (Some(a), Some(b)) => a == b,
+                (None, None) => mates.contains(&id),
+                _ => false,
+            }
+        });
+        if !together {
+            return Err("ships must be in the same orbit or flying as one fleet".into());
+        }
+        if hint.depart_t < self.t + 20.0 {
+            return Err("that departure time has passed, plan again".into());
+        }
+        let tgt = self.known_path(player, hint.target).ok_or("target is out of sensor range")?;
+        let plan = plan_hinted(&self.system, &Chaser::of(&self.system, s0), &tgt, hint)?;
+        if !plan.converged {
+            return Err("couldn't find that intercept any more, plan again".into());
+        }
+        self.fleet_fuel_check(&ships, plan.depart_dv, plan.match_dv)?;
+        let sig = course_sig(&known);
+        self.fly_intercept(&ships, &plan, sig);
+        Ok(())
+    }
+
+    fn fly_intercept(&mut self, ships: &[ShipId], plan: &InterceptPlan, known: u64) {
+        let order = Order { target: plan.hint.target, matched: plan.hint.matched, arrive_t: plan.arrive_t(), known, lost: false };
+        for &id in ships {
+            let Some(s) = self.ship_mut(id) else { continue };
+            s.route.clear();
+            s.intercept = Some(order);
+            match &mut s.state {
+                ShipState::Parked { body, departure } => {
+                    *departure = Some(crate::game::Departure { to: *body, state: plan.depart, dv: plan.depart_dv, burns: plan.burns() });
+                }
+                ShipState::Flying(f) => {
+                    f.burns = plan.depart_burn.into_iter().chain(plan.match_burn).collect();
+                    f.dest = None;
+                    f.cache = None;
+                }
+            }
+        }
+    }
+
+    fn clear_intercept(&mut self, ships: &[ShipId]) {
+        for &id in ships {
+            if let Some(s) = self.ship_mut(id) {
+                s.intercept = None;
+            }
+        }
+    }
+
+    /// Every tick: follow up on intercept orders. A target that changed course (burned, parked)
+    /// while still in sight gets a fresh course; out of sight the chaser coasts on.
+    pub(crate) fn intercept_tick(&mut self) {
+        use crate::game::EventKind;
+        let mut seen: Vec<ShipId> = vec![];
+        let leads: Vec<ShipId> = self.ships.iter().filter(|s| s.intercept.is_some()).map(|s| s.id).collect();
+        for lead in leads {
+            if seen.contains(&lead) {
+                continue;
+            }
+            let group: Vec<ShipId> = self.with_fleetmates(lead).into_iter().filter(|&id| self.ship(id).is_some_and(|s| s.intercept.is_some())).collect();
+            seen.extend(&group);
+            let Some(s) = self.ship(lead) else { continue };
+            let (owner, name, o) = (s.owner, s.name.clone(), s.intercept.unwrap());
+            let set = |g: &mut Game, o: Order| {
+                for &id in &group {
+                    if let Some(s) = g.ship_mut(id) {
+                        s.intercept = Some(o);
+                    }
+                }
+            };
+            if self.ship(o.target).is_none() {
+                self.clear_intercept(&group);
+                self.event(Some(owner), EventKind::Info, "Target gone", &format!("{name}'s target is no longer out there"), None, Some(lead));
+                continue;
+            }
+            let Some(known) = self.known_ship(owner, o.target) else {
+                if !o.lost {
+                    set(self, Order { lost: true, ..o });
+                    self.event(Some(owner), EventKind::Info, "Contact lost", &format!("{name} lost sight of its target and coasts on"), None, Some(lead));
+                }
+                continue;
+            };
+            let sig = course_sig(&known);
+            if sig == o.known {
+                if o.lost {
+                    set(self, Order { lost: false, ..o });
+                }
+                continue;
+            }
+            let o = Order { known: sig, lost: false, ..o };
+            set(self, o);
+            let tname = known.class.stats().name;
+            if let Some(b) = known.parked_at() {
+                let bname = self.system.body(b).name.clone();
+                let chaser_parked = self.ship(lead).unwrap().parked_at().is_some();
+                if chaser_parked {
+                    // head for its orbit instead
+                    self.clear_intercept(&group);
+                    match self.transfer(owner, &group, b, None, None) {
+                        Ok(()) => self.event(Some(owner), EventKind::Info, "Target in orbit", &format!("The {tname} parked at {bname}; {name} will follow it there"), Some(b), Some(lead)),
+                        Err(e) => self.event(Some(owner), EventKind::Bad, "Target in orbit", &format!("The {tname} parked at {bname}; {name} can't follow ({e})"), Some(b), Some(lead)),
+                    }
+                } else {
+                    // a chaser whose path enters that SOI brakes into orbit there too
+                    let sys = &self.system;
+                    let enters = match &self.ship(lead).unwrap().state {
+                        ShipState::Flying(f) => {
+                            let tr = predict(sys, f.start, &f.burns, None, f.start.t + Flight::HORIZON);
+                            tr.segs.iter().any(|sg| sg.parent == b && sg.t1 > self.t)
+                        }
+                        _ => false,
+                    };
+                    for &id in &group {
+                        if let Some(ShipState::Flying(f)) = self.ship_mut(id).map(|s| &mut s.state) {
+                            if enters {
+                                f.dest = Some(b);
+                                f.cache = None;
+                            }
+                        }
+                    }
+                    self.clear_intercept(&group);
+                    let msg = if enters { format!("The {tname} parked at {bname}; {name} will brake into orbit there") } else { format!("The {tname} parked at {bname}; plan a transfer once {name} arrives somewhere") };
+                    self.event(Some(owner), EventKind::Info, "Target in orbit", &msg, Some(b), Some(lead));
+                }
+                continue;
+            }
+            // it changed course in flight: burn as soon as possible for a new meeting
+            let Some(tgt) = self.known_path(owner, o.target) else { continue };
+            let s = self.ship(lead).unwrap();
+            let ch = Chaser::of(&self.system, s);
+            let budget = group.iter().filter_map(|&id| self.ship(id)).map(|m| m.dv_left()).fold(f64::INFINITY, f64::min);
+            let td = self.t + LEAD;
+            let mut best: Option<(f64, f64)> = None;
+            for (k, ta) in replan_times(self.t, o.arrive_t, reach_end(&tgt)).into_iter().enumerate() {
+                let Some(c) = est_cost(&self.system, &ch, &tgt, td, ta, o.matched) else { continue };
+                // keep the old meeting time if it's affordable, else the cheapest
+                if c <= budget * 0.9 && (k == 0 && ta == o.arrive_t || best.is_none_or(|b| c < b.1)) {
+                    best = Some((ta, c));
+                    if ta == o.arrive_t {
+                        break;
+                    }
+                }
+            }
+            let plan = best.and_then(|(ta, _)| plan_hinted(&self.system, &ch, &tgt, Hint { target: o.target, depart_t: td, arrive_t: ta, matched: o.matched }).ok());
+            match plan.filter(|p| p.converged) {
+                Some(p) if self.fleet_fuel_check(&group, p.depart_dv, p.match_dv).is_ok() => {
+                    let hrs = (p.arrive_t() - self.t) / 3600.0;
+                    self.fly_intercept(&group, &p, sig);
+                    self.event(Some(owner), EventKind::Info, "Intercept re-plotted", &format!("The {tname} changed course; {name} burns {:.1} km/s to meet it in {hrs:.1} h", p.total_dv()), None, Some(lead));
+                }
+                _ => {
+                    self.event(Some(owner), EventKind::Bad, "Can't catch it", &format!("The {tname} changed course and {name} can't reach it now"), None, Some(lead));
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -434,13 +675,17 @@ mod tests {
 
     /// A two-player game with an enemy gunship already flying between two planets.
     pub(crate) fn chase_game() -> (Game, ShipId, ShipId) {
+        chase_game_with(ShipClass::Interceptor, ShipClass::Gunship)
+    }
+
+    pub(crate) fn chase_game_with(mine: ShipClass, theirs: ShipClass) -> (Game, ShipId, ShipId) {
         let mut g = Game::new("T".into(), Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0 }, 7, "a");
         g.add_player("b", None).unwrap();
         g.start();
         let planets: Vec<BodyId> = g.system.bodies.iter().filter(|b| matches!(b.kind, BodyKind::Planet)).map(|b| b.id).collect();
         let (a, b) = (planets[1], planets[2]);
-        let me = g.spawn(0, ShipClass::Interceptor, a);
-        let foe = g.spawn(1, ShipClass::Gunship, b);
+        let me = g.spawn(0, mine, a);
+        let foe = g.spawn(1, theirs, b);
         g.apply(1, Command::Transfer { ships: vec![foe], to: a, depart_t: None }).unwrap();
         let dep = match &g.ship(foe).unwrap().state {
             ShipState::Parked { departure: Some(d), .. } => d.state.t,
@@ -483,5 +728,67 @@ mod tests {
         let again = plan_hinted(&g.system, &Chaser::of(&g.system, g.ship(me).unwrap()), &tgt, o.hint).unwrap();
         assert_eq!(again.depart.v.x.to_bits(), o.depart.v.x.to_bits());
         assert_eq!(again.miss.to_bits(), o.miss.to_bits());
+    }
+
+    fn abs_ship(g: &Game, id: ShipId) -> (V2, V2) {
+        match &g.ship(id).unwrap().state {
+            ShipState::Flying(f) => abs_state(&g.system, &f.compute(&g.system), g.t).unwrap(),
+            ShipState::Parked { body, .. } => (g.system.pos(*body, g.t), g.system.vel(*body, g.t)),
+        }
+    }
+
+    fn see(g: &mut Game, id: ShipId) {
+        let v = &mut g.players[0].vision;
+        if v.ships.binary_search(&id).is_err() {
+            v.ships.push(id);
+            v.ships.sort();
+        }
+    }
+
+    #[test]
+    fn ordered_intercept_flies_to_the_target_and_follows_a_course_change() {
+        // unarmed on both sides, so nobody dies before the course change
+        let (mut g, me, foe) = chase_game_with(ShipClass::Scout, ShipClass::Tanker);
+        let opts = g.intercept_options(0, me, foe, g.t, true);
+        let o = opts.last().expect("an option").clone();
+        let h = o.hint;
+        g.apply(0, Command::Intercept { ships: vec![me], target: foe, depart_t: h.depart_t, arrive_t: h.arrive_t, matched: true }).unwrap();
+        assert!(g.ship(me).unwrap().intercept.is_some());
+        // fly to the meeting point (keep the foe visible: this test is about the order, not sensors)
+        while g.t < h.arrive_t + 120.0 {
+            let t = (g.t + 600.0).min(h.arrive_t + 120.0);
+            g.advance_to(t);
+            see(&mut g, foe);
+        }
+        let ((pc, vc), (pt, vt)) = (abs_ship(&g, me), abs_ship(&g, foe));
+        println!("after meeting: {:.0} km apart, {:.3} km/s relative", pc.dist(pt), (vc - vt).len());
+        assert!(pc.dist(pt) < HIT_KM * 2.0, "{} km apart", pc.dist(pt));
+        assert!((vc - vt).len() < 0.2, "{} km/s apart", (vc - vt).len());
+        // the foe burns: the chaser re-plans on its own
+        let st = match &g.ship(foe).unwrap().state {
+            ShipState::Flying(f) => f.compute(&g.system).state_at(&g.system, g.t + 300.0).unwrap(),
+            _ => panic!("foe parked"),
+        };
+        let burn = Burn { t: st.t, prograde: 1.5, radial: 0.5 };
+        g.apply(1, Command::SetBurns { ship: foe, burns: vec![burn] }).unwrap();
+        let before = g.events.len();
+        let t1 = g.t + 1200.0;
+        while g.t < t1 {
+            let t = (g.t + 60.0).min(t1);
+            g.advance_to(t);
+            see(&mut g, foe);
+        }
+        let titles: Vec<&str> = g.events[before..].iter().map(|e| e.title.as_str()).collect();
+        println!("events: {titles:?}");
+        assert!(titles.contains(&"Intercept re-plotted"), "{titles:?}");
+        let o2 = g.ship(me).unwrap().intercept.unwrap();
+        while g.t < o2.arrive_t + 120.0 {
+            let t = (g.t + 600.0).min(o2.arrive_t + 120.0);
+            g.advance_to(t);
+            see(&mut g, foe);
+        }
+        let ((pc, _), (pt, _)) = (abs_ship(&g, me), abs_ship(&g, foe));
+        println!("after re-plan: {:.0} km apart", pc.dist(pt));
+        assert!(pc.dist(pt) < HIT_KM * 2.0);
     }
 }
