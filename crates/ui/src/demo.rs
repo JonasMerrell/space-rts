@@ -56,8 +56,8 @@ pub struct DemoBackend {
     research_run: Vec<(usize, BodyId, f64)>,
     /// (body, kind, owner, done_t)
     stations: Vec<(BodyId, String, PlayerId, f64)>,
-    /// "While you were away" report to show (scene `report`).
-    pub report: Option<AwayReport>,
+    /// Sensors report (the demo example fills in `demo_report`).
+    pub report: Option<SensorsReport>,
     /// Scene `results`: the war has ended.
     pub results: Option<GameResults>,
 }
@@ -455,9 +455,14 @@ impl Backend for DemoBackend {
 
     fn act(&mut self, action: UiAction) {
         match action {
-            UiAction::DismissReport => self.report = None,
             UiAction::DeleteGame { .. } => self.view = None,
             UiAction::Feedback { .. } => {}
+            UiAction::SensorsSeen => {
+                let now = self.now();
+                if let Some(r) = self.report.as_mut() {
+                    r.seen_until = now;
+                }
+            }
             UiAction::Login { user, .. } => {
                 self.user = user.clone();
                 self.events.push(BackendEvent::LoggedIn { user });
@@ -776,7 +781,7 @@ impl Backend for DemoBackend {
         Some(ResearchView { techs, labs })
     }
 
-    fn away_report(&self) -> Option<&AwayReport> {
+    fn sensors(&self) -> Option<&SensorsReport> {
         self.report.as_ref()
     }
 
@@ -1072,25 +1077,37 @@ fn demo_station_cost(i: usize) -> Cost {
     Cost { matter: m, energy: e, seconds: h * 3600.0 }
 }
 
-/// A sample "while you were away" report (14 h away) for the demo scene `report`.
-pub fn demo_report(now: f64) -> AwayReport {
+/// A sample sensors report (back after 14 h away) for the demo scenes `report*`.
+pub fn demo_report(now: f64) -> SensorsReport {
     let h = 3600.0;
-    let it = |dt: f64, section, title: &str, text: &str, focus, tone| ReportItem { t: now - dt * h, section, title: title.into(), text: text.into(), focus, fallback: None, tone };
+    let it = |dt: f64, when, section, title: &str, text: &str, focus, tone| ReportItem { t: now - dt * h, when, section, title: title.into(), text: text.into(), focus, fallback: None, tone };
     use ReportSection::*;
-    AwayReport {
-        since: now - 14.0 * h,
-        now,
+    use When::*;
+    SensorsReport {
+        seen_until: now - 14.0 * h,
         items: vec![
-            it(13.2, Empire, "Ship built", "Interceptor 3 at Tethys", Some(Focus::Body(2)), 1),
-            it(11.5, Contacts, "Contact", "Mara: 3 Interceptors, Scout near Gaia Nova", Some(Focus::Ship(10)), -1),
-            it(10.9, Contacts, "Engine burn", "Mara's 3 Interceptors burned near Gaia Nova, heading for Tethys", Some(Focus::Ship(10)), -1),
-            it(9.0, Battles, "Battle sighted", "Fighting at Kraken", Some(Focus::Body(4)), 0),
-            it(7.4, Battles, "Territory", "Kraken changed hands from Ozzy to Bot (hard)", Some(Focus::Body(4)), 0),
-            it(6.0, Contacts, "Contact lost", "Lost track of Mara's Dreadnought near Tethys", Some(Focus::Ship(13)), -1),
-            it(4.2, Battles, "Under attack", "Tethys: enemy ships in orbit", Some(Focus::Body(2)), -1),
-            it(3.9, Battles, "Territory gained", "Gaia Nova is yours", Some(Focus::Body(3)), 1),
-            it(2.0, Empire, "Research done", "Better optics", None, 1),
-            it(0.5, Empire, "Arrived", "Big Gulp is in orbit of Gaia Nova", Some(Focus::Ship(3)), 1),
+            it(-3.4, Eta, Threats, "Incoming", "Mara's 3 Interceptors heading for Tethys", Some(Focus::Ship(10)), -1),
+            it(-9.0, Eta, Threats, "Asteroid strike", "Vesta-7 is on course to hit Gaia Nova", Some(Focus::Body(9)), -1),
+            it(0.0, Live, Battles, "Fighting", "Fighting at Kraken (Ozzy, Bot (hard))", Some(Focus::Body(4)), 0),
+            it(-1.2, Eta, Transfers, "Under way", "Big Gulp heading for Kraken", Some(Focus::Ship(3)), 1),
+            it(-5.5, Eta, Transfers, "Departs", "Red Fang leaves Tethys for Gaia Nova", Some(Focus::Ship(1)), 1),
+            it(0.0, Live, Ships, "Mara", "3 Interceptors in flight near Gaia Nova, heading for Tethys", Some(Focus::Ship(10)), -1),
+            it(0.0, Live, Ships, "Ozzy", "Gunship, Scout in orbit of Kraken", Some(Focus::Body(4)), -1),
+            it(6.0, Seen, Ghosts, "Mara", "Dreadnought, last seen near Tethys", Some(Focus::Ship(13)), -1),
+            it(0.0, Live, Bodies, "Kraken", "Ozzy's · Mining 2, Defense 1 · 2 ships in orbit", Some(Focus::Body(4)), -1),
+            it(3.0, Seen, Bodies, "Gaia Nova", "Unclaimed · nothing seen in orbit", Some(Focus::Body(3)), 0),
+            it(0.0, Never, Bodies, "Never scanned", "Ymir, Ixvo, Rhae", None, 0),
+            it(13.2, At, Log, "Ship built", "Interceptor 3 at Tethys", Some(Focus::Body(2)), 1),
+            it(11.5, At, Log, "Contact", "Mara: 3 Interceptors, Scout near Gaia Nova", Some(Focus::Ship(10)), -1),
+            it(10.9, At, Log, "Engine burn", "Mara's 3 Interceptors burned near Gaia Nova, heading for Tethys", Some(Focus::Ship(10)), -1),
+            it(9.0, At, Log, "Battle sighted", "Fighting at Kraken", Some(Focus::Body(4)), 0),
+            it(7.4, At, Log, "Territory", "Kraken changed hands from Ozzy to Bot (hard)", Some(Focus::Body(4)), 0),
+            it(6.0, At, Log, "Contact lost", "Lost track of Mara's Dreadnought near Tethys", Some(Focus::Ship(13)), -1),
+            it(4.2, At, Log, "Under attack", "Tethys: enemy ships in orbit", Some(Focus::Body(2)), -1),
+            it(3.9, At, Log, "Territory gained", "Gaia Nova is yours", Some(Focus::Body(3)), 1),
+            it(2.0, At, Log, "Research done", "Better optics", None, 1),
+            it(0.5, At, Log, "Arrived", "Big Gulp is in orbit of Gaia Nova", Some(Focus::Ship(3)), 1),
+            it(16.0, At, Log, "Ship built", "Scout 2 at Tethys", Some(Focus::Body(2)), 1),
         ],
     }
 }

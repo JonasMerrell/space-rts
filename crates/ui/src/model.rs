@@ -553,21 +553,77 @@ pub struct StationsView {
 /// Station kinds (= sim `StationKind`), also the icon names `station_<lowercase>`.
 pub const STATION_KINDS: [&str; 6] = ["Shipyard", "FuelDepot", "Telescope", "Scanner", "Defense", "Relay"];
 
-/// Section of the "while you were away" report.
+/// Tab of the sensors report.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReportTab {
+    /// what is happening right now
+    Now,
+    /// what our telescopes and scanners see (or last saw)
+    Contacts,
+    /// what has happened
+    Log,
+}
+
+/// Group of rows inside a sensors report tab.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReportSection {
-    /// battles, planets changing hands
+    /// enemy ships or asteroids on their way to our bodies, enemy ships in orbit of ours
+    Threats,
+    /// fighting we can see
     Battles,
-    /// what sensors picked up: contacts spotted/lost, engine burns
-    Contacts,
-    /// own builds, arrivals, research
-    Empire,
+    /// our ships in flight and scheduled departures
+    Transfers,
+    /// enemy ships in sensor range now
+    Ships,
+    /// enemy ships out of sensor range: where they were last seen
+    Ghosts,
+    /// planets and moons and what we know about them
+    Bodies,
+    /// events and sensor sightings, oldest first
+    Log,
+}
+
+impl ReportSection {
+    pub fn tab(self) -> ReportTab {
+        match self {
+            ReportSection::Threats | ReportSection::Battles | ReportSection::Transfers => ReportTab::Now,
+            ReportSection::Ships | ReportSection::Ghosts | ReportSection::Bodies => ReportTab::Contacts,
+            ReportSection::Log => ReportTab::Log,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            ReportSection::Threats => "THREATS",
+            ReportSection::Battles => "BATTLES IN SIGHT",
+            ReportSection::Transfers => "YOUR SHIPS UNDER WAY",
+            ReportSection::Ships => "CONTACTS IN RANGE",
+            ReportSection::Ghosts => "LAST KNOWN POSITIONS",
+            ReportSection::Bodies => "PLANETS & MOONS",
+            ReportSection::Log => "",
+        }
+    }
+}
+
+/// How a report row's time reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum When {
+    /// it happened at `t` (clock time)
+    At,
+    /// it happens at `t` (countdown)
+    Eta,
+    /// last seen at `t` ("3H AGO")
+    Seen,
+    /// seen right now
+    Live,
+    /// no time to show
+    Never,
 }
 
 #[derive(Clone, Debug)]
 pub struct ReportItem {
-    /// game time
+    /// game time (see `when`)
     pub t: f64,
+    pub when: When,
     pub section: ReportSection,
     pub title: String,
     pub text: String,
@@ -578,10 +634,20 @@ pub struct ReportItem {
     pub tone: i8,
 }
 
-/// Everything that happened while the player was away (game times).
-#[derive(Clone, Debug)]
-pub struct AwayReport {
-    pub since: f64,
-    pub now: f64,
+/// The sensors report: what is happening now, what our sensors see, and what has happened. Built
+/// from the fogged view only, so it never knows more than the map.
+#[derive(Clone, Debug, Default)]
+pub struct SensorsReport {
+    /// Log items after this game time are new (the player hasn't opened the report since).
+    pub seen_until: f64,
     pub items: Vec<ReportItem>,
+}
+
+impl SensorsReport {
+    pub fn unread(&self) -> usize {
+        self.items.iter().filter(|i| i.section == ReportSection::Log && i.t > self.seen_until).count()
+    }
+    pub fn threats(&self) -> usize {
+        self.items.iter().filter(|i| i.section == ReportSection::Threats).count()
+    }
 }

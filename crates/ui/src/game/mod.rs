@@ -118,7 +118,8 @@ pub struct GameScreen {
     /// Station picker open for this body, and the highlighted kind.
     pub stations_for: Option<BodyId>,
     pub station_pick: Option<String>,
-    /// "While you were away" sheet state.
+    /// Sensors report sheet open, and its state (tab, scroll).
+    pub sensors_open: bool,
     pub report: report::ReportState,
     /// Fleet sheet (group / split / merge ships parked together).
     pub fleet: Option<fleet::FleetSheet>,
@@ -176,6 +177,7 @@ impl GameScreen {
             research_branch: 0,
             stations_for: None,
             station_pick: None,
+            sensors_open: false,
             report: Default::default(),
             fleet: None,
             lobby_roster: true,
@@ -280,13 +282,13 @@ impl GameScreen {
                 panels::prediction_banner(self.scrub, simulating);
             }
 
-            // Full-screen overlays (away report, research) cover everything and must get the input
+            // Full-screen overlays (sensors report, research) cover everything and must get the input
             // first, so the HUD/sheets underneath aren't drawn or tapped while they're open. Before this,
             // the HUD menu button under the research X ate the tap and the screen wouldn't close.
             if endgame::results(self, inp, be_ref, view) || endgame::feedback(self, inp) {
                 // covers the screen
-            } else if be_ref.away_report().is_some() {
-                report::away_report(self, inp, be_ref, view);
+            } else if self.sensors_open {
+                report::sensors_report(self, inp, be_ref, view);
             } else if self.research_open {
                 if inp.take_back() {
                     self.research_open = false;
@@ -296,7 +298,7 @@ impl GameScreen {
                 }
             } else {
                 self.handle_back(inp);
-                panels::hud(self, inp, view);
+                panels::hud(self, inp, be_ref, view);
                 // phone: the chat covers the sheet area, so don't run (or hit-test) what's under it
                 if !(self.chat_open && !wide()) {
                     panels::sheet(self, inp, be_ref, view);
@@ -363,9 +365,9 @@ impl GameScreen {
         let on_map = inp.for_map()
             && !self.chat_open
             && !self.research_open
+            && !self.sensors_open
             && self.feedback.is_none()
-            && (be.results().is_none() || self.results_hidden)
-            && be.away_report().is_none();
+            && (be.results().is_none() || self.results_hidden);
 
         // Node handles get first dibs on drags.
         let node_dragging = if let Mode::Nodes(ne) = &mut self.mode {
