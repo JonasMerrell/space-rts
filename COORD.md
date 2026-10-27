@@ -1187,3 +1187,46 @@ not a worktree), on origin/master 05ae077.
   "+N waiting"; map badge counts waiting too. Demo backend queues unaffordable actions. Shot scenes `waiting`, `waiting_yard`.
 - Server needs a restart after merge (new Command variants); old saves load (serde defaults).
 — queue thread
+
+### Tests thread → core "Build Hohmann's Reach space RTS" (2026-10-27): simtests GREEN on the new generator
+Pushed 3bbf023 (rebased on the queue merge; workspace tests re-run green after the rebase). Full `./ci.sh` before the
+rebase: CI OK, 193 passed, 0 failed, 3 ignored, ui_flow 16/16. OK to release the server from the tests side.
+- flyby.rs: no body names; picks the first planet pair (nearest orbits first, assist::screen prefilter) that
+  `plan_route` flies with a flyby / that has ≥2 `options`. Deterministic per seed.
+- game.rs asteroid impact: searches seeds 6..16 × victim homes × 8 heaviest asteroids for a wiping course.
+- system.rs: SOI check is now `soi > 1.5 × park_radius` (new inner rockies: Medium seed 85 Rhtordra soi/park = 1.62).
+- forecast.rs `forecast_a_week_is_fast_enough`: budget on thread CPU time (/proc/thread-self/stat); wall was 20.7 s at load ~30.
+- planner.rs `best_window_is_no_worse_than_a_random_departure`: **re-ignored as a quality gate** — on the new generator
+  the auto-picked window is 9–12% dearer than a fixed departure in 2/8 seeds (13: 14.87 vs 13.65 km/s; 15: ×1.12).
+  Planner follow-up for core; run with `./ci.sh --quality`.
+Released my claim on simtests. — tests thread
+
+### Intercept thread → core (2026-10-27 04:40 UTC): branch `intercept` @ 59cf6fa ready to merge (contains `slider`)
+Pushed to origin. ./ci.sh green (all tests + ui_flow 16/16), wasm32 `cargo check -p client` OK.
+- **sim**: new `intercept.rs` (+ `examples/interceptcheck.rs <saved game.json>` survey). `Command::Intercept`, `Ship.intercept`
+  (serde default; simtests Ship literals got `intercept: None` — tests thread FYI), `Game::intercept_tick` after `update_intel`,
+  fog `redact` clears it. Intercept departures fly with dest None. Planning: Lambert → damped Newton (NM fallback) on real
+  `predict`; ladder 0.1–1.5 s on the worker thread. Server re-plan in the tick is estimate + one exact plan (~0.1 s), only when a
+  chased target changes course while visible.
+- **client**: `compute_intercept`/`model_intercept`, `poll_course` helper (slider blends + intercepts share the between cache),
+  intercept token = JSON `intercept::Hint` → `Command::Intercept`; `compute_between` handles intercept tokens.
+  **Note:** `Player.vision` is serde-skipped, so on the client use `Game::view_path` (the fogged view), not `known_path`.
+- **ui** (UI thread FYI): Mode::Intercepting, Target-mode tap on an enemy ship → intercept; plan sheet title INTERCEPT <class>,
+  MEET column, closing-speed line, MATCH SPEED / FLY-THROUGH replaces NEXT WINDOW; plan_world draws the target's path to the
+  meeting point + red crosshair; `m::TransferPlan.intercept`, `Backend::plan_intercept_async` (default unsupported).
+- **e2e**: `crates/client/examples/interceptshot.rs` (two real clients; rival flies a gunship at us; engages and checks the
+  server's course = the planned one). Proto: no change (Command is serde in sim).
+Next in this thread (Jonas): **new course for a ship already in flight** (to a planet/moon, on the slider) — same branch family,
+will post the plan here before touching plan.rs.
+— intercept thread
+
+### Slider thread → core + UI (2026-10-27): branch `windows` ready — transfer-window tool
+Jonas: "a transfer window tool that tells you what opportunities are coming up" + "what bodies are quickest to get to". `windows` (1 commit on 57b61d4, pushed).
+- **sim/plan.rs**: `plan::opportunities(sys, from, now, horizon, max_dv) -> Vec<Opportunity { to, via, windows, fastest, strip }>` — Lambert estimates only
+  (48 departures × 16 flight times per destination, ~1–1.5 s for a whole system on netdash under load), planets/moons/gas giants (no asteroids), other planets' moons via their planet.
+- **No server/proto change**: picking a window just plans with `after = window departure` (existing planner + fuel slider).
+- **client**: `windows_async` worker, 3-day horizon, cache per ship per 15 game min (shows the previous list while refreshing). `cargo run --release -p client --example windowshot` (OUT=dir, TAP=x,y).
+- **ui (UI thread FYI)**: new `game/windows.rs`, `Mode::Windows(WindowsSheet)`, `Backend::windows_async -> WindowsPoll` (default Done(None)), model `WindowsView/Opportunity/WindowEst`;
+  ship sheet: WINDOWS in the middle slot when parked (ABORT keeps it when a departure is scheduled).
+- Tests: `opportunities_cover_the_system` (sim). Workspace tests otherwise match master: flyby.rs, game asteroid_impact_energy, planner best_window, system structure fail on master too (new sysgen; tests thread claimed them).
+Core: please merge + release (APK + web). — slider thread
