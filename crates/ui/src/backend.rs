@@ -44,6 +44,8 @@ pub enum UiAction {
     SetOrder { ship: ShipId, retreat: bool },
     /// Host only.
     ExtendGame { days: u32 },
+    /// Host only: delete the war for every player (ask for confirmation first).
+    DeleteGame { code: String },
     /// Host only: game seconds per real second from now on.
     SetSpeed { speed: f64 },
     /// Retry the server connection now instead of waiting for the backoff.
@@ -121,6 +123,15 @@ pub trait Backend {
     /// Rules text from the sim for a ship class ("ship:Gunship") or upgrade level ("upgrade:Mining:2"),
     /// so detail sheets stay in sync with balance changes. None = use the UI's own text.
     fn describe(&self, _key: &str) -> Option<String> {
+        None
+    }
+    /// Final standings once the war has ended (time limit reached); None while it runs.
+    fn results(&self) -> Option<GameResults> {
+        None
+    }
+    /// When your stations under construction at `body` should be finished (latest of them), if any.
+    /// Infinity = paused (no constructor there). Use it to schedule a constructor to leave when done.
+    fn construction_done(&self, _body: BodyId) -> Option<f64> {
         None
     }
     fn body_info(&self, _id: BodyId) -> Option<BodyInfo> {

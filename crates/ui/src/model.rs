@@ -369,6 +369,15 @@ pub struct GameSummary {
     pub unread: usize,
 }
 
+/// Final standings of an ended war (`Backend::results`).
+#[derive(Clone, Debug, Default)]
+pub struct GameResults {
+    pub winner: Option<PlayerId>,
+    /// (player, territory score), best first
+    pub scores: Vec<(PlayerId, u32)>,
+    pub ended_at: f64,
+}
+
 /// Everything the in-game screens draw.
 #[derive(Clone, Debug, Default)]
 pub struct GameView {

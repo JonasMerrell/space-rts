@@ -261,6 +261,14 @@ impl ClientBackend {
                 }
             }
             ServerMsg::Events(_) | ServerMsg::Pong => {}
+            ServerMsg::GameDeleted { code, name } => {
+                if self.code().as_deref() == Some(code.as_str()) {
+                    self.game = None;
+                    self.view = None;
+                    self.was_running = false;
+                }
+                self.notice(m::NoticeKind::Bad, "War deleted", &format!("The host deleted \"{name}\""), None);
+            }
         }
     }
 
@@ -941,6 +949,7 @@ impl Backend for ClientBackend {
                 self.was_running = false;
                 self.send(ClientMsg::JoinGame { code })
             }
+            UiAction::DeleteGame { code } => self.send(ClientMsg::DeleteGame { code }),
             UiAction::OpenGame { code } => {
                 self.was_running = false;
                 self.send(ClientMsg::Open { code })
@@ -1225,6 +1234,22 @@ impl Backend for ClientBackend {
 
     fn forecast_until(&self) -> f64 {
         self.forecast.shared.lock().unwrap().until()
+    }
+
+    fn results(&self) -> Option<m::GameResults> {
+        let g = self.game.as_ref().filter(|g| g.status == Status::Ended)?;
+        let mut scores: Vec<(m::PlayerId, u32)> = g.players.iter().map(|p| (p.id, g.score(p.id))).collect();
+        scores.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        Some(m::GameResults { winner: g.winner, scores, ended_at: g.end_t })
+    }
+
+    fn construction_done(&self, body: BodyId) -> Option<f64> {
+        let g = self.game.as_ref()?;
+        g.stations
+            .iter()
+            .filter(|st| st.owner == self.me && st.body == SimBody(body) && st.building())
+            .map(|st| st.done_t)
+            .fold(None, |a: Option<f64>, t| Some(a.map_or(t, |x| x.max(t))))
     }
 
     fn default_server(&self) -> String {

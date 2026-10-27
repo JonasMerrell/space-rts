@@ -304,6 +304,12 @@ impl Server {
         })
     }
 
+    fn list_for(&self, user: &str) -> Vec<GameSummary> {
+        let mut list: Vec<GameSummary> = self.games.values().filter_map(|g| self.summary(g, user)).collect();
+        list.sort_by(|a, b| a.code.cmp(&b.code));
+        list
+    }
+
     fn send(&self, conn: u64, msg: &ServerMsg) {
         if let Some(c) = self.conns.get(&conn) {
             c.push(encode(msg));
@@ -354,9 +360,7 @@ impl Server {
                 }
             }
             ClientMsg::ListGames => {
-                let u = user.clone();
-                let mut list: Vec<GameSummary> = self.games.values().filter_map(|g| self.summary(g, &u)).collect();
-                list.sort_by(|a, b| a.code.cmp(&b.code));
+                let list = self.list_for(&user);
                 reply(self, ServerMsg::Games(list));
             }
             ClientMsg::CreateGame { name, size, length_days, speed, max_players, bots } => {
@@ -450,6 +454,41 @@ impl Server {
                 }
                 self.dirty.insert(code.clone());
                 self.changed.insert(code);
+            }
+            ClientMsg::DeleteGame { code } => {
+                let Some(g) = self.games.get(&code) else { return err(self, "no such game") };
+                if g.player_by_name(&user).map(|p| p.id) != Some(g.host) {
+                    return err(self, "only the host can delete a war");
+                }
+                let players: Vec<String> = g.players.iter().map(|p| p.name.clone()).collect();
+                let name = g.settings.name.clone();
+                self.games.remove(&code);
+                self.dirty.remove(&code);
+                self.changed.remove(&code);
+                let path = self.data.join("games").join(format!("{code}.json"));
+                if let Err(e) = std::fs::remove_file(&path) {
+                    eprintln!("delete {}: {e}", path.display());
+                }
+                eprintln!("war {code} deleted by {user}");
+                // everyone in it: close the game if open, then refresh their war list
+                let ids: Vec<(u64, Option<String>, bool)> = self
+                    .conns
+                    .iter()
+                    .filter(|(_, c)| c.user.as_ref().is_some_and(|u| players.contains(u)))
+                    .map(|(id, c)| (*id, c.user.clone(), c.open.as_deref() == Some(code.as_str())))
+                    .collect();
+                for (id, u, was_open) in ids {
+                    if was_open {
+                        if let Some(c) = self.conns.get_mut(&id) {
+                            c.open = None;
+                        }
+                        self.send(id, &ServerMsg::GameDeleted { code: code.clone(), name: name.clone() });
+                    }
+                    if let Some(u) = u {
+                        let list = self.list_for(&u);
+                        self.send(id, &ServerMsg::Games(list));
+                    }
+                }
             }
             ClientMsg::StartGame { code } => {
                 let Some(g) = self.games.get_mut(&code) else { return err(self, "no such game") };
