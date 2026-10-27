@@ -86,6 +86,10 @@ pub struct GameScreen {
     pub node_outcome: Option<(ShipId, Vec<ManeuverNode>, NodeOutcome)>,
     /// Camera follows the selection; a manual pan turns it off, a new selection or RE-CENTRE turns it on.
     pub follow: bool,
+    /// Camera animation: zoom level to ease to (ZOOM TO / SYSTEM VIEW), and whether the centre is
+    /// easing to the star (system view) instead of following the selection. Manual pan/zoom cancels.
+    pub zoom_goal: Option<f64>,
+    pub system_view: bool,
     /// Chat list scroll, px up from the newest message (0 = pinned to the newest).
     pub chat_scroll: f32,
     /// Resource breakdown sheet (0 matter, 1 energy, 2 fuel) opened from the top bar.
@@ -140,6 +144,8 @@ impl GameScreen {
             detail: None,
             res_open: None,
             chat_scroll: 0.0,
+            zoom_goal: None,
+            system_view: false,
             follow: true,
             node_outcome: None,
             research_open: false,
@@ -270,7 +276,7 @@ impl GameScreen {
                 }
                 panels::scrubber(self, inp, be_ref, view);
                 if !self.chat_open {
-                    panels::recenter_button(self, inp);
+                    panels::camera_buttons(self, inp, be_ref, view);
                 }
                 // Toasts sit over the chat panel's corner; hold them while chatting.
                 if !self.chat_open {
@@ -342,11 +348,15 @@ impl GameScreen {
                 // While following, zoom about the screen centre so the selection stays put.
                 let c = if following { follow_point() } else { c };
                 cam.zoom_at(c, k, fit.zoom * 0.5, fit.zoom * 400.0);
+                self.zoom_goal = None;
+                self.system_view = false;
             }
             if let Some(d) = inp.drag {
                 // a deliberate pan (not pinch jitter) breaks the follow
                 if inp.zoom.is_none() && d.length() > 0.5 {
                     self.follow = false;
+                    self.zoom_goal = None;
+                    self.system_view = false;
                 }
                 if !(following && inp.zoom.is_some()) {
                     cam.pan_px(d);
@@ -520,6 +530,26 @@ impl GameScreen {
     /// Centre the camera on a focus target.
     /// Ease the camera toward the selected body/ship every frame (planets keep moving in real time).
     fn follow_selection(&mut self, be: &dyn Backend, t: f64) {
+        let k = 1.0 - (-(get_frame_time() as f64) * 6.0).exp();
+        if let (Some(goal), Some(cam)) = (self.zoom_goal, self.cam.as_mut()) {
+            // ease in log space so zooming in and out feel the same speed
+            let z = (cam.zoom.ln() + (goal.ln() - cam.zoom.ln()) * k).exp();
+            cam.zoom = z;
+            if (z / goal - 1.0).abs() < 0.01 {
+                cam.zoom = goal;
+                self.zoom_goal = None;
+            }
+        }
+        if self.system_view {
+            if let Some(cam) = self.cam.as_mut() {
+                cam.center[0] -= cam.center[0] * k;
+                cam.center[1] -= cam.center[1] * k;
+                if self.zoom_goal.is_none() && cam.center[0].hypot(cam.center[1]) * cam.zoom < 1.0 {
+                    self.system_view = false;
+                }
+            }
+            return;
+        }
         if !self.follow {
             return;
         }

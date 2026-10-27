@@ -2,7 +2,7 @@
 //! Everything is optional: if a file is missing the UI falls back to vector cel drawing.
 
 use crate::model::*;
-use macroquad::audio::{load_sound, play_sound, play_sound_once, stop_sound, PlaySoundParams, Sound};
+use macroquad::audio::{load_sound, play_sound, play_sound_once, set_sound_volume, stop_sound, PlaySoundParams, Sound};
 use macroquad::prelude::*;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -44,7 +44,10 @@ thread_local! {
     static MUSIC_ON: RefCell<Option<&'static str>> = const { RefCell::new(None) };
     /// Music beds, keyed by track name. Filled after the first frames on the web (see `load`).
     static MUSIC_SND: RefCell<HashMap<&'static str, Sound>> = RefCell::new(HashMap::new());
+    /// Music beds off.
     static MUTED: Cell<bool> = const { Cell::new(false) };
+    /// Button / UI / alert effects off (separate switch from the music).
+    static SFX_OFF: Cell<bool> = const { Cell::new(false) };
     static LAST_TICK: Cell<f64> = const { Cell::new(0.0) };
 }
 
@@ -196,7 +199,7 @@ pub fn skin_of(faction: &str) -> &'static str {
 }
 
 pub fn sfx(name: &str) {
-    if MUTED.with(|m| m.get()) {
+    if SFX_OFF.with(|m| m.get()) {
         return;
     }
     // Rate-limit detent ticks to ~20/s.
@@ -236,13 +239,53 @@ pub fn music(track: Option<&'static str>) {
     });
 }
 
+/// Mute everything (music and effects) or unmute everything.
 pub fn set_muted(m: bool) {
-    MUTED.with(|x| x.set(m));
-    if m {
+    set_music_on(!m);
+    set_effects_on(!m);
+}
+
+/// Everything is off.
+pub fn muted() -> bool {
+    !music_on() && !effects_on()
+}
+
+pub fn music_on() -> bool {
+    !MUTED.with(|m| m.get())
+}
+
+pub fn set_music_on(on: bool) {
+    MUTED.with(|x| x.set(!on));
+    if !on {
         music(None);
     }
 }
 
-pub fn muted() -> bool {
-    MUTED.with(|m| m.get())
+pub fn effects_on() -> bool {
+    !SFX_OFF.with(|m| m.get())
+}
+
+pub fn set_effects_on(on: bool) {
+    SFX_OFF.with(|x| x.set(!on));
+    // belt and braces: also silence anything already playing / queued
+    if let Some(a) = get() {
+        for s in a.sfx.values() {
+            set_sound_volume(s, if on { 1.0 } else { 0.0 });
+        }
+    }
+}
+
+/// "MUSIC: ON | EFFECTS: ON" pair of toggles used by the game and lobby menus (one row, `r`).
+pub fn sound_toggles(inp: &mut crate::input::Input, r: Rect) {
+    use crate::widgets::{button, Style};
+    let gap = 8.0 * crate::theme::s();
+    let w = (r.w - gap) / 2.0;
+    let m = music_on();
+    if button(inp, Rect::new(r.x, r.y, w, r.h), if m { "MUSIC: ON" } else { "MUSIC: OFF" }, Style::Secondary) {
+        set_music_on(!m);
+    }
+    let e = effects_on();
+    if button(inp, Rect::new(r.x + w + gap, r.y, w, r.h), if e { "EFFECTS: ON" } else { "EFFECTS: OFF" }, Style::Secondary) {
+        set_effects_on(!e);
+    }
 }

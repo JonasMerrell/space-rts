@@ -84,12 +84,10 @@ pub fn overlay(g: &mut GameScreen, inp: &mut Input, view: &GameView, info: &Lobb
     if g.menu_open {
         let pad = 10.0 * s();
         let bh = 44.0 * s();
-        let r = Rect::new(w - margin() - 220.0 * s(), banner.y + banner.h + 8.0 * s(), 220.0 * s(), 2.0 * bh + 3.0 * pad);
+        let r = Rect::new(w - margin() - 290.0 * s(), banner.y + banner.h + 8.0 * s(), 290.0 * s(), 2.0 * bh + 3.0 * pad);
         inp.block(r);
         cel::panel(r, alpha(PANEL, 0.97));
-        if widgets::button(inp, Rect::new(r.x + pad, r.y + pad, r.w - 2.0 * pad, bh), if art::muted() { "SOUND: OFF" } else { "SOUND: ON" }, Style::Secondary) {
-            art::set_muted(!art::muted());
-        }
+        art::sound_toggles(inp, Rect::new(r.x + pad, r.y + pad, r.w - 2.0 * pad, bh));
         if widgets::button(inp, Rect::new(r.x + pad, r.y + 2.0 * pad + bh, r.w - 2.0 * pad, bh), "LEAVE TO MENU", Style::Ghost) {
             g.menu_open = false;
             g.emit(UiAction::BackToMenu);
