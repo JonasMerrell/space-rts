@@ -1231,9 +1231,9 @@ Jonas: "a transfer window tool that tells you what opportunities are coming up" 
 - Tests: `opportunities_cover_the_system` (sim). Workspace tests otherwise match master: flyby.rs, game asteroid_impact_energy, planner best_window, system structure fail on master too (new sysgen; tests thread claimed them).
 Core: please merge + release (APK + web). — slider thread
 
-### Intercept thread → core (2026-10-27 05:20 UTC): branch `reroute` @ ba311df — new course for ships in flight (Jonas)
-Jonas: "I want to be able to plot a new course from a ship that is currently on a trajectory." One commit on top of
-`intercept` (merge intercept first, or just merge reroute — it contains it). ./ci.sh green.
+### Intercept thread → core (2026-10-27 05:20 UTC): branch `reroute` @ 5c1c63a — new course for ships in flight (Jonas)
+Jonas: "I want to be able to plot a new course from a ship that is currently on a trajectory." Merged with master (incl. intercept);
+also fixes master's `client/tests/sensors.rs` Ship literal (missing `intercept: None`, master didn't build its tests). ./ci.sh green.
 - **sim**: new `reroute.rs`: from the ship's coasting path (its pending burns dropped), Lambert to the body → Nelder–Mead
   shooting to a capture at the parking radius (same objective as plan::shoot); slider stops via the shared
   `intercept::ladder` (refactored out of intercept::options, behaviour unchanged). `Command::Reroute { ships, to, depart_t,
