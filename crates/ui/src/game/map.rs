@@ -153,6 +153,18 @@ pub fn draw_labels(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64) {
     for b in &view.bodies {
         let c = cam.to_screen(be.body_pos(b.id, t));
         let r = body_radius_px(b, cam);
+        // Battle / standoff in orbit: small badge at the lower left of the body.
+        if b.kind != BodyKind::Star {
+            if let Some(st) = be.orbit_status(b.id) {
+                let lower = st.to_lowercase();
+                let (col, glyph) = if lower.starts_with("battle") { (DANGER, "!") } else if lower.starts_with("standoff") { (ACCENT, "=") } else { (MUTED, "·") };
+                let bc = c + vec2(-r * 0.8 - 6.0 * s(), r * 0.8 + 6.0 * s());
+                draw_circle(bc.x, bc.y, 9.0 * s(), INK);
+                draw_circle(bc.x, bc.y, 7.5 * s(), PANEL);
+                draw_circle_lines(bc.x, bc.y, 7.5 * s(), 1.4 * s(), col);
+                text(glyph, bc.x, bc.y + s(), 13.0, col, FontKind::Title, Align::Center);
+            }
+        }
         // Something in the build queue: grey "+" badge with the count at the body's upper right.
         if b.owner == Some(view.me) && b.kind != BodyKind::Star {
             if let Some(n) = be.body_info(b.id).map(|i| i.queue.len() + i.waiting.len()).filter(|&n| n > 0) {

@@ -444,7 +444,7 @@ pub fn sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameV
                     // your bodies, and any body where your shipyard station lets you build
                     match be.body_info(id).filter(|i| b.owner == Some(view.me) || !i.buildable.is_empty()) {
                         Some(info) => owned_body_sheet(g, inp, be, view, b, &info),
-                        None => body_sheet(g, inp, view, b, be.stations(id).is_some_and(|v| v.present)),
+                        None => body_sheet(g, inp, be, view, b, be.stations(id).is_some_and(|v| v.present)),
                     }
                 }
             }
@@ -662,6 +662,7 @@ fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view:
     inked(&b.name.to_uppercase(), r.x + 56.0 * s(), r.y + 22.0 * s(), 22.0, PAPER, Align::Left);
     let mine: f64 = info.power.iter().filter(|p| p.0 == view.me).map(|p| p.1).sum();
     let enemy: f64 = info.power.iter().filter(|p| p.0 != view.me).map(|p| p.1).sum();
+    orbit_strip(be, inp, b, r);
     let mut sub = format!("YOURS · power {:.0}", mine.max(0.0));
     if enemy > 0.0 {
         sub += &format!(" vs {:.0} hostile", enemy);
@@ -794,11 +795,30 @@ fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view:
     ships_here_button(g, inp, view, b, Rect::new(r.x + r.w - 150.0 * s(), qy - 10.0 * s(), 138.0 * s(), 22.0 * s()));
 }
 
-fn body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Body, can_build_station: bool) {
+/// Who can fight / take this body right now ("Standoff…", "Battle…") as a strip attached to its sheet:
+/// above it on phones, below it in computer mode (the HUD is above there).
+fn orbit_strip(be: &dyn Backend, inp: &mut Input, b: &Body, r: Rect) {
+    let Some(st) = be.orbit_status(b.id) else { return };
+    let lower = st.to_lowercase();
+    let col = if lower.starts_with("battle") { DANGER } else if lower.starts_with("standoff") { ACCENT } else { MUTED };
+    let lines: Vec<String> = wrap(&st, FontKind::Body, 13.0, r.w - 40.0 * s()).into_iter().take(2).collect();
+    let h = (12.0 + 17.0 * lines.len() as f32) * s();
+    let sr = if wide() { Rect::new(r.x, r.y + r.h + 6.0 * s(), r.w, h) } else { Rect::new(r.x, r.y - h - 6.0 * s(), r.w, h) };
+    inp.block(sr);
+    cel::round_rect(sr, 8.0 * s(), alpha(PANEL, 0.96));
+    cel::round_rect_lines(sr, 8.0 * s(), 1.2 * s(), col);
+    draw_circle(sr.x + 14.0 * s(), sr.y + 14.5 * s(), 4.0 * s(), col);
+    for (i, l) in lines.iter().enumerate() {
+        text(l, sr.x + 26.0 * s(), sr.y + (14.5 + 17.0 * i as f32) * s(), 13.0, PAPER, FontKind::Body, Align::Left);
+    }
+}
+
+fn body_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView, b: &Body, can_build_station: bool) {
     let own_rock = b.kind == BodyKind::Asteroid && b.owner == Some(view.me);
     let r = sheet_rect(if own_rock { 204.0 } else { 150.0 });
     inp.block(r);
     cel::panel(r, PANEL);
+    orbit_strip(be, inp, b, r);
     if own_rock {
         aim_button(g, inp, view, b, Rect::new(r.x + 12.0 * s(), r.y + r.h - 54.0 * s(), r.w - 24.0 * s(), 44.0 * s()));
     }

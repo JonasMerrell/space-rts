@@ -947,6 +947,14 @@ impl Backend for DemoBackend {
         crate::ImpactPoll::Done(res)
     }
 
+    fn orbit_status(&self, body: BodyId) -> Option<String> {
+        match body {
+            1 => Some("Standoff: no armed ships here, so nobody can shoot or take it".into()),
+            2 => Some("Battle: Jonas vs Mara".into()),
+            _ => None,
+        }
+    }
+
     fn results(&self) -> Option<GameResults> {
         self.results.clone()
     }
