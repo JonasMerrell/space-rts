@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Screenshot the browser build in headless Chromium (system chromium + playwright).
-usage: shot.py URL OUT.png [WxH] [--mobile] [--wait S] [--tap X,Y] [--type TEXT] [--key KEY] [--reload]
+usage: shot.py URL OUT.png [WxH] [--mobile] [--wait S] [--tap X,Y] [--hold X,Y (long press)] [--type TEXT] [--key KEY] [--reload]
        [--drag X0,Y0,X1,Y1] [--wheel X,Y,DY] [--shot OUT.png]   env: USERDATA=dir (persistent profile), DPR=2
 Steps run in the order given, each followed by a short wait; --shot NAME saves an extra screenshot."""
 import sys, os
@@ -26,6 +26,8 @@ with sync_playwright() as pw:
     else:
         b = pw.chromium.launch(executable_path=exe, args=flags)
         ctx = b.new_context(**opts)
+    if os.environ.get("CLIPBOARD"):
+        ctx.grant_permissions(["clipboard-read", "clipboard-write"], origin=url.split("/play")[0])
     p = ctx.new_page()
     p.on("console", lambda m: print("console:", m.type, m.text[:300]) if "Missed function" not in m.text and "function in gl.js" not in m.text else None)
     p.on("pageerror", lambda e: print("pageerror:", e))
@@ -43,17 +45,18 @@ with sync_playwright() as pw:
         if a == "--wait":
             wait = float(rest[i + 1]); i += 1
             p.wait_for_timeout(wait * 1000)
-        elif a == "--tap":
+        elif a in ("--tap", "--hold"):
             x, y = map(float, rest[i + 1].split(",")); i += 1
+            hold = 900 if a == "--hold" else float(os.environ.get("HOLD_MS", "150"))
             if mobile:
                 # a held touch (the game samples input once per frame; headless frames are slow)
                 cdp = ctx.new_cdp_session(p) if "cdp" not in dir() else cdp
                 pt = [{"x": x, "y": y, "id": 1}]
                 cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": pt})
-                p.wait_for_timeout(float(os.environ.get("HOLD_MS", "150")))
+                p.wait_for_timeout(hold)
                 cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
             else:
-                p.mouse.move(x, y); p.mouse.down(); p.wait_for_timeout(120); p.mouse.up()
+                p.mouse.move(x, y); p.mouse.down(); p.wait_for_timeout(hold); p.mouse.up()
             p.wait_for_timeout(600)
         elif a == "--type":
             p.keyboard.type(rest[i + 1], delay=40); i += 1

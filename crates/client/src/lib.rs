@@ -87,7 +87,7 @@ async fn main() {
             save_sound_prefs(sound);
         }
         #[cfg(target_arch = "wasm32")]
-        web::text_fields(&ui);
+        web::text_fields(&mut ui);
         next_frame().await;
     }
 }
