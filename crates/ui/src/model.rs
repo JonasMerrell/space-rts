@@ -170,6 +170,55 @@ impl Trajectory {
     pub fn end(&self) -> Option<f64> {
         self.points.last().map(|p| p.0)
     }
+    /// A path `k` (0..1) of the way from `self` to `b`, matched by fraction of flight time (for the
+    /// slider preview while the exact course is being planned).
+    pub fn blend(&self, b: &Trajectory, k: f64) -> Trajectory {
+        let (Some(a0), Some(a1), Some(b0), Some(b1)) = (self.start(), self.end(), b.start(), b.end()) else {
+            return if k < 0.5 { self.clone() } else { b.clone() };
+        };
+        let n = self.points.len().max(b.points.len()).clamp(2, 240);
+        let points = (0..n)
+            .filter_map(|i| {
+                let u = i as f64 / (n - 1) as f64;
+                let (ta, tb) = (a0 + (a1 - a0) * u, b0 + (b1 - b0) * u);
+                let (pa, pb) = (self.sample(ta)?, b.sample(tb)?);
+                Some((ta + (tb - ta) * k, [pa[0] + (pb[0] - pa[0]) * k, pa[1] + (pb[1] - pa[1]) * k]))
+            })
+            .collect();
+        Trajectory { points, flybys: if k < 0.5 { self.flybys.clone() } else { b.flybys.clone() } }
+    }
+}
+
+impl TransferPlan {
+    pub fn total_dv(&self) -> f64 {
+        self.dv_depart + self.dv_mid + self.dv_capture
+    }
+    /// Preview `k` of the way to `b` (numbers and path interpolated). Not schedulable: its token is
+    /// empty until the backend plans the exact course.
+    pub fn blend(&self, b: &TransferPlan, k: f64) -> TransferPlan {
+        let l = |x: f64, y: f64| x + (y - x) * k;
+        let near = if k < 0.5 { self } else { b };
+        let fuel_needed = self.fuel_needed + (b.fuel_needed - self.fuel_needed) * k as f32;
+        TransferPlan {
+            depart_t: l(self.depart_t, b.depart_t),
+            arrive_t: l(self.arrive_t, b.arrive_t),
+            dv_depart: l(self.dv_depart, b.dv_depart),
+            dv_mid: l(self.dv_mid, b.dv_mid),
+            dv_capture: l(self.dv_capture, b.dv_capture),
+            fuel_needed,
+            fuel_problem: if fuel_needed > near.fuel_have {
+                Some(format!("not enough fuel: needs {fuel_needed:.0} t, has {:.0} t", near.fuel_have))
+            } else if self.fuel_problem.is_some() && b.fuel_problem.is_some() {
+                near.fuel_problem.clone()
+            } else {
+                None
+            },
+            path: self.path.blend(&b.path, k),
+            token: String::new(),
+            label: String::new(),
+            ..near.clone()
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -338,7 +387,8 @@ pub struct TransferPlan {
     pub via: Vec<BodyId>,
     /// Short name of this option ("CHEAPEST", "BALANCED", "FASTEST"); empty for a lone plan.
     pub label: String,
-    /// All course options for this ship and target, cheapest first (this plan is one of them).
+    /// Course options for this ship and target, cheapest first, each arriving sooner for more Δv
+    /// (the fuel ↔ time slider's stops; this plan is one of them or lies between two).
     pub options: Vec<TransferPlan>,
     /// Backend-defined handle that re-creates exactly this course when scheduled.
     pub token: String,
