@@ -708,12 +708,12 @@ fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view:
                 // Narrow cell: matter + energy only (the queue shows build time).
                 let short = format!("{}M {}E", fmt_amount(cost.matter), fmt_amount(cost.energy));
                 text(&short, cx, cr.y + cr.h * 0.7, 11.0, if ok { MUTED } else { DANGER }, FontKind::Body, Align::Left);
-                if widgets::button(inp, br, "+", if ok { Style::Primary } else { Style::Ghost }) {
-                    if ok {
-                        art::sfx("purchase");
-                        g.emit(UiAction::Upgrade { body: b.id, upgrade: u.name.clone() });
-                    } else {
-                        art::sfx("ui_error");
+                // can't afford it yet: queue it, it starts once income covers it
+                if widgets::button(inp, br, "+", if ok { Style::Primary } else { Style::Secondary }) {
+                    art::sfx(if ok { "purchase" } else { "menu_select" });
+                    g.emit(UiAction::Upgrade { body: b.id, upgrade: u.name.clone() });
+                    if !ok {
+                        g.hint = Some(("Queued: starts when you can afford it".into(), get_time()));
                     }
                 }
             } else {
@@ -744,12 +744,11 @@ fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view:
             text(&class.label().to_uppercase(), cr.x + 44.0 * s(), cr.y + cr.h * 0.34, 14.0, PAPER, FontKind::Title, Align::Left);
             text(&cost_line(cost), cr.x + 44.0 * s(), cr.y + cr.h * 0.7, 11.0, if ok { MUTED } else { DANGER }, FontKind::Body, Align::Left);
             let br = Rect::new(cr.x + cr.w - 44.0 * s(), cr.y + (cr.h - 32.0 * s()) / 2.0, 36.0 * s(), 32.0 * s());
-            if widgets::button(inp, br, "+", if ok { Style::Primary } else { Style::Ghost }) {
-                if ok {
-                    art::sfx("purchase");
-                    g.emit(UiAction::Build { body: b.id, class: *class });
-                } else {
-                    art::sfx("ui_error");
+            if widgets::button(inp, br, "+", if ok { Style::Primary } else { Style::Secondary }) {
+                art::sfx(if ok { "purchase" } else { "menu_select" });
+                g.emit(UiAction::Build { body: b.id, class: *class });
+                if !ok {
+                    g.hint = Some(("Queued: starts when you can afford it".into(), get_time()));
                 }
             }
             if inp.tapped(cr) {
@@ -761,20 +760,24 @@ fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view:
     }
     // Build queue.
     let qy = r.y + r.h - 22.0 * s();
-    let q = if info.queue.is_empty() {
+    let empty = info.queue.is_empty() && info.waiting.is_empty();
+    let q = if empty {
         "Queue empty · tap an item for details".to_string()
     } else {
-        let items: Vec<String> = info.queue.iter().take(3).map(|(l, t)| format!("{l} {}", fmt_dur(t - view.now))).collect();
+        let mut items: Vec<String> = info.queue.iter().take(if info.waiting.is_empty() { 3 } else { 1 }).map(|(l, t)| format!("{l} {}", fmt_dur(t - view.now))).collect();
+        if !info.waiting.is_empty() {
+            items.push(format!("{} waiting", info.waiting.len()));
+        }
         format!("Queue: {}", items.join(" · "))
     };
     let qr = Rect::new(r.x + 8.0 * s(), qy - 12.0 * s(), r.w - 170.0 * s(), 24.0 * s());
-    if !info.queue.is_empty() {
+    if !empty {
         cel::round_rect(qr, 6.0 * s(), Color::new(1.0, 1.0, 1.0, if inp.holding(qr) { 0.12 } else { 0.05 }));
     }
-    let q = if info.queue.is_empty() { q } else { format!("{q} ›") };
+    let q = if empty { q } else { format!("{q} ›") };
     let q = wrap(&q, FontKind::Body, 13.0, qr.w - 12.0 * s()).into_iter().next().unwrap_or_default();
-    text(&q, r.x + 16.0 * s(), qy, 13.0, if info.queue.is_empty() { MUTED } else { PAPER }, FontKind::Body, Align::Left);
-    if !info.queue.is_empty() && inp.tapped(qr) {
+    text(&q, r.x + 16.0 * s(), qy, 13.0, if empty { MUTED } else { PAPER }, FontKind::Body, Align::Left);
+    if !empty && inp.tapped(qr) {
         inp.consume_tap();
         art::sfx("menu_open");
         g.detail = Some(Detail::Queue { body: b.id });

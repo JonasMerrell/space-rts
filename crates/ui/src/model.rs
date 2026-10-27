@@ -107,6 +107,8 @@ pub struct BodyInfo {
     pub buildable: Vec<(ShipClass, Cost)>,
     /// (label, finishes at t).
     pub queue: Vec<(String, f64)>,
+    /// Ours waiting for funds at this body (they start by themselves once income covers them).
+    pub waiting: Vec<WaitingItem>,
     pub fuel: f64,
     /// Military power in orbit per player.
     pub power: Vec<(PlayerId, f64)>,
@@ -114,6 +116,22 @@ pub struct BodyInfo {
     pub matter_rate: f64,
     pub energy_rate: f64,
     pub fuel_rate: f64,
+}
+
+/// A build/upgrade/station/research queued before we could pay for it.
+#[derive(Clone, Debug)]
+pub struct WaitingItem {
+    /// Sent back in `UiAction::Unwait` / `MoveWait`.
+    pub id: u32,
+    pub label: String,
+    pub cost: Cost,
+    /// Projected start from the current income; None = blocked or no income.
+    pub start_t: Option<f64>,
+    /// Why it can't start whatever the money ("needs a construction ship..."); it's skipped meanwhile.
+    pub blocked: Option<String>,
+    /// Position in our whole waiting list (all bodies; earlier = funded first) and its length.
+    pub index: usize,
+    pub of: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -534,6 +552,8 @@ pub struct StationOption {
     pub cost: Cost,
     /// Why it can't be built here now; None = can build.
     pub blocker: Option<String>,
+    /// Can be queued anyway: it starts by itself once the blocker clears and it's affordable.
+    pub queueable: bool,
 }
 
 /// Stations at a body and what we could build there (`Backend::stations`).

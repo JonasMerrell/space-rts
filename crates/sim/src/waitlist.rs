@@ -36,7 +36,8 @@ impl Wish {
         }
     }
 
-    fn command(self) -> Command {
+    /// The command that starts it right away.
+    pub fn command(self) -> Command {
         match self {
             Wish::Build { body, class } => Command::Build { body, class },
             Wish::Upgrade { body, upgrade } => Command::Upgrade { body, upgrade },
@@ -160,7 +161,7 @@ impl Game {
     }
 
     /// `wish` can never start (or is pointless): it's dropped from the list. `ahead` = same upgrades before it.
-    fn wish_obsolete(&self, p: PlayerId, wish: Wish, ahead: u8) -> Option<String> {
+    pub fn wish_obsolete(&self, p: PlayerId, wish: Wish, ahead: u8) -> Option<String> {
         match wish {
             Wish::Upgrade { body, upgrade } if self.upgrade_level_after_queue(body, upgrade) + ahead >= Upgrade::MAX_LEVEL => {
                 Some("already at max level".into())
@@ -175,6 +176,7 @@ impl Game {
                     None
                 }
             }
+            Wish::Station { body, .. } if self.system.body(body).is_star() => Some("can't build in orbit of the star".into()),
             Wish::Station { body, kind } if self.stations.iter().any(|s| s.owner == p && s.body == body && s.kind == kind) => {
                 Some("you already have one there".into())
             }
