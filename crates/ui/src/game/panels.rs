@@ -943,34 +943,28 @@ fn ship_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, sh: &Ship, t
 }
 
 fn plan_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView, p: &TransferPlan) {
-    // course options (cheapest … fastest) get a chip row under the title
-    let oy = if p.options.len() > 1 { 46.0 * s() } else { 0.0 };
-    let r = sheet_rect(178.0 + if p.options.len() > 1 { 46.0 } else { 0.0 } + if p.fuel_problem.is_some() { 20.0 } else { 0.0 });
+    // course options (cheapest … fastest) get a fuel ↔ time slider under the title
+    let slider = p.options.len() > 1;
+    let oy = if slider { 56.0 * s() } else { 0.0 };
+    let r = sheet_rect(178.0 + if slider { 56.0 } else { 0.0 } + if p.fuel_problem.is_some() { 20.0 } else { 0.0 });
     inp.block(r);
     cel::panel(r, PANEL);
     let target = view.body(p.target).map(|b| b.name.to_uppercase()).unwrap_or_default();
     let via: Vec<String> = p.via.iter().filter_map(|&b| view.body(b)).map(|b| b.name.to_uppercase()).collect();
     let title = if via.is_empty() { format!("COURSE TO {target}") } else { format!("COURSE TO {target} VIA {}", via.join(", ")) };
     inked(&title, r.x + 16.0 * s(), r.y + 24.0 * s(), 24.0, ACCENT, Align::Left);
-    if p.options.len() > 1 {
-        let n = p.options.len() as f32;
-        let cw = (r.w - 32.0 * s() - (n - 1.0) * 8.0 * s()) / n;
-        for (i, o) in p.options.iter().enumerate() {
-            let cr = Rect::new(r.x + 16.0 * s() + i as f32 * (cw + 8.0 * s()), r.y + 38.0 * s(), cw, 40.0 * s());
-            let on = o.token == p.token && o.depart_t == p.depart_t && o.arrive_t == p.arrive_t;
-            let tapped = widgets::chip(inp, cr, "", on, ACCENT);
-            let c = cr.center();
-            text(&o.label, c.x, c.y - 8.0 * s(), 13.0, if on { ACCENT } else { PAPER }, FontKind::Title, Align::Center);
-            let sub = format!("{:.1} km/s  {}", o.dv_depart + o.dv_mid + o.dv_capture, fmt_dur(o.arrive_t - o.depart_t));
-            text(&sub, c.x, c.y + 9.0 * s(), 12.0, MUTED, FontKind::Title, Align::Center);
-            if tapped && !on {
-                g.mode = Mode::Plan(o.clone());
-            }
+    let mut p = p.clone();
+    if slider {
+        if let Some(np) = fuel_slider(g, inp, Rect::new(r.x + 16.0 * s(), r.y + 38.0 * s(), r.w - 32.0 * s(), 50.0 * s()), &p) {
+            p = np.clone();
+            g.mode = Mode::Plan(np);
         }
     }
+    let p = &p;
     let cols = [
         ("DEPART", if p.depart_t - view.now < 60.0 { "NOW".to_string() } else { format!("in {}", fmt_dur(p.depart_t - view.now)) }),
-        ("FLIGHT", fmt_dur(p.arrive_t - p.depart_t)),
+        // with the slider, what changes is when you get there; a lone course shows its flight time
+        if slider { ("ARRIVE", format!("in {}", fmt_dur(p.arrive_t - view.now))) } else { ("FLIGHT", fmt_dur(p.arrive_t - p.depart_t)) },
         ("DELTA-V", format!("{:.2} km/s", p.dv_depart + p.dv_mid + p.dv_capture)),
     ];
     let cw = (r.w - 32.0 * s()) / 3.0;
@@ -997,7 +991,9 @@ fn plan_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
     let by = r.y + r.h - 58.0 * s();
     let bw = (r.w - 4.0 * 12.0 * s()) / 3.0;
     let b = |i: usize| Rect::new(r.x + 12.0 * s() + i as f32 * (bw + 12.0 * s()), by, bw, 46.0 * s());
-    if widgets::button(inp, b(0), "ENGAGE", if ok { Style::Primary } else { Style::Ghost }) && ok {
+    let exact = !slider || !p.token.is_empty();
+    let label = if exact { "ENGAGE" } else { "PLOTTING" };
+    if widgets::button(inp, b(0), label, if ok && exact { Style::Primary } else { Style::Ghost }) && ok && exact {
         g.emit(UiAction::ScheduleTransfer(p.clone()));
         art::sfx("transfer_scheduled");
         g.push_notice(Notice { kind: NoticeKind::Good, title: "Course laid in".into(), body: format!("Departing for {target}"), focus: None });
@@ -1011,6 +1007,88 @@ fn plan_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
     if widgets::button(inp, b(2), "CANCEL", Style::Ghost) {
         g.mode = Mode::Idle;
     }
+}
+
+/// Knob positions (0..1) of the course options on the fuel ↔ time slider: by Δv, cheapest left.
+fn option_stops(p: &TransferPlan) -> Vec<f32> {
+    let (lo, hi) = match (p.options.first(), p.options.last()) {
+        (Some(a), Some(b)) if b.total_dv() > a.total_dv() => (a.total_dv(), b.total_dv()),
+        _ => return (0..p.options.len()).map(|i| i as f32 / (p.options.len().max(2) - 1) as f32).collect(),
+    };
+    p.options.iter().map(|o| ((o.total_dv() - lo) / (hi - lo)).clamp(0.0, 1.0) as f32).collect()
+}
+
+/// Which pair of neighbouring options knob position `x` lies between, and how far along.
+fn stop_segment(stops: &[f32], x: f32) -> (usize, f32) {
+    let i = stops.windows(2).position(|w| x <= w[1]).unwrap_or(stops.len().saturating_sub(2));
+    let (a, b) = (stops[i], stops[(i + 1).min(stops.len() - 1)]);
+    (i, if b > a { ((x - a) / (b - a)).clamp(0.0, 1.0) } else { 0.0 })
+}
+
+/// Fuel ↔ time slider (left = cheapest, right = fastest, ticks = the planned options). While dragging, the course shown is a
+/// blend of the two neighbouring options (path and numbers move live); when the finger lifts the
+/// backend plans the exact course there (`GameScreen::plan_want`). Returns the course to show
+/// when it changed this frame.
+fn fuel_slider(g: &mut GameScreen, inp: &mut Input, row: Rect, p: &TransferPlan) -> Option<TransferPlan> {
+    let stops = option_stops(p);
+    let track = Rect::new(row.x + 10.0 * s(), row.y + 12.0 * s(), row.w - 20.0 * s(), 6.0 * s());
+    g.plan_track = Some(track);
+    let x_of = |h: Vec2| ((h.x - track.x) / track.w).clamp(0.0, 1.0);
+    let (lo, hi) = (p.options[0].total_dv(), p.options[p.options.len() - 1].total_dv());
+    let here = if hi > lo { ((p.total_dv() - lo) / (hi - lo)).clamp(0.0, 1.0) as f32 } else { 0.0 };
+    let mut out = None;
+    match (inp.held, g.plan_drag) {
+        (Some(h), drag) if inp.gesture_on_ui() && (drag.is_some() || (row.contains(h) && !inp.occluded(h))) => {
+            let x = x_of(h);
+            if drag.is_none_or(|d| d != x) {
+                // tick as the knob passes an option
+                if drag.is_some_and(|d| stops.iter().any(|&st| (d - st) * (x - st) < 0.0)) {
+                    art::sfx("slider_tick");
+                }
+                g.plan_drag = Some(x);
+                g.plan_want = None;
+                let (i, f) = stop_segment(&stops, x);
+                let mut o = match p.options.get(i + 1) {
+                    Some(b) => p.options[i].blend(b, f as f64),
+                    None => p.options[i].clone(),
+                };
+                o.options = p.options.clone();
+                o.windows = p.windows.clone();
+                out = Some(o);
+            }
+        }
+        (None, Some(x)) => {
+            // finger lifted: snap onto an option when close, else plan the exact course there
+            g.plan_drag = None;
+            let (i, f) = stop_segment(&stops, x);
+            let near = |k: usize| stops.get(k).is_some_and(|&st| (st - x).abs() * track.w < 10.0 * s());
+            if near(i) || near(i + 1) || p.options.get(i + 1).is_none() {
+                let k = if near(i + 1) || (p.options.get(i + 1).is_some() && f >= 0.5) { i + 1 } else { i };
+                let mut o = p.options[k].clone();
+                o.options = p.options.clone();
+                o.windows = p.windows.clone();
+                out = Some(o);
+            } else {
+                g.plan_want = Some((i, f, x));
+            }
+        }
+        _ => {}
+    }
+    let knob = g.plan_drag.or(g.plan_want.map(|w| w.2)).unwrap_or(here);
+    widgets::bar(track, knob, ACCENT);
+    for (k, &st) in stops.iter().enumerate() {
+        let x = track.x + track.w * st;
+        draw_line(x, track.y + track.h + 3.0 * s(), x, track.y + track.h + 8.0 * s(), 1.5 * s(), if k == 0 || k + 1 == stops.len() { PAPER } else { MUTED });
+    }
+    let kc = vec2(track.x + track.w * knob, track.y + track.h / 2.0);
+    draw_circle(kc.x, kc.y, 13.0 * s(), alpha(ACCENT, 0.35));
+    draw_circle(kc.x, kc.y, 9.0 * s(), PAPER);
+    let (a, b) = (&p.options[0], &p.options[p.options.len() - 1]);
+    let ly = track.y + track.h + 21.0 * s();
+    let end = |o: &TransferPlan, word: &str| format!("{word}  {:.0} km/s", o.total_dv());
+    text(&end(a, "CHEAPEST"), track.x - 10.0 * s(), ly, 12.0, if knob < 0.02 { ACCENT } else { MUTED }, FontKind::Title, Align::Left);
+    text(&end(b, "FASTEST"), track.x + track.w + 10.0 * s(), ly, 12.0, if knob > 0.98 { ACCENT } else { MUTED }, FontKind::Title, Align::Right);
+    out
 }
 
 pub(super) fn close_x(inp: &mut Input, r: Rect) -> bool {

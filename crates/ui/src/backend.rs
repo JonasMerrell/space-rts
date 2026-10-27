@@ -104,6 +104,13 @@ pub trait Backend {
     fn plan_transfer_async(&self, ship: ShipId, target: BodyId, after: f64) -> PlanPoll {
         PlanPoll::Done(self.plan_transfer(ship, target, after))
     }
+    /// Fuel ↔ time slider: the exact course `f` (0..1) of the way from course option `a` to its
+    /// neighbour `b` (both from `TransferPlan::options`), polled every frame like
+    /// `plan_transfer_async`. Done(None) = no course there (the UI snaps to the nearer option).
+    /// Default: unsupported.
+    fn plan_between_async(&self, _a: &TransferPlan, _b: &TransferPlan, _f: f32) -> PlanPoll {
+        PlanPoll::Done(None)
+    }
     /// Asteroid impact planner, polled every frame like `plan_transfer_async`. None = can't aim it
     /// (not ours, no tech, no route). Default: unsupported.
     fn plan_impact_async(&self, _asteroid: BodyId, _target: BodyId) -> ImpactPoll {

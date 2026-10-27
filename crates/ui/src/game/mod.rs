@@ -69,6 +69,12 @@ pub struct GameScreen {
     pub ranges_open: bool,
     /// Host's game-speed slider value while dragging / until the server confirms it.
     pub speed_drag: Option<f64>,
+    /// Plan sheet fuel ↔ time slider: knob position (0..1) while dragging, and the exact course
+    /// being planned after the finger lifted (option index, fraction to the next one, knob position).
+    pub plan_drag: Option<f32>,
+    pub plan_want: Option<(usize, f32, f32)>,
+    /// Where that slider's track was drawn last frame (screen px; for tests).
+    pub plan_track: Option<Rect>,
     /// `scrub` last frame: when it changes the camera follows the selection.
     last_scrub: f64,
     pub selected: Option<Focus>,
@@ -127,6 +133,9 @@ impl GameScreen {
             scrub_span: 86_400.0,
             ranges_open: false,
             speed_drag: None,
+            plan_drag: None,
+            plan_want: None,
+            plan_track: None,
             last_scrub: 0.0,
             selected: None,
             mode: Mode::Idle,
@@ -212,6 +221,7 @@ impl GameScreen {
             let t = view.now + self.scrub;
             self.sound_cues(view);
             self.run_pending_plan(be_ref, view.now);
+            self.run_pending_between(be_ref);
             self.run_pending_impact(be_ref);
             // Scrubbed ahead: draw the forecast (sim run forward from what we know) instead of the
             // live view. `now` stays the real now.
@@ -421,6 +431,36 @@ impl GameScreen {
         }
         self.selected = Some(Focus::Ship(ship));
         self.mode = Mode::Planning { ship, target, after };
+        self.plan_drag = None;
+        self.plan_want = None;
+    }
+
+    /// Picks up the exact course for where the fuel ↔ time slider was let go; snaps to the nearer
+    /// option when there is none there.
+    fn run_pending_between(&mut self, be: &dyn Backend) {
+        let (Some((i, f, _)), Mode::Plan(p)) = (self.plan_want, &self.mode) else {
+            self.plan_want = None;
+            return;
+        };
+        let (Some(a), Some(b)) = (p.options.get(i), p.options.get(i + 1)) else {
+            self.plan_want = None;
+            return;
+        };
+        let res = match be.plan_between_async(a, b, f) {
+            crate::PlanPoll::Pending => return,
+            crate::PlanPoll::Done(r) => r,
+        };
+        let mut next = match res {
+            Some(mut exact) => {
+                exact.label = String::new();
+                exact
+            }
+            None => if f < 0.5 { a } else { b }.clone(),
+        };
+        next.options = p.options.clone();
+        next.windows = p.windows.clone();
+        self.plan_want = None;
+        self.mode = Mode::Plan(next);
     }
 
     fn run_pending_impact(&mut self, be: &dyn Backend) {
