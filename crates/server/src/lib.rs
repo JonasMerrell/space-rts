@@ -228,8 +228,10 @@ pub fn make_invites(path: &Path, n: usize) -> std::io::Result<Vec<String>> {
 
 fn write_atomic(path: &Path, data: &str) {
     let tmp = path.with_extension("tmp");
-    if std::fs::write(&tmp, data).is_ok() {
-        let _ = std::fs::rename(&tmp, path);
+    // a failed save loses state at the next restart, so say so loudly
+    match std::fs::write(&tmp, data).and_then(|_| std::fs::rename(&tmp, path)) {
+        Ok(()) => {}
+        Err(e) => eprintln!("SAVE FAILED {}: {e}", path.display()),
     }
 }
 
@@ -902,11 +904,24 @@ pub fn serve_with(listener: TcpListener, mut cfg: Config) -> Result<(), String> 
     let cfg = Arc::new(cfg);
     {
         let server = server.clone();
+        // systemd stops/restarts send SIGTERM: save everything before exiting
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        for sig in [signal_hook::consts::SIGTERM, signal_hook::consts::SIGINT] {
+            let _ = signal_hook::flag::register(sig, stop.clone());
+        }
         thread::spawn(move || {
             let mut last_save = Instant::now();
             let mut last_bcast = Instant::now();
             loop {
-                thread::sleep(Duration::from_millis(1000));
+                for _ in 0..10 {
+                    thread::sleep(Duration::from_millis(100));
+                    if stop.load(std::sync::atomic::Ordering::Relaxed) {
+                        let mut s = lock(&server);
+                        s.save();
+                        eprintln!("saved, shutting down");
+                        std::process::exit(0);
+                    }
+                }
                 let mut s = lock(&server);
                 let all = last_bcast.elapsed() > Duration::from_secs(20);
                 if all {
@@ -915,7 +930,8 @@ pub fn serve_with(listener: TcpListener, mut cfg: Config) -> Result<(), String> 
                 if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| s.tick(all))).is_err() {
                     eprintln!("panic during tick");
                 }
-                if last_save.elapsed() > Duration::from_secs(30) {
+                // short interval: chat and orders must survive a restart (updates restart the service)
+                if last_save.elapsed() > Duration::from_secs(5) {
                     s.save();
                     last_save = Instant::now();
                 }

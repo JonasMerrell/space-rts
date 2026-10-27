@@ -4,6 +4,7 @@ edition.workspace = true
 version.workspace = true
 
 [dependencies]
+signal-hook = "0.3"
 sim = { path = "../sim" }
 proto = { path = "../proto" }
 serde = { workspace = true }
