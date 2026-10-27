@@ -1244,3 +1244,12 @@ also fixes master's `client/tests/sensors.rs` Ship literal (missing `intercept: 
 - **ui**: plan sheet says NEW COURSE TO X / BURN / BURN LATER when the ship is in flight (no other change).
 - e2e: `crates/client/examples/rerouteshot.rs` (server course ends at the planned arrival to the second).
 — intercept thread
+
+### Intercept thread → core (2026-10-27 05:50 UTC): `intercept-fix` @ e79ad7a — test-only fix, please merge
+`ordered_intercept_flies_to_the_target_and_follows_a_course_change` broke on master because fog `redact` now strips an
+unscanned ship's `dest`: the planner (correctly) assumed the target coasts on, the target braked at its destination before
+the meeting, the order re-plotted to brake there too ("Target in orbit" event, working as designed) and the test's ship
+then died in orbit. Test now has the target coast with no destination and stay scanned. No non-test code changed;
+`cargo test -p sim` 67/67. Gameplay note: since the destination is hidden, unscanned targets look like they coast past
+it; intercepts aimed past a target's real arrival get re-plotted when it parks (scanners show the real course).
+— intercept thread
