@@ -74,10 +74,18 @@ async fn main() {
     #[cfg(target_arch = "wasm32")]
     web::loaded();
     let mut ui = ui::Ui::new();
+    let mut sound = load_sound_prefs();
+    ui::art::set_music_on(sound.0);
+    ui::art::set_effects_on(sound.1);
     let mut be = backend::ClientBackend::new(server);
     be.resume();
     loop {
         ui.frame(&mut be);
+        let now = (ui::art::music_on(), ui::art::effects_on());
+        if now != sound {
+            sound = now;
+            save_sound_prefs(sound);
+        }
         #[cfg(target_arch = "wasm32")]
         web::text_fields(&ui);
         next_frame().await;
@@ -118,6 +126,30 @@ pub fn save_server(addr: &str) {
         let _ = std::fs::create_dir_all(d);
     }
     let _ = std::fs::write(p, addr);
+}
+
+/// Music / effects switches, remembered across launches ("music effects" as 0/1).
+fn load_sound_prefs() -> (bool, bool) {
+    #[cfg(target_arch = "wasm32")]
+    let text = web::store_get("sound");
+    #[cfg(not(target_arch = "wasm32"))]
+    let text = std::fs::read_to_string(server_file().with_file_name("sound.txt")).ok();
+    let mut it = text.as_deref().unwrap_or("1 1").split_whitespace().map(|v| v != "0");
+    (it.next().unwrap_or(true), it.next().unwrap_or(true))
+}
+
+fn save_sound_prefs((music, effects): (bool, bool)) {
+    let v = format!("{} {}", music as u8, effects as u8);
+    #[cfg(target_arch = "wasm32")]
+    web::store_set("sound", &v);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let p = server_file().with_file_name("sound.txt");
+        if let Some(d) = p.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let _ = std::fs::write(p, v);
+    }
 }
 
 /// Desktop entry point (the macro-generated `main` is private to this module).
