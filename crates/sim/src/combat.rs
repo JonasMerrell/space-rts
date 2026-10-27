@@ -261,7 +261,7 @@ mod tests {
 
 // ------------------------------------------------------------------ game integration
 
-use crate::game::{EventKind, Game, Ship, ShipState};
+use crate::game::{EventKind, Game, Ship, ShipId, ShipState};
 use crate::system::BodyId;
 
 /// Sub-steps per combat tick: flybys at tens of km/s cross a weapon envelope in a minute or two.
@@ -334,11 +334,18 @@ impl Game {
             let m = mods.get(p as usize).copied().unwrap_or((1.0, 1.0, 1.0));
             (if w == Weapon::Kinetic { m.0 } else { m.1 }, m.2)
         };
+        // dark (cloaked) ships: only targetable by players whose sensors see them, and they hold
+        // fire unless fired on; whoever is seen and engaged comes out of the dark
+        let players = &self.players;
+        let seen_by = |q: PlayerId, id: ShipId| players.get(q as usize).is_some_and(|p| p.vision.ships.binary_search(&id).is_ok());
+        let mut dark: Vec<Option<ShipId>> = vec![];
         for (i, s) in self.ships.iter_mut().enumerate() {
             let Some(b) = Self::ship_state_abs(sys, s, t1) else { continue };
             let a = Self::ship_state_abs(sys, s, t0).unwrap_or(b);
             let st = s.class.stats();
             let (dm, am) = modf(s.owner, st.weapon);
+            let dm = dm * Game::strike_mult(s, t1);
+            dark.push(s.dark(t1).then_some(s.id));
             let c = |pos, vel| Combatant {
                 key: s.id.0 as u64,
                 owner: s.owner,
@@ -355,6 +362,7 @@ impl Game {
             };
             all.push((Who::Ship(i), b.2, c(a.0, a.1), c(b.0, b.1)));
         }
+
         for (bi, bs) in self.bodies.iter().enumerate() {
             let Some(o) = bs.owner else { continue };
             if bs.def_hp <= 0.0 {
@@ -404,12 +412,16 @@ impl Game {
 
         // who can possibly engage whom this tick (closest approach of linear relative motion)
         let n = all.len();
+        dark.resize(n, None);
         let mut engaged = vec![false; n];
         let mut pairs: Vec<(usize, usize)> = vec![];
         for i in 0..n {
             for j in i + 1..n {
                 let (a, b) = (&all[i], &all[j]);
                 if a.2.owner == b.2.owner || (a.1.is_some() && b.1.is_some() && a.1 != b.1) {
+                    continue;
+                }
+                if dark[i].is_some_and(|id| !seen_by(b.2.owner, id)) || dark[j].is_some_and(|id| !seen_by(a.2.owner, id)) {
                     continue;
                 }
                 let reach = range(a.2.weapon).max(range(b.2.weapon)) * if a.2.attack > 0.0 || b.2.attack > 0.0 { 1.0 } else { 0.0 };
@@ -429,6 +441,11 @@ impl Game {
         let idx: Vec<usize> = (0..n).filter(|&i| engaged[i]).collect();
         if idx.is_empty() {
             return;
+        }
+        for &i in &idx {
+            if let (Who::Ship(si), Some(_)) = (all[i].0, dark[i]) {
+                self.break_dark(si);
+            }
         }
         // separate battlefields (parked at different bodies) stay separate even if a flyby
         // links them: a combatant may only target partners it was paired with

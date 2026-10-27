@@ -226,6 +226,9 @@ pub struct Ship {
     /// standing intercept order (re-planned when the target changes course, see intercept.rs)
     #[serde(default)]
     pub intercept: Option<crate::intercept::Order>,
+    /// heat-sink cloak state (advanced tier, see cloak.rs)
+    #[serde(default)]
+    pub cloak: Option<crate::cloak::Cloak>,
 }
 
 /// `last_burn_t` of a ship that never burned (finite so it survives JSON).
@@ -564,6 +567,8 @@ pub enum Command {
     SetOrder { ship: ShipId, order: StandingOrder },
     /// Start researching `tech` at a body with a research lab.
     Research { body: BodyId, tech: Tech },
+    /// Take ships dark (heat-sink cloak) or bring them out of the dark.
+    Cloak { ships: Vec<ShipId>, on: bool },
     BuildStation { body: BodyId, kind: StationKind },
     Chat { text: String },
     Extend { seconds: f64 },
@@ -786,6 +791,7 @@ impl Game {
             tech: ShipTech::default(),
             last_burn_t: no_burn(),
             intercept: None,
+            cloak: None,
         });
         self.refit(owner);
         let s = self.ships.last_mut().unwrap();
@@ -1031,6 +1037,7 @@ impl Game {
                 Ok(())
             }
             Command::Research { body, tech } => self.start_research(player, body, tech),
+            Command::Cloak { ships, on } => self.set_cloak(player, &ships, on),
             Command::BuildStation { body, kind } => self.build_station(player, body, kind).map(|_| ()),
             Command::SetOrder { ship, order } => {
                 self.own_ship(player, ship)?;
@@ -1211,6 +1218,7 @@ impl Game {
                 self.fund_waiting();
                 self.jobs();
                 self.research_tick();
+                self.cloak_tick();
                 self.stations_tick(TICK);
                 self.combat_tick(TICK);
                 self.fleet_tick(TICK);
@@ -1526,7 +1534,7 @@ impl Game {
             Some(e) => e.1 += x,
             None => out.push((p, x)),
         };
-        for s in &self.ships {
+        for s in self.ships.iter().filter(|s| !s.dark(self.t)) {
             if s.parked_at() == Some(body) && s.class.stats().attack > 0.0 {
                 add(s.owner, s.class.stats().attack * (s.hp / s.stats().hp).max(0.2));
             } else if s.parked_at() == Some(body) && matches!(s.class, ShipClass::Constructor | ShipClass::Scout) {

@@ -62,6 +62,9 @@ pub struct Sensor {
 pub const BURN_FLARE: f64 = 10.0;
 pub const FLARE_TIME: f64 = 1800.0;
 pub const RELAY_BOOST: f64 = 1.5;
+/// Ships parked at one body are spread around its orbit: no passive sensor is ever closer to a
+/// target than this (only matters for very faint targets, i.e. cloaked ships).
+pub const MIN_DETECT_DIST: f64 = 5_000.0;
 /// Ghost contacts older than this are forgotten.
 pub const CONTACT_TTL: f64 = 2.0 * 86_400.0;
 /// At most this many ghost contacts per player (the most recent are kept).
@@ -108,7 +111,7 @@ pub fn detects(sensors: &[Sensor], pos: V2, sig: f64) -> (bool, bool) {
         let d = s.pos.dist(pos);
         match s.kind {
             SensorKind::Scanner if d <= s.range => return (true, true),
-            SensorKind::Passive if d <= s.range * k => seen = true,
+            SensorKind::Passive if d.max(MIN_DETECT_DIST) <= s.range * k => seen = true,
             _ => {}
         }
     }
@@ -142,7 +145,7 @@ impl Game {
         // parked ships of one owner at one body glow together: each is seen at its own
         // signature × sqrt(group size), so a fleet is easier to spot but its scouts still less so
         let mut groups: Vec<(BodyId, PlayerId, f64)> = vec![];
-        for s in &self.ships {
+        for s in self.ships.iter().filter(|s| !s.dark(t)) {
             if let Some(b) = s.parked_at() {
                 match groups.iter_mut().find(|g| g.0 == b && g.1 == s.owner) {
                     Some(g) => g.2 += 1.0,
@@ -150,13 +153,14 @@ impl Game {
                 }
             }
         }
-        let sig_mod: Vec<f64> = (0..self.players.len()).map(|p| self.mods(p as PlayerId).signature).collect();
+        let mods: Vec<crate::tech::Mods> = (0..self.players.len()).map(|p| self.mods(p as PlayerId)).collect();
         self
             .ships
             .iter()
             .map(|s| {
-                let n = s.parked_at().and_then(|b| groups.iter().find(|g| g.0 == b && g.1 == s.owner)).map(|g| g.2).unwrap_or(1.0);
-                signature(s, t) * n.sqrt() * sig_mod[s.owner as usize]
+                let n = s.parked_at().filter(|_| !s.dark(t)).and_then(|b| groups.iter().find(|g| g.0 == b && g.1 == s.owner)).map(|g| g.2).unwrap_or(1.0);
+                let m = &mods[s.owner as usize];
+                signature(s, t) * n.sqrt() * m.signature * Game::cloak_sig(s, t, m.vent_sig)
             })
             .collect()
     }
