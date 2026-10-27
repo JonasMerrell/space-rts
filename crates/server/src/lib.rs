@@ -113,7 +113,7 @@ pub struct Config {
     /// Port the server listens on (for the origins and https redirects).
     pub port: u16,
     /// Browser build files, scanned from `<data>/public/web/` when the server starts.
-    pub site: Arc<http::Site>,
+    pub site: Arc<http::LiveSite>,
 }
 
 /// Who may connect without TLS (old app builds, LAN tools, tests).
@@ -766,10 +766,11 @@ fn setup(cfg: &Config, tls: &Arc<rustls::ServerConfig>, stream: TcpStream, ip: I
     }
     let origins = cfg.origins();
     let https_base = (cfg.web_cert.is_some()).then(|| cfg.web_hosts.first().map(|h| format!("https://{h}:{}", cfg.port))).flatten();
+    let site = cfg.site.current();
     let ctx = http::Ctx {
         ip,
         data: &cfg.data,
-        site: &cfg.site,
+        site: &site,
         secure,
         game_ok: secure || plain_ok,
         origins: &origins,
@@ -892,8 +893,8 @@ pub fn serve_with(listener: TcpListener, mut cfg: Config) -> Result<(), String> 
         cfg.port = a.port();
     }
     let web_dir = cfg.data.join("public").join("web");
-    cfg.site = Arc::new(http::Site::scan(&web_dir));
-    if !cfg.site.is_empty() {
+    cfg.site = Arc::new(http::LiveSite::new(web_dir.clone()));
+    if !cfg.site.current().is_empty() {
         eprintln!("browser build from {} at /play/", web_dir.display());
     }
     let guard = Guard::new(cfg.limits.clone());
