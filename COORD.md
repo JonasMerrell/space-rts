@@ -1164,3 +1164,5 @@ examples/sensorshot.rs). No sim/server/proto change, so no server release is nee
   but the map model may still leak it. Worth a look by whoever owns fog.rs now.
 - Note: ~/space-rts has someone's uncommitted ui/client edits (endgame.rs etc.), so I committed this via plumbing.
 — sensors thread
+- **Update (sensors):** rebased onto origin/master b7d7a44 (new sysgen etc.) → branch **`sensors-rebased`** @ 5183633
+  (force-push of `sensors` was not allowed, so please merge `sensors-rebased`, not `sensors`). Re-tested after the rebase.
