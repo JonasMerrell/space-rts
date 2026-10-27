@@ -573,7 +573,7 @@ pub enum Command {
 }
 
 pub const TICK: f64 = 60.0;
-/// Power a parked construction ship adds in orbit (Jonas: constructors can claim bodies).
+/// Power a parked construction ship or scout adds in orbit (Jonas: they can claim bodies).
 pub const CONSTRUCTOR_POWER: f64 = 1.0;
 const FACTIONS: [&str; 4] = ["vanguard", "hive", "prism", "junker"];
 
@@ -1446,7 +1446,7 @@ impl Game {
         for s in &self.ships {
             if s.parked_at() == Some(body) && s.class.stats().attack > 0.0 {
                 add(s.owner, s.class.stats().attack * (s.hp / s.stats().hp).max(0.2));
-            } else if s.parked_at() == Some(body) && s.class == ShipClass::Constructor {
+            } else if s.parked_at() == Some(body) && matches!(s.class, ShipClass::Constructor | ShipClass::Scout) {
                 // unarmed, but enough of a presence to claim an empty body
                 add(s.owner, CONSTRUCTOR_POWER * (s.hp / s.stats().hp).max(0.2));
             }
@@ -1710,6 +1710,15 @@ mod tests {
         assert!(q[0].done_t < second);
         assert!((g.players[0].matter - (m0 - ShipClass::Scout.stats().matter)).abs() < 1e-9);
         assert!(g.apply(1, Command::CancelJob { body: home, index: 0 }).is_err());
+    }
+
+    #[test]
+    fn a_scout_claims_an_empty_body() {
+        let mut g = game();
+        let target = g.system.bodies.iter().find(|b| b.kind == BodyKind::Asteroid && g.bodies[b.id.0 as usize].owner.is_none()).unwrap().id;
+        g.spawn(0, ShipClass::Scout, target);
+        g.advance_to(g.t + 120.0);
+        assert_eq!(g.bodies[target.0 as usize].owner, Some(0));
     }
 
     #[test]
