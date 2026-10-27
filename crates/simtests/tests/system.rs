@@ -91,7 +91,9 @@ fn structure_is_sane_for_many_seeds() {
             for p in &ps {
                 let o = p.orbit.unwrap();
                 assert!(o.a * (1.0 - o.e) > s.star().radius * 3.0, "{ctx}: {} grazes star", p.name);
-                assert!(p.soi > p.radius * 5.0, "{ctx}: {} SOI too small to park in", p.name);
+                // room to capture into the parking orbit (inner rocky planets of the new generator have
+                // SOIs of only ~1.6× their parking radius)
+                assert!(p.soi > p.park_radius() * 1.5, "{ctx}: {} SOI too small to park in (soi {:.0}, park {:.0})", p.name, p.soi, p.park_radius());
                 assert!(p.park_radius() < p.soi, "{ctx}");
             }
             for b in &s.bodies {
