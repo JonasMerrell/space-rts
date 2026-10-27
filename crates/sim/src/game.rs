@@ -619,6 +619,9 @@ pub struct Game {
     /// mass driver reloads and interdiction grid kills (see ordnance.rs)
     #[serde(default)]
     pub station_shots: Vec<crate::ordnance::Shot>,
+    /// stargate throughput log (see transit.rs)
+    #[serde(default)]
+    pub gate_uses: Vec<crate::transit::GateUse>,
 }
 
 /// Commands players send. Applied at the current game time.
@@ -646,6 +649,8 @@ pub enum Command {
     LayMines { body: BodyId },
     /// Load a slug at your mass driver there (it appears as a ship: send it at a body).
     LoadSlug { body: BodyId },
+    /// Jump ships parked at one of your stargates to another of your gates.
+    Jump { ships: Vec<ShipId>, to: BodyId },
     BuildStation { body: BodyId, kind: StationKind },
     Chat { text: String },
     Extend { seconds: f64 },
@@ -734,6 +739,7 @@ impl Game {
             sweeps: vec![],
             minefields: vec![],
             station_shots: vec![],
+            gate_uses: vec![],
         };
         let _ = g.add_player(host_name, None);
         g
@@ -956,6 +962,7 @@ impl Game {
             | Command::MoveJob { body, .. }
             | Command::LayMines { body }
             | Command::LoadSlug { body }
+            | Command::Jump { to: body, .. }
                 if bad(body) =>
             {
                 return Err("no such body".into())
@@ -1127,6 +1134,7 @@ impl Game {
             Command::LidarSweep { station } => self.lidar_sweep(player, station),
             Command::LayMines { body } => self.lay_mines(player, body),
             Command::LoadSlug { body } => self.load_slug(player, body).map(|_| ()),
+            Command::Jump { ships, to } => self.jump(player, &ships, to),
             Command::BuildStation { body, kind } => self.build_station(player, body, kind).map(|_| ()),
             Command::SetOrder { ship, order } => {
                 self.own_ship(player, ship)?;
@@ -1252,7 +1260,8 @@ impl Game {
                 }
             };
             let p = &plans[k].1 .0;
-            if ship.fuel_for(p.depart_dv + p.mid_dv()) > ship.fuel {
+            let assist = self.launch_assist(player, from);
+            if ship.fuel_for((p.depart_dv - assist).max(0.0) + p.mid_dv()) > ship.fuel {
                 return Err(format!("not enough fuel: departure needs {:.1} km/s, {} has {:.1} km/s", p.depart_dv, ship.name, ship.dv_left()));
             }
             todo.push((id, k));
@@ -1260,7 +1269,8 @@ impl Game {
         for f in self.fleets.iter().filter(|f| f.ships.iter().any(|s| ships.contains(s))) {
             let k = todo.iter().find(|t| f.ships.contains(&t.0)).unwrap().1;
             let p = &plans[k].1 .0;
-            self.fleet_fuel_check(&f.ships, p.depart_dv + p.mid_dv(), p.capture_dv)?;
+            let assist = self.launch_assist(player, plans[k].0);
+            self.fleet_fuel_check(&f.ships, (p.depart_dv - assist).max(0.0) + p.mid_dv(), p.capture_dv)?;
         }
         for (id, k) in todo {
             self.schedule(player, id, plans[k].1.clone())?;
@@ -1273,7 +1283,8 @@ impl Game {
         if ship.owner != player {
             return Err("not your ship".into());
         }
-        if ship.fuel_for(p.depart_dv + p.mid_dv()) > ship.fuel {
+        let assist = ship.parked_at().map_or(0.0, |b| self.launch_assist(player, b));
+        if ship.fuel_for((p.depart_dv - assist).max(0.0) + p.mid_dv()) > ship.fuel {
             return Err(format!("not enough fuel: departure needs {:.1} km/s, {} has {:.1} km/s", p.depart_dv, ship.name, ship.dv_left()));
         }
         let s = self.ship_mut(id).unwrap();
@@ -1362,6 +1373,11 @@ impl Game {
     }
 
     fn ship_event(&mut self, i: usize, te: f64) {
+        // a laser launch array at the departure body pays for the first part of the burn
+        let assist = match self.ships[i].state {
+            ShipState::Parked { body, .. } => self.launch_assist(self.ships[i].owner, body),
+            _ => 0.0,
+        };
         let sys = &self.system;
         let ship = &mut self.ships[i];
         let (id, owner, name) = (ship.id, ship.owner, ship.name.clone());
@@ -1370,7 +1386,7 @@ impl Game {
         match &mut ship.state {
             ShipState::Parked { body, departure } => {
                 let d = departure.take().unwrap();
-                let need = rocket(ship.fuel, d.dv);
+                let need = rocket(ship.fuel, (d.dv - assist).max(0.0));
                 if need > ship.fuel {
                     let body = *body;
                     ship.route.clear();

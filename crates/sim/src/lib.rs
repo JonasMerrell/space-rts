@@ -17,6 +17,7 @@ pub mod reroute;
 pub mod station;
 pub mod tech;
 pub mod traj;
+pub mod transit;
 pub mod system;
 pub mod v2;
 pub mod waitlist;

@@ -1069,6 +1069,9 @@ pub(crate) fn ability_row(g: &mut GameScreen, inp: &mut Input, abilities: &[Abil
     let mut note = abilities.iter().find_map(|a| a.blocker.clone().or_else(|| (!a.note.is_empty()).then(|| a.note.clone()))).unwrap_or_default();
     for a in abilities {
         let w = (measure(&a.label, FontKind::Title, 13.0).x + 28.0 * s()).max(84.0 * s());
+        if x + w > r.x + r.w {
+            break;
+        }
         let cr = Rect::new(x, r.y, w, r.h);
         let usable = a.blocker.is_none();
         if widgets::chip(inp, cr, &a.label, a.on, if usable { ACCENT } else { MUTED }) {

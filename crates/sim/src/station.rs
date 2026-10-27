@@ -25,6 +25,10 @@ pub enum StationKind {
     LaserBattery,
     /// advanced tier: loads guided slugs (see ordnance.rs)
     MassDriver,
+    /// advanced tier: beams departing ships, saving departure fuel (see transit.rs)
+    LaserLaunch,
+    /// advanced tier: jump between your gates (see transit.rs)
+    Stargate,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -68,7 +72,7 @@ pub const DEPOT_START: f64 = 300.0;
 pub const STATION_YARD_LEVEL: u8 = 2;
 
 impl StationKind {
-    pub const ALL: [StationKind; 10] = [
+    pub const ALL: [StationKind; 12] = [
         StationKind::Shipyard,
         StationKind::FuelDepot,
         StationKind::Telescope,
@@ -79,6 +83,8 @@ impl StationKind {
         StationKind::Interdiction,
         StationKind::LaserBattery,
         StationKind::MassDriver,
+        StationKind::LaserLaunch,
+        StationKind::Stargate,
     ];
 
     pub fn label(self) -> &'static str {
@@ -93,6 +99,8 @@ impl StationKind {
             StationKind::Interdiction => "Interdiction grid",
             StationKind::LaserBattery => "Phased laser battery",
             StationKind::MassDriver => "Mass driver",
+            StationKind::LaserLaunch => "Laser launch array",
+            StationKind::Stargate => "Stargate",
         }
     }
     pub fn describe(self) -> &'static str {
@@ -107,6 +115,8 @@ impl StationKind {
             StationKind::Interdiction => "Shoots down incoming torpedoes and mass-driver slugs, and halves asteroid impacts here by fragmenting them.",
             StationKind::LaserBattery => "Laser battery on a body you own: hits ships out to 40,000 km, weaker with distance.",
             StationKind::MassDriver => "Loads a guided 20 t slug every 6 h. Send it at a body: it hits everything hostile in that orbit, harder the faster it arrives.",
+            StationKind::LaserLaunch => "Beams our departing ships: the first 3 km/s of every departure burn from here costs no fuel.",
+            StationKind::Stargate => "Ships parked here jump to any of our other gates. 1 energy per tonne, 1,500 t per 6 h, blocked while the enemy holds either orbit. Everyone can see it.",
         }
     }
     /// (matter, energy, build seconds for one worker)
@@ -122,6 +132,8 @@ impl StationKind {
             StationKind::Interdiction => (600.0, 600.0, 4.0 * 3600.0),
             StationKind::LaserBattery => (1000.0, 1200.0, 6.0 * 3600.0),
             StationKind::MassDriver => (800.0, 600.0, 5.0 * 3600.0),
+            StationKind::LaserLaunch => (500.0, 700.0, 4.0 * 3600.0),
+            StationKind::Stargate => (2000.0, 1500.0, 12.0 * 3600.0),
         }
     }
     pub fn max_hp(self) -> f64 {
@@ -129,6 +141,7 @@ impl StationKind {
             StationKind::Defense => 400.0,
             StationKind::LaserBattery => 300.0,
             StationKind::MassDriver => 300.0,
+            StationKind::Stargate => 600.0,
             StationKind::Interdiction => 250.0,
             StationKind::Shipyard => 300.0,
             _ => 150.0,
@@ -150,6 +163,8 @@ impl StationKind {
             StationKind::Interdiction => Some(Tech::InterdictionGrid),
             StationKind::LaserBattery => Some(Tech::PhasedLasers),
             StationKind::MassDriver => Some(Tech::MassDrivers),
+            StationKind::LaserLaunch => Some(Tech::LaserLaunch),
+            StationKind::Stargate => Some(Tech::Stargates),
             _ => None,
         }
     }

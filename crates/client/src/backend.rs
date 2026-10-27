@@ -436,6 +436,7 @@ impl ClientBackend {
         let ships = real_ships(g, &[ship]);
         match key {
             "cloak_on" | "cloak_off" => Some(Command::Cloak { ships, on: key == "cloak_on" }),
+            k if k.starts_with("jump:") => k[5..].parse().ok().map(|b| Command::Jump { ships, to: SimBody(b) }),
             "mines" => ships.iter().filter_map(|&id| g.ship(id)).find(|s| s.class == g::ShipClass::Constructor).and_then(|s| s.parked_at()).map(|body| Command::LayMines { body }),
             "decoy" => {
                 let s = g.ship(*ships.first()?)?;
@@ -1778,6 +1779,20 @@ impl Backend for ClientBackend {
                 let blocker = ships.iter().find_map(|s| g.cloak_blocker(me, s));
                 let note = format!("{:.0} energy · {} heat sink", sim::cloak::CLOAK_ENERGY * ships.len() as f64, ui::theme::fmt_dur(sim::cloak::DARK_TIME * g.mods(me).cloak_time));
                 out.push(m::Ability { key: "cloak_on".into(), label: "GO DARK".into(), on: false, blocker, note });
+            }
+        }
+        // stargates: jump to any of our other gates
+        if let Some(here) = ships.first().and_then(|s| s.parked_at()).filter(|&b| g.gates_of(me).contains(&b)) {
+            let ids: Vec<g::ShipId> = ships.iter().map(|s| s.id).collect();
+            let mass: f64 = ships.iter().map(|s| s.mass()).sum();
+            for to in g.gates_of(me).into_iter().filter(|&b| b != here) {
+                out.push(m::Ability {
+                    key: format!("jump:{}", to.0),
+                    label: format!("JUMP TO {}", g.system.body(to).name.to_uppercase()),
+                    on: false,
+                    blocker: g.jump_blocker(me, &ids, to),
+                    note: format!("{:.0} t · {:.0} energy", mass, mass * sim::transit::JUMP_ENERGY),
+                });
             }
         }
         // construction ships seed minefields where they're parked

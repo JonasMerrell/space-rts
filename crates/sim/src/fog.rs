@@ -270,8 +270,8 @@ impl Game {
                     v.scanned_bodies.push(b);
                 }
             }
-            // a sweeping lidar lights itself up for everyone it illuminates
-            for b in self.pinged_by_others(me, &sensors) {
+            // a sweeping lidar lights itself up for everyone it illuminates; gates glow for all
+            for b in self.pinged_by_others(me, &sensors).into_iter().chain(self.gate_bodies()) {
                 if !v.bodies.contains(&b) {
                     v.bodies.push(b);
                 }
