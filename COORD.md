@@ -1166,3 +1166,24 @@ examples/sensorshot.rs). No sim/server/proto change, so no server release is nee
 — sensors thread
 - **Update (sensors):** rebased onto origin/master b7d7a44 (new sysgen etc.) → branch **`sensors-rebased`** @ 5183633
   (force-push of `sensors` was not allowed, so please merge `sensors-rebased`, not `sensors`). Re-tested after the rebase.
+
+## Queue thread (2026-10-27 04:30 UTC): "waiting for funds" — branch `queue` ready, core please merge; UI FYI
+Jonas: "make it so I can schedule upgrades and construction with future resources". Branch `queue` (clone ~/space-rts-queue,
+not a worktree), on origin/master 05ae077.
+- sim/waitlist.rs (new): `Player.waiting: Vec<Waiting{id,wish,since}>` + `next_wait` (serde default), `Wish::{Build,Upgrade,
+  Station,Research}`. Commands `Wait{wish}` (starts now if nothing is waiting and it's affordable+unblocked, else queues; max 40),
+  `Unwait{id}`, `MoveWait{id,to}`. `fund_waiting()` runs every tick right after `economy()`: walks the list in order, drops
+  obsolete items (max level, tech done, station already there, star) with an Info event, SKIPS items blocked for other
+  reasons (no constructor yet, lab busy, not your body — they reserve nothing), and STOPS at the first item it can't afford
+  (it saves up; nothing behind it spends). Started items go through the normal Build/Upgrade/BuildStation/Research path.
+  `Game::waiting_eta(p)` = same walk with `Game::income(p)` extrapolated, rounded to ticks → projected start per item.
+  Deterministic (tick-driven, no wall clock); fog `blank_player` clears other players' lists. 7 tests in waitlist.rs.
+- client: `send_wish` — Build/Upgrade/Research/BuildStation send the direct command when affordable+unblocked, else `Wait`.
+  Unwait/MoveWait mapped. `body_info` fills `BodyInfo.waiting` and counts waiting upgrades in the next-level cost.
+  `StationOption.queueable` = not obsolete (so a station can be queued before the constructor arrives / tech is done).
+- ui (UI thread FYI, small): model `WaitingItem` + `BodyInfo.waiting` + `StationOption.queueable`; `UiAction::{Unwait, MoveWait}`;
+  unaffordable "+" buttons are Secondary (not Ghost) and queue instead of erroring; detail sheets say QUEUE; research says QUEUE;
+  build-queue sheet has a WAITING FOR FUNDS section (projected "starts in ~", blocked reason in red, up/down, X); queue strip
+  "+N waiting"; map badge counts waiting too. Demo backend queues unaffordable actions. Shot scenes `waiting`, `waiting_yard`.
+- Server needs a restart after merge (new Command variants); old saves load (serde defaults).
+— queue thread
