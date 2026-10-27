@@ -1589,15 +1589,27 @@ impl Backend for ClientBackend {
         } else {
             vec![]
         };
+        // each lane (ships / upgrades) runs its jobs back to back; the first one is running now
+        let now = g.t;
+        let yard_speed = (1.0 + 0.5 * (g.yard_level(self.me, b).max(1) as f64 - 1.0)) * g.mods(self.me).build_speed;
+        let mut ups_before: HashMap<usize, u8> = HashMap::new();
         let queue = st
             .queue
             .iter()
-            .map(|j| {
-                let label = match &j.kind {
-                    g::JobKind::Ship(c) => c.stats().name.to_string(),
-                    g::JobKind::Upgrade(u) => u.label().to_string(),
+            .enumerate()
+            .map(|(i, j)| {
+                let lane = j.lane();
+                let prev = st.queue[..i].iter().rev().find(|p| p.lane() == lane).map(|p| p.done_t);
+                let (label, ship, dur) = match &j.kind {
+                    g::JobKind::Ship(c) => (c.stats().name.to_string(), Some(ship_class(*c)), c.stats().build_time / yard_speed),
+                    g::JobKind::Upgrade(u) => {
+                        let k = ups_before.entry(u.index()).or_insert(0);
+                        *k += 1;
+                        (u.label().to_string(), None, u.cost(st.level(*u) + *k).2)
+                    }
                 };
-                (label, j.done_t)
+                let start_t = prev.unwrap_or((j.done_t - dur).min(now));
+                m::QueueItem { label, ship, start_t, done_t: j.done_t }
             })
             .collect();
         let (matter_rate, energy_rate, fuel_rate) = if mine { g.production(b) } else { (0.0, 0.0, 0.0) };
@@ -1628,7 +1640,7 @@ impl Backend for ClientBackend {
             .filter(|&i| g.bodies[i].owner == Some(me) && g.bodies[i].level(g::Upgrade::Research) > 0)
             .map(|i| {
                 let b = SimBody(i as u32);
-                let busy = p.research.iter().find(|r| r.body == b).map(|r| (r.tech.label().to_string(), r.done_t));
+                let busy = p.research.iter().filter(|r| r.body == b).map(|r| (r.tech.label().to_string(), r.done_t)).collect();
                 m::LabInfo { body: i as u32, name: g.system.body(b).name.clone(), level: g.bodies[i].level(g::Upgrade::Research), busy }
             })
             .collect();
@@ -1640,18 +1652,25 @@ impl Backend for ClientBackend {
                 } else if let Some(r) = p.research.iter().find(|r| r.tech == t) {
                     m::TechState::Running { lab: r.body.0, done_t: r.done_t }
                 } else {
-                    // the best idle lab that can take it, else the reason the first lab gives
+                    // the best lab with a free slot; if they're all full, the best busy one (it waits
+                    // there for a slot); else the reason the first lab gives
                     let mut best: Option<(u8, u32)> = None;
+                    let mut full: Option<(u8, u32)> = None;
                     let mut why = if labs.is_empty() { "needs a research lab".to_string() } else { String::new() };
                     for l in &labs {
                         match g.research_blocker(me, SimBody(l.body), t) {
                             None if best.is_none_or(|b| l.level > b.0) => best = Some((l.level, l.body)),
                             None => {}
+                            Some(w) if w.contains("busy") => {
+                                if full.is_none_or(|b| l.level > b.0) {
+                                    full = Some((l.level, l.body));
+                                }
+                            }
                             Some(w) if why.is_empty() || w.starts_with("needs ") => why = w,
                             Some(_) => {}
                         }
                     }
-                    match best {
+                    match best.or(full) {
                         Some((_, lab)) => m::TechState::Ready { lab },
                         None => m::TechState::Locked(why),
                     }

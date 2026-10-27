@@ -55,7 +55,7 @@ async fn main() {
     pump(&mut be, 3.0, |b, _| b.body_info(home).is_some_and(|i| !i.queue.is_empty()));
     pump(&mut be, 0.5, |_, _| false);
     let info = be.body_info(home).unwrap();
-    let ready = info.queue.last().expect("queued").1;
+    let ready = info.queue.last().expect("queued").done_t;
     pump(&mut be, 20.0, |b, _| forecast_done(b));
     let now = be.view().unwrap().now;
     eprintln!("now {now:.0} ready {ready:.0} until {:.0}", be.forecast_until());

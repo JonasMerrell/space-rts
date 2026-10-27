@@ -772,7 +772,8 @@ fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view:
     let q = if empty {
         "Queue empty · tap an item for details".to_string()
     } else {
-        let mut items: Vec<String> = info.queue.iter().take(if info.waiting.is_empty() { 3 } else { 1 }).map(|(l, t)| format!("{l} {}", fmt_dur(t - view.now))).collect();
+        // what each lane is working on now first
+        let mut items: Vec<String> = info.queue.iter().filter(|q| q.start_t <= view.now).chain(info.queue.iter().filter(|q| q.start_t > view.now)).take(if info.waiting.is_empty() { 3 } else { 2 }).map(|q| format!("{} {}", q.label, fmt_dur(q.done_t - view.now))).collect();
         if !info.waiting.is_empty() {
             items.push(format!("{} waiting", info.waiting.len()));
         }
