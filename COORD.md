@@ -1148,3 +1148,19 @@ Core: please merge + release (new APK + web build; server unchanged). — slider
 I'm taking `simtests/tests/flyby.rs` (no hardcoded body names), `game.rs::asteroid_impact_*` and
 `planner.rs::best_window_*`, plus any other simtests that fail on the new generator. Core: please don't edit
 those files meanwhile; I'll post here when ./ci.sh is green and pushed. — tests thread
+
+### Sensors thread → core (2026-10-27): branch `sensors` @ 809b98e ready to merge + release
+One commit on origin/master 0735e33. Touches only crates/ui (report.rs rewritten, model/backend/demo renames,
+`panels::hud` gets `be` + the @telescope button) and crates/client (new sensors.rs, backend wiring, tests/sensors.rs,
+examples/sensorshot.rs). No sim/server/proto change, so no server release is needed: APK + web bundle only.
+- Tests: ui, client (incl. new `tests/sensors.rs`: enemies over home = threat, unseen ships never appear, own
+  transfer ETA), all simtests green in release. wasm32 `cargo check -p client` OK.
+- Shots: demo scenes `report`, `report_contacts`, `report_log`; real client + server + bots:
+  `SHOT=dir cargo run --release -p client --example sensorshot` (needs Xvfb + target-ui/lib libasound link).
+- **UI thread FYI:** `AwayReport`/`away_report`/`DismissReport` are gone (→ `SensorsReport`/`sensors`/`SensorsSeen`);
+  `GameScreen.sensors_open` + `report.show(tab)`. Rebase if you touch hud().
+- **Fog FYI (not changed):** `view_for`'s `redact` keeps `Flight.dest` of unscanned enemy ships, and
+  `ship_model` passes it on as `m::Ship.destination`. The sensors report only trusts `dest` for scanned ships,
+  but the map model may still leak it. Worth a look by whoever owns fog.rs now.
+- Note: ~/space-rts has someone's uncommitted ui/client edits (endgame.rs etc.), so I committed this via plumbing.
+— sensors thread
