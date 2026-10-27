@@ -752,12 +752,22 @@ mod tests {
         let (a, b) = (planets[1], planets[2]);
         let me = g.spawn(0, mine, a);
         let foe = g.spawn(1, theirs, b);
-        g.apply(1, Command::Transfer { ships: vec![foe], to: a, depart_t: None }).unwrap();
+        // a long enemy flight to a neutral planet, so the chase happens in open space
+        let to = planets
+            .iter()
+            .copied()
+            .filter(|&p| p != a && p != b)
+            .max_by(|&x, &y| {
+                let f = |p| g.plan_for(g.ship(foe).unwrap(), p, None).map(|(pl, _)| pl.arrive_t - pl.depart_t()).unwrap_or(0.0);
+                f(x).total_cmp(&f(y))
+            })
+            .unwrap();
+        g.apply(1, Command::Transfer { ships: vec![foe], to, depart_t: None }).unwrap();
         let dep = match &g.ship(foe).unwrap().state {
             ShipState::Parked { departure: Some(d), .. } => d.state.t,
             _ => panic!("no departure"),
         };
-        g.advance_to(dep + 3600.0);
+        g.advance_to(dep + 1800.0);
         // make sure we see it (the test is about planning, not sensors)
         g.update_intel();
         let v = &mut g.players[0].vision;
@@ -803,18 +813,28 @@ mod tests {
         }
     }
 
+    /// Keep the target scanned (seen, with its plans): the course it flies is the one we plan on.
+    /// An unscanned target is assumed to coast, so its braking at the destination would surprise us.
     fn see(g: &mut Game, id: ShipId) {
         let v = &mut g.players[0].vision;
-        if v.ships.binary_search(&id).is_err() {
-            v.ships.push(id);
-            v.ships.sort();
+        for l in [&mut v.ships, &mut v.scanned] {
+            if l.binary_search(&id).is_err() {
+                l.push(id);
+                l.sort();
+            }
         }
     }
 
     #[test]
     fn ordered_intercept_flies_to_the_target_and_follows_a_course_change() {
         // unarmed on both sides, so nobody dies before the course change
-        let (mut g, me, foe) = chase_game_with(ShipClass::Scout, ShipClass::Tanker);
+        let (mut g, me, foe) = chase_game_with(ShipClass::Tanker, ShipClass::Tanker);
+        // the target coasts on through its destination (no braking), so the chase is in open space
+        if let ShipState::Flying(f) = &mut g.ship_mut(foe).unwrap().state {
+            f.dest = None;
+            f.cache = None;
+        }
+        see(&mut g, foe);
         let opts = g.intercept_options(me, foe, &g.known_path(0, foe).unwrap(), g.t, true);
         let o = opts.last().expect("an option").clone();
         let h = o.hint;
