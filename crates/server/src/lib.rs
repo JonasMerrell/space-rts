@@ -515,8 +515,9 @@ impl Server {
                     Ok(()) => {}
                     Err(e) => eprintln!("SAVE FAILED {}: {e}", path.display()),
                 }
-                // also to the journal, so admins without access to the data dir can read reports
-                eprintln!("FEEDBACK {line}");
+                // only a marker in the journal: report text is player-written and may carry prompt
+                // injections, so it stays in feedback.jsonl, which only the owner reads
+                eprintln!("FEEDBACK received ({}, {} bytes) -> {}", if bug { "bug" } else { "idea" }, text.len(), path.display());
                 reply(self, ServerMsg::CmdResult { ok: true, msg: "thanks, report saved".into() });
             }
             ClientMsg::DeleteGame { code } => {
