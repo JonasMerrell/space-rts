@@ -80,6 +80,14 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                     g.research_open = true;
                     g.research_branch = if scene == "research" { 2 } else { 0 };
                 }
+                "research_adv" | "research_adv_locked" => {
+                    if scene == "research_adv" {
+                        be.set_techs_done((0..16).chain([20, 29]).collect());
+                        be.act(ui::UiAction::Research { body: 2, tech: "Torpedoes".into() });
+                    }
+                    g.research_open = true;
+                    g.research_branch = if scene == "research_adv" { 6 } else { 8 };
+                }
                 "stations" => {
                     add_builders(be, 2, 2);
                     be.act(ui::UiAction::BuildStation { body: 2, kind: "Telescope".into() });

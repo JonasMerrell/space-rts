@@ -557,6 +557,8 @@ pub struct TechInfo {
     pub desc: String,
     pub cost: Cost,
     pub min_lab: u8,
+    /// advanced tier (branch is one of `ADV_BRANCHES`, tiers 1..=3)
+    pub advanced: bool,
     pub state: TechState,
 }
 
@@ -578,6 +580,8 @@ pub struct ResearchView {
 }
 
 pub const TECH_BRANCHES: [&str; 5] = ["Weapons", "Engines", "Industry", "Defense", "Scanning"];
+/// The advanced tier's branches (only in wars that have it).
+pub const ADV_BRANCHES: [&str; 5] = ["Transit", "Strike", "Bastion", "Shadow", "Sight"];
 
 #[derive(Clone, Debug)]
 pub struct StationInfo {

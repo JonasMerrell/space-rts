@@ -96,6 +96,11 @@ impl DemoBackend {
         }
     }
 
+    /// Demo/test hook: mark these `DEMO_TECHS` indices researched.
+    pub fn set_techs_done(&mut self, done: Vec<usize>) {
+        self.techs_done = done;
+    }
+
     pub fn now(&self) -> f64 {
         self.start_t + (macroquad::time::get_time() - self.t0_real) * self.speed
     }
@@ -803,13 +808,15 @@ impl Backend for DemoBackend {
             .iter()
             .enumerate()
             .map(|(i, (id, name, desc))| {
-                let tier = (i % 4) as u8 + 1;
-                let min_lab = [1, 1, 2, 3][i % 4];
+                let (advanced, tier, branch, min_lab, has_pre) = demo_tech_meta(i);
+                let base_done = (0..20).filter(|&j| done(j)).count();
                 let state = if done(i) {
                     TechState::Done
                 } else if let Some(r) = self.research_run.iter().find(|r| r.0 == i) {
                     TechState::Running { lab: r.1, done_t: r.2 }
-                } else if i % 4 != 0 && !done(i - 1) {
+                } else if advanced && base_done < DEMO_ADV_UNLOCK {
+                    TechState::Locked(format!("needs {DEMO_ADV_UNLOCK} base techs ({base_done} so far)"))
+                } else if has_pre && !done(i - 1) {
                     TechState::Locked(format!("needs {}", DEMO_TECHS[i - 1].1))
                 } else {
                     match labs.iter().filter(|l| l.busy.is_none() && l.level >= min_lab).max_by_key(|l| l.level) {
@@ -818,7 +825,7 @@ impl Backend for DemoBackend {
                         None => TechState::Locked(format!("needs lab level {min_lab}")),
                     }
                 };
-                TechInfo { id: id.to_string(), name: name.to_string(), branch: TECH_BRANCHES[i / 4].to_string(), tier, desc: desc.to_string(), cost: demo_tech_cost(i), min_lab, state }
+                TechInfo { id: id.to_string(), name: name.to_string(), branch: branch.to_string(), tier, desc: desc.to_string(), cost: demo_tech_cost(i), min_lab, advanced, state }
             })
             .collect();
         Some(ResearchView { techs, labs })
@@ -1027,7 +1034,8 @@ impl Backend for DemoBackend {
 }
 
 /// Mirror of sim's tech tree for offline demo (id, name, description), branch-major.
-const DEMO_TECHS: [(&str, &str, &str); 20] = [
+/// The last 15 are the advanced tier (3 per branch, opens after `DEMO_ADV_UNLOCK` base techs).
+const DEMO_TECHS: [(&str, &str, &str); 35] = [
     ("HardenedSlugs", "Hardened slugs", "Kinetic weapons deal 15% more damage."),
     ("FocusedLasers", "Focused lasers", "Energy weapons deal 15% more damage."),
     ("FireControl", "Fire control", "Kinetic slugs lead fast targets better: +25% accuracy."),
@@ -1048,7 +1056,31 @@ const DEMO_TECHS: [(&str, &str, &str); 20] = [
     ("ScanningStations", "Scanning stations", "Unlocks scanning stations and sensor relays."),
     ("SignatureDamping", "Signature damping", "Your ships are 30% harder to see."),
     ("DeepSpaceArray", "Deep-space array", "Sensor range +40% more."),
+    ("LaserLaunch", "Laser launch array", "Station that beams departing ships: the first 3 km/s of a departure burn costs no fuel."),
+    ("AntimatterCatalysis", "Antimatter catalysis", "Engine exhaust velocity +50%."),
+    ("Stargates", "Stargates", "Paired gate stations: ships parked at one gate jump to the other in 10 minutes."),
+    ("Torpedoes", "Hunter-killer torpedoes", "Uncrewed torpedoes that chase one enemy ship across the system and detonate."),
+    ("MassDrivers", "Mass drivers", "Station that fires guided slugs on transfer orbits at another body's orbit."),
+    ("FusionWarheads", "Fusion warheads", "Torpedo and slug damage +60%; slugs also hit stations."),
+    ("Minefields", "Orbital minefields", "Constructors seed mines that hit enemy ships capturing into that orbit."),
+    ("InterdictionGrid", "Interdiction grid", "Station that shoots down incoming torpedoes and slugs and fragments asteroids."),
+    ("PhasedLasers", "Phased laser battery", "Planet-based laser battery that hits ships out to 250,000 km."),
+    ("DecoyDrones", "Decoy drones", "Cheap drones that look like a warship to enemy sensors."),
+    ("HeatSinkCloaks", "Heat-sink cloaking", "Ships can go dark for 12 h by storing their heat, then must vent."),
+    ("ThermalBaffles", "Thermal baffles", "Cloaks last twice as long; venting is half as bright."),
+    ("GravimetricArray", "Gravimetric array", "Station that detects ships by mass, cloaked or not."),
+    ("LidarSweep", "Lidar sweep", "Scanning stations can ping: everything in 3× range shows for 1 h, the pinger too."),
+    ("DeepFieldInterferometry", "Deep-field interferometry", "Sensor range +50%, and passive sensors see through decoys."),
 ];
+const DEMO_ADV_UNLOCK: usize = 15;
+
+/// (advanced, tier, branch, min lab, has a prereq) of `DEMO_TECHS[i]`, like sim's tech.rs.
+fn demo_tech_meta(i: usize) -> (bool, u8, &'static str, u8, bool) {
+    match i.checked_sub(20) {
+        Some(a) => (true, (a % 3) as u8 + 1, ADV_BRANCHES[a / 3], if a % 3 == 0 { 2 } else { 3 }, a % 3 != 0),
+        None => (false, (i % 4) as u8 + 1, TECH_BRANCHES[i / 4], [1, 1, 2, 3][i % 4], i % 4 != 0),
+    }
+}
 
 /// Fake fleet bookkeeping: `tokens` (whole tokens) merge into one fleet named `name`;
 /// `leavers` (member ids) come out of their fleets, as a new fleet if `name` is set.
@@ -1102,8 +1134,12 @@ fn demo_split(f: &Ship) -> Vec<Ship> {
 }
 
 fn demo_tech_cost(i: usize) -> Cost {
-    let k = (i % 4) as f64 + 1.0;
-    Cost { matter: 150.0 * k, energy: 200.0 * k, seconds: [2.0, 4.0, 8.0, 12.0][i % 4] * 3600.0 }
+    let (adv, tier, ..) = demo_tech_meta(i);
+    let k = tier as f64;
+    if adv {
+        return Cost { matter: 300.0 + 300.0 * k, energy: 400.0 + 400.0 * k, seconds: [10.0, 16.0, 24.0][tier as usize - 1] * 3600.0 };
+    }
+    Cost { matter: 150.0 * k, energy: 200.0 * k, seconds: [2.0, 4.0, 8.0, 12.0][tier as usize - 1] * 3600.0 }
 }
 
 const DEMO_STATIONS: [(&str, &str); 6] = [

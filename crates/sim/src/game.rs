@@ -615,8 +615,8 @@ pub fn de_time<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> 
 const NEVER: f64 = 1e300;
 /// Power a parked construction ship or scout adds in orbit (Jonas: they can claim bodies).
 pub const CONSTRUCTOR_POWER: f64 = 1.0;
-/// Current rules revision for new matches. 1: matter yield by body kind and planet size.
-pub const RULES: u32 = 1;
+/// Current rules revision for new matches. 1: matter yield by body kind and planet size. 2: advanced tech tier.
+pub const RULES: u32 = 2;
 const FACTIONS: [&str; 4] = ["vanguard", "hive", "prism", "junker"];
 
 impl Game {

@@ -2,6 +2,10 @@
 //! (factions are only aesthetic). A tech is researched at an owned body with a Research lab;
 //! each lab body runs one project at a time, separately from its ship/upgrade queue.
 //! The whole tree is ~130 lab-hours, so one lab finishes it in about a week.
+//!
+//! Advanced tier (rules >= 2, Jonas 2026-10-27): 5 more branches × 3 tiers that open once
+//! `ADVANCED_UNLOCK` base techs are done. They unlock new mechanics (cloaks, ordnance, gates...)
+//! rather than plain multipliers, and cost about 250 lab-hours, so few players finish it.
 use crate::game::{Game, PlayerId, Upgrade};
 use crate::system::BodyId;
 use serde::{Deserialize, Serialize};
@@ -33,7 +37,33 @@ pub enum Tech {
     ScanningStations,
     SignatureDamping,
     DeepSpaceArray,
+    // ---- advanced tier (rules >= 2); appended so old saves still parse
+    // transit
+    LaserLaunch,
+    AntimatterCatalysis,
+    Stargates,
+    // strike
+    Torpedoes,
+    MassDrivers,
+    FusionWarheads,
+    // bastion
+    Minefields,
+    InterdictionGrid,
+    PhasedLasers,
+    // shadow
+    DecoyDrones,
+    HeatSinkCloaks,
+    ThermalBaffles,
+    // sight
+    GravimetricArray,
+    LidarSweep,
+    DeepFieldInterferometry,
 }
+
+/// Base techs a player needs before the advanced tier opens.
+pub const ADVANCED_UNLOCK: usize = 15;
+/// First rules revision with the advanced tier.
+pub const ADVANCED_RULES: u32 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Branch {
@@ -42,10 +72,18 @@ pub enum Branch {
     Industry,
     Defense,
     Scanning,
+    // advanced tier
+    Transit,
+    Strike,
+    Bastion,
+    Shadow,
+    Sight,
 }
 
 impl Branch {
+    /// The base tree's branches.
     pub const ALL: [Branch; 5] = [Branch::Weapons, Branch::Engines, Branch::Industry, Branch::Defense, Branch::Scanning];
+    pub const ADVANCED: [Branch; 5] = [Branch::Transit, Branch::Strike, Branch::Bastion, Branch::Shadow, Branch::Sight];
     pub fn label(self) -> &'static str {
         match self {
             Branch::Weapons => "Weapons",
@@ -53,6 +91,11 @@ impl Branch {
             Branch::Industry => "Industry",
             Branch::Defense => "Defense",
             Branch::Scanning => "Scanning",
+            Branch::Transit => "Transit",
+            Branch::Strike => "Strike",
+            Branch::Bastion => "Bastion",
+            Branch::Shadow => "Shadow",
+            Branch::Sight => "Sight",
         }
     }
 }
@@ -86,6 +129,14 @@ pub struct Mods {
     pub sensor: f64,
     /// own ships' signature (lower = harder to see)
     pub signature: f64,
+    /// torpedo / mass-driver slug damage
+    pub ordnance_dmg: f64,
+    /// how long a heat-sink cloak lasts
+    pub cloak_time: f64,
+    /// signature while venting a heat sink
+    pub vent_sig: f64,
+    /// passive sensors tell decoys from ships
+    pub see_decoys: bool,
 }
 
 impl Default for Mods {
@@ -105,6 +156,10 @@ impl Default for Mods {
             def_attack: 1.0,
             sensor: 1.0,
             signature: 1.0,
+            ordnance_dmg: 1.0,
+            cloak_time: 1.0,
+            vent_sig: 1.0,
+            see_decoys: false,
         }
     }
 }
@@ -133,32 +188,81 @@ impl Tech {
         Tech::DeepSpaceArray,
     ];
 
+    /// The advanced tier, branch-major (see `Branch::ADVANCED`).
+    pub const ADVANCED: [Tech; 15] = [
+        Tech::LaserLaunch,
+        Tech::AntimatterCatalysis,
+        Tech::Stargates,
+        Tech::Torpedoes,
+        Tech::MassDrivers,
+        Tech::FusionWarheads,
+        Tech::Minefields,
+        Tech::InterdictionGrid,
+        Tech::PhasedLasers,
+        Tech::DecoyDrones,
+        Tech::HeatSinkCloaks,
+        Tech::ThermalBaffles,
+        Tech::GravimetricArray,
+        Tech::LidarSweep,
+        Tech::DeepFieldInterferometry,
+    ];
+
+    /// Base tree, then the advanced tier.
+    pub fn every() -> impl Iterator<Item = Tech> {
+        Tech::ALL.into_iter().chain(Tech::ADVANCED)
+    }
+
+    /// 0..20 base, 20..35 advanced (declaration order = `every()` order, checked in tests).
     pub fn index(self) -> usize {
-        Tech::ALL.iter().position(|&t| t == self).unwrap()
+        self as usize
+    }
+    pub fn advanced(self) -> bool {
+        self.index() >= Tech::ALL.len()
+    }
+    /// Index within the advanced tier.
+    fn adv_index(self) -> Option<usize> {
+        self.index().checked_sub(Tech::ALL.len())
     }
     pub fn branch(self) -> Branch {
-        Branch::ALL[self.index() / 4]
+        match self.adv_index() {
+            Some(i) => Branch::ADVANCED[i / 3],
+            None => Branch::ALL[self.index() / 4],
+        }
     }
-    /// 1..=4 within the branch.
+    /// 1..=4 within a base branch, 1..=3 within an advanced one.
     pub fn tier(self) -> u8 {
-        (self.index() % 4) as u8 + 1
+        match self.adv_index() {
+            Some(i) => (i % 3) as u8 + 1,
+            None => (self.index() % 4) as u8 + 1,
+        }
     }
     /// The tech before this one in its branch.
     pub fn prereq(self) -> Option<Tech> {
-        let i = self.index();
-        (!i.is_multiple_of(4)).then(|| Tech::ALL[i - 1])
+        match self.adv_index() {
+            Some(i) => (!i.is_multiple_of(3)).then(|| Tech::ADVANCED[i - 1]),
+            None => {
+                let i = self.index();
+                (!i.is_multiple_of(4)).then(|| Tech::ALL[i - 1])
+            }
+        }
     }
     /// Research lab level a body needs to research this.
     pub fn min_lab(self) -> u8 {
-        match self.tier() {
-            1 | 2 => 1,
-            3 => 2,
+        match (self.advanced(), self.tier()) {
+            (true, 1) => 2,
+            (true, _) => 3,
+            (false, 1 | 2) => 1,
+            (false, 3) => 2,
             _ => 3,
         }
     }
     /// (matter, energy, seconds at a level-1 lab).
     pub fn cost(self) -> (f64, f64, f64) {
         let k = self.tier() as f64;
+        if self.advanced() {
+            let hours = [10.0, 16.0, 24.0][self.tier() as usize - 1];
+            return (300.0 + 300.0 * k, 400.0 + 400.0 * k, hours * 3600.0);
+        }
         let hours = [2.0, 4.0, 8.0, 12.0][self.tier() as usize - 1];
         (150.0 * k, 200.0 * k, hours * 3600.0)
     }
@@ -184,6 +288,21 @@ impl Tech {
             Tech::ScanningStations => "Scanning stations",
             Tech::SignatureDamping => "Signature damping",
             Tech::DeepSpaceArray => "Deep-space array",
+            Tech::LaserLaunch => "Laser launch array",
+            Tech::AntimatterCatalysis => "Antimatter catalysis",
+            Tech::Stargates => "Stargates",
+            Tech::Torpedoes => "Hunter-killer torpedoes",
+            Tech::MassDrivers => "Mass drivers",
+            Tech::FusionWarheads => "Fusion warheads",
+            Tech::Minefields => "Orbital minefields",
+            Tech::InterdictionGrid => "Interdiction grid",
+            Tech::PhasedLasers => "Phased laser battery",
+            Tech::DecoyDrones => "Decoy drones",
+            Tech::HeatSinkCloaks => "Heat-sink cloaking",
+            Tech::ThermalBaffles => "Thermal baffles",
+            Tech::GravimetricArray => "Gravimetric array",
+            Tech::LidarSweep => "Lidar sweep",
+            Tech::DeepFieldInterferometry => "Deep-field interferometry",
         }
     }
     pub fn describe(self) -> &'static str {
@@ -208,6 +327,21 @@ impl Tech {
             Tech::ScanningStations => "Unlocks scanning stations and sensor relays.",
             Tech::SignatureDamping => "Your ships are 30% harder to see.",
             Tech::DeepSpaceArray => "Sensor range +40% more.",
+            Tech::LaserLaunch => "Station that beams departing ships: the first 3 km/s of a departure burn costs no fuel.",
+            Tech::AntimatterCatalysis => "Engine exhaust velocity +50%.",
+            Tech::Stargates => "Paired gate stations: ships parked at one gate jump to the other in 10 minutes.",
+            Tech::Torpedoes => "Uncrewed torpedoes that chase one enemy ship across the system and detonate.",
+            Tech::MassDrivers => "Station that fires guided slugs on transfer orbits at another body's orbit.",
+            Tech::FusionWarheads => "Torpedo and slug damage +60%; slugs also hit stations.",
+            Tech::Minefields => "Constructors seed mines that hit enemy ships capturing into that orbit.",
+            Tech::InterdictionGrid => "Station that shoots down incoming torpedoes and slugs and fragments asteroids.",
+            Tech::PhasedLasers => "Planet-based laser battery that hits ships out to 250,000 km.",
+            Tech::DecoyDrones => "Cheap drones that look like a warship to enemy sensors.",
+            Tech::HeatSinkCloaks => "Ships can go dark for 12 h by storing their heat, then must vent.",
+            Tech::ThermalBaffles => "Cloaks last twice as long; venting is half as bright.",
+            Tech::GravimetricArray => "Station that detects ships by mass, cloaked or not.",
+            Tech::LidarSweep => "Scanning stations can ping: everything in 3× range shows for 1 h, the pinger too.",
+            Tech::DeepFieldInterferometry => "Sensor range +50%, and passive sensors see through decoys.",
         }
     }
     fn apply(self, m: &mut Mods) {
@@ -232,7 +366,31 @@ impl Tech {
             Tech::BetterOptics => m.sensor *= 1.3,
             Tech::SignatureDamping => m.signature *= 0.7,
             Tech::DeepSpaceArray => m.sensor *= 1.4,
-            Tech::AsteroidDrives | Tech::DefensePlatforms | Tech::ScanningStations => {}
+            Tech::AntimatterCatalysis => m.ve *= 1.5,
+            Tech::FusionWarheads => m.ordnance_dmg *= 1.6,
+            Tech::ThermalBaffles => {
+                m.cloak_time *= 2.0;
+                m.vent_sig *= 0.5;
+            }
+            Tech::DeepFieldInterferometry => {
+                m.sensor *= 1.5;
+                m.see_decoys = true;
+            }
+            // unlocks: the systems that use them check `has_tech`
+            Tech::AsteroidDrives
+            | Tech::DefensePlatforms
+            | Tech::ScanningStations
+            | Tech::LaserLaunch
+            | Tech::Stargates
+            | Tech::Torpedoes
+            | Tech::MassDrivers
+            | Tech::Minefields
+            | Tech::InterdictionGrid
+            | Tech::PhasedLasers
+            | Tech::DecoyDrones
+            | Tech::HeatSinkCloaks
+            | Tech::GravimetricArray
+            | Tech::LidarSweep => {}
         }
     }
 }
@@ -266,6 +424,15 @@ impl Game {
         }
         if pl.research.iter().any(|r| r.tech == tech) {
             return Some("already being researched".into());
+        }
+        if tech.advanced() {
+            if self.rules < ADVANCED_RULES {
+                return Some("not in this war (started before the advanced tier)".into());
+            }
+            let base = pl.techs.iter().filter(|t| !t.advanced()).count();
+            if base < ADVANCED_UNLOCK {
+                return Some(format!("needs {ADVANCED_UNLOCK} base techs ({base} so far)"));
+            }
         }
         if let Some(pre) = tech.prereq() {
             if !pl.techs.contains(&pre) {
@@ -406,6 +573,50 @@ pub(crate) mod tests {
         g.advance_to(3.0 * 3600.0);
         assert!(!g.has_tech(0, Tech::BetterOptics));
         assert!(g.players[0].research.is_empty());
+    }
+
+    #[test]
+    fn advanced_tier_opens_after_enough_base_research() {
+        let mut g = game();
+        let home = g.players[0].home.unwrap();
+        g.bodies[home.0 as usize].levels[Upgrade::Research.index()] = 3;
+        let r = |g: &mut Game, t| g.apply(0, Command::Research { body: home, tech: t });
+        g.players[0].techs = Tech::ALL[..ADVANCED_UNLOCK - 1].to_vec();
+        assert!(r(&mut g, Tech::Torpedoes).unwrap_err().contains("base techs"));
+        g.players[0].techs = Tech::ALL[..ADVANCED_UNLOCK].to_vec();
+        assert!(r(&mut g, Tech::MassDrivers).unwrap_err().contains("Hunter-killer"));
+        r(&mut g, Tech::Torpedoes).unwrap();
+        // a war started before the tier never gets it
+        g.rules = 1;
+        assert!(g.research_blocker(0, home, Tech::DecoyDrones).unwrap().contains("not in this war"));
+        // stat techs feed Mods
+        g.players[0].techs = vec![Tech::AntimatterCatalysis, Tech::ThermalBaffles, Tech::DeepFieldInterferometry];
+        let m = g.mods(0);
+        assert!((m.ve - 1.5).abs() < 1e-9 && (m.cloak_time - 2.0).abs() < 1e-9 && m.see_decoys);
+    }
+
+    #[test]
+    fn advanced_tree_shape() {
+        assert_eq!(Tech::every().count(), 35);
+        assert!(Tech::every().enumerate().all(|(i, t)| t.index() == i));
+        for b in Branch::ADVANCED {
+            let techs: Vec<Tech> = Tech::ADVANCED.iter().copied().filter(|t| t.branch() == b).collect();
+            assert_eq!(techs.len(), 3, "{b:?}");
+            assert_eq!(techs[0].prereq(), None);
+            assert_eq!(techs.iter().map(|t| t.tier()).collect::<Vec<_>>(), [1, 2, 3]);
+            for w in techs.windows(2) {
+                assert_eq!(w[1].prereq(), Some(w[0]));
+            }
+            assert!(techs.iter().all(|t| t.advanced() && t.min_lab() >= 2));
+        }
+        // too much for one lab to finish in a war: you pick
+        let hours: f64 = Tech::ADVANCED.iter().map(|t| t.cost().2 / 3600.0).sum();
+        assert!((200.0..=300.0).contains(&hours), "{hours}");
+        // every advanced tech parses back from its serde name (the client sends Debug names)
+        for t in Tech::every() {
+            let json = serde_json::to_string(&t).unwrap();
+            assert_eq!(serde_json::from_str::<Tech>(&json).unwrap(), t);
+        }
     }
 
     #[test]

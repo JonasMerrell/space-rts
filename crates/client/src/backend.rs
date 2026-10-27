@@ -801,7 +801,7 @@ fn upgrade_by_name(name: &str) -> Option<g::Upgrade> {
 }
 
 fn tech_by_name(name: &str) -> Option<Tech> {
-    Tech::ALL.into_iter().find(|t| format!("{t:?}") == name)
+    Tech::every().find(|t| format!("{t:?}") == name)
 }
 
 fn station_by_name(name: &str) -> Option<StationKind> {
@@ -1632,9 +1632,10 @@ impl Backend for ClientBackend {
                 m::LabInfo { body: i as u32, name: g.system.body(b).name.clone(), level: g.bodies[i].level(g::Upgrade::Research), busy }
             })
             .collect();
-        let techs = Tech::ALL
-            .iter()
-            .map(|&t| {
+        // the advanced tier only exists in wars created with it
+        let techs = Tech::every()
+            .filter(|t| !t.advanced() || g.rules >= sim::tech::ADVANCED_RULES)
+            .map(|t| {
                 let state = if p.techs.contains(&t) {
                     m::TechState::Done
                 } else if let Some(r) = p.research.iter().find(|r| r.tech == t) {
@@ -1665,11 +1666,13 @@ impl Backend for ClientBackend {
                     desc: t.describe().to_string(),
                     cost: m::Cost { matter, energy, seconds },
                     min_lab: t.min_lab(),
+                    advanced: t.advanced(),
                     state,
                 }
             })
             .collect();
         debug_assert!(Branch::ALL.iter().zip(m::TECH_BRANCHES).all(|(b, n)| b.label() == n));
+        debug_assert!(Branch::ADVANCED.iter().zip(m::ADV_BRANCHES).all(|(b, n)| b.label() == n));
         Some(m::ResearchView { techs, labs })
     }
 

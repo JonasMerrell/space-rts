@@ -43,13 +43,18 @@ fn branch_icon(branch: &str) -> &'static str {
         "Engines" => "fuel",
         "Industry" => "extraction",
         "Defense" => "shield",
+        "Transit" => "maneuver_node",
+        "Strike" => "target",
+        "Bastion" => "station_defense",
+        "Shadow" => "eye_off",
+        "Sight" => "eye",
         _ => "telescope",
     }
 }
 
 // ---------------------------------------------------------------- research
 
-/// Full-height research overlay: lab status, branch tabs, the four tiers of the branch.
+/// Full-height research overlay: lab status, base/advanced switch, branch tabs, the tiers of the branch.
 pub fn research_screen(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView) {
     let w = screen_width();
     let rw = (w - 2.0 * margin()).min(760.0 * s());
@@ -94,22 +99,46 @@ pub fn research_screen(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, vi
         y += 36.0 * s();
     }
 
-    // Branch tabs with progress.
+    // Base tree / advanced tier switch (wars with the advanced tier only).
+    let has_adv = rv.techs.iter().any(|t| t.advanced);
+    let adv = has_adv && g.research_branch >= TECH_BRANCHES.len();
     y += 4.0 * s();
+    if has_adv {
+        let cw = (r.w - 2.0 * pad - 8.0 * s()) / 2.0;
+        let adv_done = rv.techs.iter().filter(|t| t.advanced && t.state == TechState::Done).count();
+        let adv_n = rv.techs.iter().filter(|t| t.advanced).count();
+        let base_done = done - adv_done;
+        let base_n = rv.techs.len() - adv_n;
+        // all of the tier is locked behind the same "needs N base techs" until it opens
+        let adv_locked = rv.techs.iter().filter(|t| t.advanced && t.tier == 1).all(|t| matches!(&t.state, TechState::Locked(w) if w.contains("base techs")));
+        let adv_label = if adv_locked { "ADVANCED · LOCKED".to_string() } else { format!("ADVANCED · {adv_done}/{adv_n}") };
+        for (k, label) in [format!("BASE TREE · {base_done}/{base_n}"), adv_label].iter().enumerate() {
+            let cr = Rect::new(r.x + pad + k as f32 * (cw + 8.0 * s()), y, cw, 30.0 * s());
+            let on = (k == 1) == adv;
+            if widgets::chip(inp, cr, label, on, ACCENT) && !on {
+                g.research_branch = if k == 1 { TECH_BRANCHES.len() } else { 0 };
+                art::sfx("menu_tab");
+            }
+        }
+        y += 38.0 * s();
+    }
+
+    // Branch tabs with progress.
+    let (branches, tiers, off) = if adv { (&ADV_BRANCHES, 3, TECH_BRANCHES.len()) } else { (&TECH_BRANCHES, 4, 0) };
     let gap = 6.0 * s();
     let tw = (r.w - 2.0 * pad - 4.0 * gap) / 5.0;
-    for (i, b) in TECH_BRANCHES.iter().enumerate() {
+    for (i, b) in branches.iter().enumerate() {
         let tr = Rect::new(r.x + pad + i as f32 * (tw + gap), y, tw, 54.0 * s());
-        let on = g.research_branch == i;
+        let on = g.research_branch == i + off;
         inp.block(tr);
         cel::round_rect(tr, 8.0 * s(), if on { alpha(ACCENT, 0.18) } else { Color::new(1.0, 1.0, 1.0, 0.04) });
         cel::round_rect_lines(tr, 8.0 * s(), (1.2 * s()).max(1.0), if on { ACCENT } else { BORDER });
         icon(branch_icon(b), vec2(tr.center().x, tr.y + 17.0 * s()), 22.0 * s(), if on { WHITE } else { Color::new(1.0, 1.0, 1.0, 0.7) });
         let n = rv.techs.iter().filter(|t| t.branch == *b && t.state == TechState::Done).count();
         let busy = rv.techs.iter().any(|t| t.branch == *b && matches!(t.state, TechState::Running { .. }));
-        // four pips = tiers researched
-        for k in 0..4 {
-            let pc = vec2(tr.center().x + (k as f32 - 1.5) * 9.0 * s(), tr.y + 38.0 * s());
+        // one pip per tier researched
+        for k in 0..tiers {
+            let pc = vec2(tr.center().x + (k as f32 - (tiers as f32 - 1.0) / 2.0) * 9.0 * s(), tr.y + 38.0 * s());
             let col = if k < n {
                 ACCENT
             } else if busy && k == n {
@@ -123,15 +152,15 @@ pub fn research_screen(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, vi
         if inp.tapped(tr) {
             inp.consume_tap();
             if !on {
-                g.research_branch = i;
+                g.research_branch = i + off;
                 art::sfx("menu_tab");
             }
         }
     }
     y += 54.0 * s() + 24.0 * s();
 
-    // The four tiers of the branch, top to bottom, joined by a spine.
-    let branch = TECH_BRANCHES[g.research_branch.min(4)];
+    // The tiers of the branch, top to bottom, joined by a spine.
+    let branch = branches[(g.research_branch - off).min(4)];
     let techs: Vec<&TechInfo> = rv.techs.iter().filter(|t| t.branch == branch).collect();
     let bottom = r.y + r.h - pad;
     let n = techs.len().max(1) as f32;
