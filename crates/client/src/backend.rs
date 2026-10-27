@@ -1381,6 +1381,18 @@ impl Backend for ClientBackend {
         }
     }
 
+    fn dark_until(&self, ship: ShipId, t: f64) -> Option<f64> {
+        let g = self.game.as_ref()?;
+        // a fleet is dark while all of its ships are
+        let ids = real_ships(g, &[ship]);
+        let mut until = f64::INFINITY;
+        for id in &ids {
+            let c = g.ship(*id)?.cloak.filter(|c| c.dark(t))?;
+            until = until.min(c.dark_until);
+        }
+        (!ids.is_empty()).then_some(until)
+    }
+
     fn ship_pos(&self, id: ShipId, t: f64) -> Option<[f64; 2]> {
         let g = self.game.as_ref()?;
         let id = lead(g, id).0;

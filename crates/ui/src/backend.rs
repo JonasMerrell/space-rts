@@ -220,6 +220,10 @@ pub trait Backend {
     fn forecast_until(&self) -> f64 {
         f64::INFINITY
     }
+    /// Our own ship (or fleet token) is cloaked ("dark") at `t`: until when. Drawn faded on the map.
+    fn dark_until(&self, _ship: ShipId, _t: f64) -> Option<f64> {
+        None
+    }
     /// Server address shown on the login screen.
     fn default_server(&self) -> String {
         String::new()

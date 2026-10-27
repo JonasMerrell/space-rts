@@ -118,6 +118,7 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                     });
                 }
                 "rock" => g.selected = Some(Focus::Body(9)),
+                "dark" => g.selected = Some(Focus::Body(2)),
                 "results" => {
                     be.results = Some(GameResults { winner: Some(1), scores: vec![(1, 7), (3, 5), (2, 3), (4, 1)], ended_at: v.now });
                 }

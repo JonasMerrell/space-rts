@@ -315,9 +315,17 @@ pub fn draw_ships(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64, selec
             text("?", p.x + size, p.y - size, 13.0, Color::new(1.0, 1.0, 1.0, a + 0.2), FontKind::Title, Align::Center);
             continue;
         }
+        // our own cloaked ("dark") ships: faded, with a dashed ring, so you can see what's hidden
+        let dark = sh.owner == view.me && be.dark_until(sh.id, t).is_some();
+        if dark {
+            let ring: Vec<Vec2> = (0..=28).map(|i| p + Vec2::from_angle(i as f32 / 28.0 * std::f32::consts::TAU + time * 0.4) * (size + 6.0 * s())).collect();
+            cel::dashed_path(&ring, 1.5 * s(), 4.0 * s(), Color::new(0.75, 0.85, 1.0, 0.7));
+        }
         if let Some(t) = art::ship_tex(sh.class, skin, player.map(|p| p.color)) {
             let px = size * 2.8;
-            art::draw_centered(&t, p, vec2(px, px), dir.y.atan2(dir.x), WHITE);
+            art::draw_centered(&t, p, vec2(px, px), dir.y.atan2(dir.x), if dark { Color::new(1.0, 1.0, 1.0, 0.38) } else { WHITE });
+        } else if dark {
+            cel::ship(p, dir, size, Color::new(1.0, 1.0, 1.0, 0.38));
         } else {
             let fill = if sh.owner == view.me { PAPER } else { l };
             cel::ship(p, dir, size, fill);

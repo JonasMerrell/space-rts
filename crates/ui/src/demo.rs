@@ -988,6 +988,11 @@ impl Backend for DemoBackend {
         crate::ImpactPoll::Done(res)
     }
 
+    fn dark_until(&self, ship: ShipId, t: f64) -> Option<f64> {
+        // scene `status`/`map`: Lucky Star is running dark
+        (ship == 2 && std::env::var("UI_SCENE").is_ok_and(|s| s == "dark")).then_some(t + 3600.0)
+    }
+
     fn orbit_status(&self, body: BodyId) -> Option<String> {
         match body {
             1 => Some("Standoff: no armed ships here, so nobody can shoot or take it".into()),
