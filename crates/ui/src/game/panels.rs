@@ -1457,20 +1457,49 @@ pub fn chat(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
     }
     let field_h = 50.0 * s();
     let inner = Rect::new(r.x + 12.0 * s(), r.y + 44.0 * s(), r.w - 24.0 * s(), r.h - 56.0 * s() - field_h - 12.0 * s());
-    // Lay out bubbles bottom-up.
-    let mut y = inner.y + inner.h;
+    // Bubbles laid out bottom-up from the newest; the list scrolls (drag / wheel) and is clipped to
+    // the panel, so long conversations never push past the input row.
     let maxw = inner.w * 0.78;
-    for m in view.chat.iter().rev() {
-        let mine = m.from == view.me;
-        let p = view.player(m.from);
-        let lines = wrap(&m.text, FontKind::Body, 16.0, maxw - 24.0 * s());
-        let lw = lines.iter().map(|l| measure(l, FontKind::Body, 16.0).x).fold(0.0, f32::max);
-        let bw = (lw + 24.0 * s()).max(90.0 * s());
-        let bh = lines.len() as f32 * 20.0 * s() + 34.0 * s();
+    let laid: Vec<(Vec<String>, f32, f32)> = view
+        .chat
+        .iter()
+        .map(|m| {
+            let lines = wrap(&m.text, FontKind::Body, 16.0, maxw - 24.0 * s());
+            let lw = lines.iter().map(|l| measure(l, FontKind::Body, 16.0).x).fold(0.0, f32::max);
+            let bh = lines.len() as f32 * 20.0 * s() + 34.0 * s();
+            (lines, (lw + 24.0 * s()).max(90.0 * s()), bh)
+        })
+        .collect();
+    let content_h: f32 = laid.iter().map(|l| l.2 + 12.0 * s()).sum::<f32>() + 8.0 * s();
+    let max_scroll = (content_h - inner.h).max(0.0);
+    if let (Some(d), Some(p)) = (inp.drag, inp.drag_pos) {
+        if inner.contains(p) {
+            g.chat_scroll += d.y;
+        }
+    }
+    if let (Some((_, k)), Some(p)) = (inp.zoom, inp.hover) {
+        if inner.contains(p) {
+            g.chat_scroll += k.ln() / 1.15f32.ln() * 60.0 * s();
+        }
+    }
+    // a new message while reading old ones keeps the view where it was
+    if view.chat.len() > g.chat_seen && g.chat_scroll > 0.0 {
+        g.chat_scroll += laid[g.chat_seen.min(laid.len())..].iter().map(|l| l.2 + 12.0 * s()).sum::<f32>();
+    }
+    g.chat_scroll = g.chat_scroll.clamp(0.0, max_scroll);
+    cel::clip(Some(inner));
+    let mut y = inner.y + inner.h + g.chat_scroll;
+    for (m, (lines, bw, bh)) in view.chat.iter().zip(laid.iter()).rev() {
+        let (bw, bh) = (*bw, *bh);
         y -= bh + 12.0 * s();
-        if y < inner.y {
+        if y > inner.y + inner.h {
+            continue;
+        }
+        if y + bh < inner.y {
             break;
         }
+        let mine = m.from == view.me;
+        let p = view.player(m.from);
         let x = if mine { inner.x + inner.w - bw - 6.0 * s() } else { inner.x + 6.0 * s() };
         let br = Rect::new(x, y, bw, bh);
         let tail = if mine { vec2(br.x + br.w + 8.0 * s(), br.y + br.h + 8.0 * s()) } else { vec2(br.x - 8.0 * s(), br.y + br.h + 8.0 * s()) };
@@ -1482,10 +1511,19 @@ pub fn chat(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
             text(line, br.x + 12.0 * s(), br.y + 34.0 * s() + i as f32 * 20.0 * s(), 16.0, INK, FontKind::Body, Align::Left);
         }
     }
+    cel::clip(None);
+    if g.chat_scroll > 1.0 {
+        // scrolled up: a pill to jump back to the newest
+        let pr = Rect::new(inner.center().x - 60.0 * s(), inner.y + inner.h - 34.0 * s(), 120.0 * s(), 28.0 * s());
+        if widgets::button(inp, pr, "NEWEST", Style::Secondary) {
+            g.chat_scroll = 0.0;
+        }
+    }
     let fr = Rect::new(r.x + 12.0 * s(), r.y + r.h - field_h - 12.0 * s(), r.w - 120.0 * s(), field_h);
     let mut send = widgets::text_field(inp, fr, &mut g.chat_field, "say something...");
     send |= widgets::button(inp, Rect::new(fr.x + fr.w + 12.0 * s(), fr.y, r.w - fr.w - 36.0 * s(), field_h), "SEND", Style::Primary);
     if send && !g.chat_field.text.trim().is_empty() {
+        g.chat_scroll = 0.0;
         let msg = std::mem::take(&mut g.chat_field.text);
         g.emit(UiAction::Chat(msg.trim().to_string()));
     }

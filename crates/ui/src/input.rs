@@ -21,6 +21,12 @@ pub struct Input {
     owned_by_ui: bool,
     blockers: Vec<Rect>,
     prev_blockers: Vec<Rect>,
+    /// Stacking: every `block`/`field` call opens a new layer (z counts up in draw order, so later =
+    /// on top). A tap/hold/hover only counts for a widget if nothing drawn above it last frame
+    /// covers the point — overlapping menus no longer both react.
+    z: u32,
+    layers: Vec<(u32, Rect)>,
+    prev_layers: Vec<(u32, Rect)>,
     /// Text fields drawn this/last frame, and which one has the keyboard (only ever one).
     fields: Vec<(u32, Rect)>,
     prev_fields: Vec<(u32, Rect)>,
@@ -71,6 +77,8 @@ impl Input {
 
     pub fn begin_frame(&mut self) {
         self.prev_blockers = std::mem::take(&mut self.blockers);
+        self.prev_layers = std::mem::take(&mut self.layers);
+        self.z = 0;
         self.prev_fields = std::mem::take(&mut self.fields);
         self.prev_pointers = std::mem::take(&mut self.pointers);
         self.tap = None;
@@ -190,7 +198,12 @@ impl Input {
 
         // Focus follows taps: a tap on a field focuses it (and only it), anywhere else unfocuses.
         if let Some(p) = self.tap {
-            let hit = self.prev_fields.iter().find(|(_, r)| r.contains(p)).map(|(id, _)| *id);
+            // a field under a panel drawn on top of it doesn't take the tap
+            let covered = |r: &Rect| {
+                let fz = self.prev_layers.iter().find(|(_, lr)| lr == r).map(|l| l.0).unwrap_or(0);
+                self.prev_layers.iter().any(|(lz, lr)| *lz > fz && lr.contains(p))
+            };
+            let hit = self.prev_fields.iter().find(|(_, r)| r.contains(p) && !covered(r)).map(|(id, _)| *id);
             if hit != self.focused_field {
                 macroquad::miniquad::window::show_keyboard(hit.is_some());
             }
@@ -335,12 +348,19 @@ impl Input {
     /// Register a text field for focus handling (call every frame it's drawn).
     pub fn field(&mut self, id: u32, r: Rect) {
         self.fields.push((id, r));
-        self.blockers.push(r);
+        self.block(r);
     }
 
     /// Declare an on-screen widget rect; gestures starting there next frame belong to the UI.
     pub fn block(&mut self, r: Rect) {
         self.blockers.push(r);
+        self.z += 1;
+        self.layers.push((self.z, r));
+    }
+
+    /// Something drawn later (above the current layer) covered `p` last frame.
+    pub fn occluded(&self, p: Vec2) -> bool {
+        self.prev_layers.iter().any(|(lz, r)| *lz > self.z && r.contains(p))
     }
 
     fn blocked(&self, p: Vec2) -> bool {
@@ -354,7 +374,7 @@ impl Input {
 
     /// A tap landed in `r`.
     pub fn tapped(&self, r: Rect) -> bool {
-        self.tap.is_some_and(|p| r.contains(p))
+        self.tap.is_some_and(|p| r.contains(p) && !self.occluded(p))
     }
 
     /// The finger is currently down inside `r` (for pressed-button visuals).
@@ -365,11 +385,11 @@ impl Input {
 
     /// Mouse is over `r` and no button is held (hover highlight).
     pub fn hovering(&self, r: Rect) -> bool {
-        self.held.is_none() && self.hover.is_some_and(|p| r.contains(p))
+        self.held.is_none() && self.hover.is_some_and(|p| r.contains(p) && !self.occluded(p))
     }
 
     pub fn holding(&self, r: Rect) -> bool {
-        self.held.is_some_and(|p| r.contains(p))
+        self.held.is_some_and(|p| r.contains(p) && !self.occluded(p))
     }
 
     /// Eat the tap so nothing else reacts to it.

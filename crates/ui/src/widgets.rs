@@ -116,7 +116,7 @@ pub fn text_field(inp: &mut Input, r: Rect, f: &mut TextField, placeholder: &str
         f.id = next_field_id();
     }
     inp.field(f.id, r);
-    if inp.tap.is_some_and(|p| r.contains(p)) {
+    if inp.tapped(r) {
         inp.consume_tap();
     }
     f.focused = inp.focused_field == Some(f.id);

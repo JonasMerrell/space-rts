@@ -190,6 +190,16 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                     g.mode = Mode::Nodes(NodeEdit { ship: 4, nodes, sel: 0, preview, dirty: false, drag: None });
                 }
                 "chat" => g.chat_open = true,
+                "chat_long" => {
+                    if let Some(v) = be.view.as_mut() {
+                        let now = v.now;
+                        for i in 0..18 {
+                            v.chat.push(ChatMsg { from: if i % 3 == 0 { v.me } else { 2 + (i % 2) as u32 }, t: now - (18 - i) as f64 * 600.0, text: format!("message {} — {}", i + 1, if i % 4 == 0 { "a longer one that wraps onto a second line so the bubbles have different heights" } else { "ok" }) });
+                        }
+                    }
+                    g.chat_open = true;
+                    g.chat_field.text = "sending this".into();
+                }
                 "toast" => {
                     g.push_notice(Notice { kind: NoticeKind::Battle, title: "BATTLE AT TETHYS!".into(), body: "Corsair pack engaged Red Fang".into(), focus: Some(Focus::Body(2)) });
                     g.push_notice(Notice { kind: NoticeKind::Good, title: "GAIA NOVA IS YOURS!".into(), body: "Most power in orbit".into(), focus: Some(Focus::Body(3)) });

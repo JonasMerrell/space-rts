@@ -86,6 +86,8 @@ pub struct GameScreen {
     pub node_outcome: Option<(ShipId, Vec<ManeuverNode>, NodeOutcome)>,
     /// Camera follows the selection; a manual pan turns it off, a new selection or RE-CENTRE turns it on.
     pub follow: bool,
+    /// Chat list scroll, px up from the newest message (0 = pinned to the newest).
+    pub chat_scroll: f32,
     /// Resource breakdown sheet (0 matter, 1 energy, 2 fuel) opened from the top bar.
     pub res_open: Option<usize>,
     /// In-game menu popover open.
@@ -137,6 +139,7 @@ impl GameScreen {
             menu_open: false,
             detail: None,
             res_open: None,
+            chat_scroll: 0.0,
             follow: true,
             node_outcome: None,
             research_open: false,
@@ -261,7 +264,10 @@ impl GameScreen {
             } else {
                 self.handle_back(inp);
                 panels::hud(self, inp, view);
-                panels::sheet(self, inp, be_ref, view);
+                // phone: the chat covers the sheet area, so don't run (or hit-test) what's under it
+                if !(self.chat_open && !wide()) {
+                    panels::sheet(self, inp, be_ref, view);
+                }
                 panels::scrubber(self, inp, be_ref, view);
                 if !self.chat_open {
                     panels::recenter_button(self, inp);
