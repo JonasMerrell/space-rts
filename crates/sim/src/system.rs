@@ -253,6 +253,13 @@ pub fn generate(seed: u64, size: SystemSize) -> System {
             cap = cap.min(0.45 * (ps[i + 1].a * (1.0 - ps[i + 1].e) - ps[i].a * (1.0 + ps[i].e)));
         }
         ps[i].soi = ps[i].soi.min(cap);
+        // a tightly packed planet must still leave room to park inside its SOI: shrink it (same density)
+        let k = if ps[i].giant { 3.0e4 } else { 1.6e5 };
+        while ps[i].soi < ps[i].radius * 1.6 * 1.6 && ps[i].radius > 300.0 {
+            ps[i].radius *= 0.9;
+            ps[i].mu = k * (ps[i].radius / 1000.0).powi(3);
+            ps[i].soi = (ps[i].a * (ps[i].mu / STAR_MU).powf(0.4)).min(cap);
+        }
     }
     for (i, p) in ps.iter().enumerate() {
         let (a_i, giant, radius, mu, soi) = (p.a, p.giant, p.radius, p.mu, p.soi);
