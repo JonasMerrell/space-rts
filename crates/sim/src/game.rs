@@ -590,6 +590,9 @@ pub enum Command {
     /// Meet enemy ship `target` at `arrive_t` (a course from `intercept::options`, re-planned from
     /// these numbers); `matched` = match its velocity there. Ships parked together or one fleet.
     Intercept { ships: Vec<ShipId>, target: ShipId, depart_t: f64, arrive_t: f64, matched: bool },
+    /// New course for ships already in flight (one fleet): burn at `depart_t` towards `to`,
+    /// re-planned from these numbers (`reroute::options`).
+    Reroute { ships: Vec<ShipId>, to: BodyId, depart_t: f64, aim_t: f64 },
 }
 
 pub const TICK: f64 = 60.0;
@@ -880,6 +883,8 @@ impl Game {
             Command::SetSpeed { speed } if !speed.is_finite() || *speed <= 0.0 => return Err("invalid speed".into()),
             Command::Extend { seconds } if !seconds.is_finite() => return Err("invalid duration".into()),
             Command::Intercept { depart_t, arrive_t, .. } if !depart_t.is_finite() || !arrive_t.is_finite() => return Err("invalid course".into()),
+            Command::Reroute { to, .. } if bad(to) => return Err("no such body".into()),
+            Command::Reroute { depart_t, aim_t, .. } if !depart_t.is_finite() || !aim_t.is_finite() => return Err("invalid course".into()),
             _ => {}
         }
         match cmd {
@@ -987,6 +992,7 @@ impl Game {
                 self.order_push(player, body, plan)
             }
             Command::TransferPlanned { ships, to, depart_t, hint } => self.transfer(player, &ships, to, Some(depart_t), Some(hint)),
+            Command::Reroute { ships, to, depart_t, aim_t } => self.reroute(player, &ships, crate::reroute::Hint { to, depart_t, aim_t }),
             Command::Intercept { ships, target, depart_t, arrive_t, matched } => {
                 self.order_intercept(player, &ships, crate::intercept::Hint { target, depart_t, arrive_t, matched })
             }
