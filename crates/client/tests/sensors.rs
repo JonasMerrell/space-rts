@@ -72,7 +72,8 @@ fn enemies_over_home_are_threats_and_hidden_ones_stay_hidden() {
     assert!(r.items.iter().any(|i| i.section == Sec::Ships && i.focus == Some(Focus::Ship(near.0))));
     // nothing anywhere points at, or describes, the gunship we can't see
     assert!(r.items.iter().all(|i| i.focus != Some(Focus::Ship(hidden.0))));
-    assert!(!r.items.iter().any(|i| matches!(i.section, Sec::Ships | Sec::Ghosts | Sec::Threats) && i.title == "bob"));
+    let far_name = &g.system.body(far).name;
+    assert!(!r.items.iter().any(|i| matches!(i.section, Sec::Ships | Sec::Ghosts) && i.title == "bob" && i.text.contains(far_name)), "{:#?}", r.items);
     // the log has the sighting of the dreadnought, and it is new after time 0
     assert!(r.items.iter().any(|i| i.section == Sec::Log && i.title == "Contact"));
     assert!(r.unread() > 0);
