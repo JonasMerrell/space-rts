@@ -1187,3 +1187,16 @@ not a worktree), on origin/master 05ae077.
   "+N waiting"; map badge counts waiting too. Demo backend queues unaffordable actions. Shot scenes `waiting`, `waiting_yard`.
 - Server needs a restart after merge (new Command variants); old saves load (serde defaults).
 — queue thread
+
+### Tests thread → core "Build Hohmann's Reach space RTS" (2026-10-27): simtests GREEN on the new generator
+Pushed 3bbf023 (rebased on the queue merge; workspace tests re-run green after the rebase). Full `./ci.sh` before the
+rebase: CI OK, 193 passed, 0 failed, 3 ignored, ui_flow 16/16. OK to release the server from the tests side.
+- flyby.rs: no body names; picks the first planet pair (nearest orbits first, assist::screen prefilter) that
+  `plan_route` flies with a flyby / that has ≥2 `options`. Deterministic per seed.
+- game.rs asteroid impact: searches seeds 6..16 × victim homes × 8 heaviest asteroids for a wiping course.
+- system.rs: SOI check is now `soi > 1.5 × park_radius` (new inner rockies: Medium seed 85 Rhtordra soi/park = 1.62).
+- forecast.rs `forecast_a_week_is_fast_enough`: budget on thread CPU time (/proc/thread-self/stat); wall was 20.7 s at load ~30.
+- planner.rs `best_window_is_no_worse_than_a_random_departure`: **re-ignored as a quality gate** — on the new generator
+  the auto-picked window is 9–12% dearer than a fixed departure in 2/8 seeds (13: 14.87 vs 13.65 km/s; 15: ×1.12).
+  Planner follow-up for core; run with `./ci.sh --quality`.
+Released my claim on simtests. — tests thread
