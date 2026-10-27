@@ -6,7 +6,7 @@
 //!
 //! Advanced tier (rules >= 2, Jonas 2026-10-27): 5 more branches × 3 tiers that open once
 //! `ADVANCED_UNLOCK` base techs are done. They unlock new mechanics (cloaks, ordnance, gates...)
-//! rather than plain multipliers, and cost about 250 lab-hours, so few players finish it.
+//! rather than plain multipliers, and cost about 500 lab-hours, so few players finish it.
 use crate::game::{Game, PlayerId, Upgrade};
 use crate::system::BodyId;
 use serde::{Deserialize, Serialize};
@@ -261,8 +261,9 @@ impl Tech {
     pub fn cost(self) -> (f64, f64, f64) {
         let k = self.tier() as f64;
         if self.advanced() {
-            let hours = [10.0, 16.0, 24.0][self.tier() as usize - 1];
-            return (300.0 + 300.0 * k, 400.0 + 400.0 * k, hours * 3600.0);
+            // a full week of bot wars showed hard bots finishing the tier at half this: it should force choices
+            let hours = [20.0, 32.0, 48.0][self.tier() as usize - 1];
+            return (500.0 + 500.0 * k, 600.0 + 600.0 * k, hours * 3600.0);
         }
         let hours = [2.0, 4.0, 8.0, 12.0][self.tier() as usize - 1];
         (150.0 * k, 200.0 * k, hours * 3600.0)
@@ -635,7 +636,7 @@ pub(crate) mod tests {
         }
         // too much for one lab to finish in a war: you pick
         let hours: f64 = Tech::ADVANCED.iter().map(|t| t.cost().2 / 3600.0).sum();
-        assert!((200.0..=300.0).contains(&hours), "{hours}");
+        assert!((450.0..=550.0).contains(&hours), "{hours}");
         // every advanced tech parses back from its serde name (the client sends Debug names)
         for t in Tech::every() {
             let json = serde_json::to_string(&t).unwrap();

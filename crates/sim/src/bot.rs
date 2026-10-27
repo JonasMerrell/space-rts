@@ -1,6 +1,6 @@
 //! Computer opponents. Deterministic (they run inside `Game::advance_to` on the server), so a
 //! replay of the same commands gives the same game.
-use crate::game::{Command, Game, PlayerId, ShipClass, ShipState, Upgrade, TICK};
+use crate::game::{Command, Game, JobKind, PlayerId, ShipClass, ShipState, Upgrade, TICK};
 use crate::system::{BodyId, BodyKind};
 use crate::station::StationKind;
 use crate::tech::{Branch, Tech};
@@ -58,15 +58,17 @@ fn think(g: &mut Game, me: PlayerId, d: Difficulty) {
     }
     // economy first: mining and power at home, then shipyards
     let home = g.players[me as usize].home.filter(|h| owned.contains(h)).unwrap_or(owned[0]);
+    // upgrades have their own lane next to the shipyard's: only wait for other upgrades
+    let upgrading = |g: &Game| g.bodies[home.0 as usize].queue.iter().any(|j| matches!(j.kind, JobKind::Upgrade(_)));
     for u in [Upgrade::Mining, Upgrade::Solar, Upgrade::Reactor, Upgrade::Refinery, Upgrade::Defense, Upgrade::Shipyard, Upgrade::Research] {
         let b = &g.bodies[home.0 as usize];
-        if b.queue.is_empty() && b.level(u) < 2 {
+        if !upgrading(g) && b.level(u) < 2 {
             let _ = g.apply(me, Command::Upgrade { body: home, upgrade: u });
             break;
         }
     }
     // hard bots push their lab to level 3 for the advanced tier
-    if d == Difficulty::Hard && g.bodies[home.0 as usize].queue.is_empty() && g.bodies[home.0 as usize].level(Upgrade::Research) < 3 {
+    if d == Difficulty::Hard && !upgrading(g) && g.bodies[home.0 as usize].level(Upgrade::Research) < 3 {
         let _ = g.apply(me, Command::Upgrade { body: home, upgrade: Upgrade::Research });
     }
     // research: industry and weapons first, scanning last; easy bots don't research

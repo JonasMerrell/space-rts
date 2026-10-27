@@ -1211,7 +1211,7 @@ fn demo_tech_cost(i: usize) -> Cost {
     let (adv, tier, ..) = demo_tech_meta(i);
     let k = tier as f64;
     if adv {
-        return Cost { matter: 300.0 + 300.0 * k, energy: 400.0 + 400.0 * k, seconds: [10.0, 16.0, 24.0][tier as usize - 1] * 3600.0 };
+        return Cost { matter: 500.0 + 500.0 * k, energy: 600.0 + 600.0 * k, seconds: [20.0, 32.0, 48.0][tier as usize - 1] * 3600.0 };
     }
     Cost { matter: 150.0 * k, energy: 200.0 * k, seconds: [2.0, 4.0, 8.0, 12.0][tier as usize - 1] * 3600.0 }
 }
