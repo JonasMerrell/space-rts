@@ -49,6 +49,17 @@ pub struct Input {
     pub hover: Option<Vec2>,
     /// A touch has ever been seen: then the mouse position is just the last finger, not a hover.
     touch_seen: bool,
+    /// Clipboard: text to paste into the focused field this frame (Ctrl/Cmd+V, a browser paste,
+    /// or PASTE from a field's long-press menu), and Ctrl/Cmd+C / X for the focused field.
+    pub paste: Option<String>,
+    pub copy: bool,
+    pub cut: bool,
+    /// Field whose COPY/PASTE menu is open (long-press / right-click on a text field).
+    pub field_menu: Option<u32>,
+    /// Where that menu was drawn last frame (taps on it don't move focus or close it).
+    pub field_menu_rect: Option<Rect>,
+    #[allow(dead_code)]
+    last_clip: Option<String>,
     /// F3: input debug line (computer mode troubleshooting).
     pub debug: bool,
     debug_line: String,
@@ -197,7 +208,8 @@ impl Input {
         }
 
         // Focus follows taps: a tap on a field focuses it (and only it), anywhere else unfocuses.
-        if let Some(p) = self.tap {
+        let on_menu = self.tap.is_some_and(|p| self.field_menu_rect.is_some_and(|r| r.contains(p)));
+        if let Some(p) = self.tap.filter(|_| !on_menu) {
             // a field under a panel drawn on top of it doesn't take the tap
             let covered = |r: &Rect| {
                 let fz = self.prev_layers.iter().find(|(_, lr)| lr == r).map(|l| l.0).unwrap_or(0);
@@ -268,10 +280,42 @@ impl Input {
         }
 
         self.chars.clear();
+        let ctrl = is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl) || is_key_down(KeyCode::LeftSuper) || is_key_down(KeyCode::RightSuper);
         while let Some(c) = get_char_pressed() {
-            if !c.is_control() {
+            // with Ctrl/Cmd held, letters are shortcuts, not typing
+            if !c.is_control() && !ctrl {
                 self.chars.push(c);
             }
+        }
+        self.paste = None;
+        self.copy = ctrl && is_key_pressed(KeyCode::C);
+        self.cut = ctrl && is_key_pressed(KeyCode::X);
+        if ctrl && is_key_pressed(KeyCode::V) && !cfg!(target_arch = "wasm32") {
+            self.paste = macroquad::miniquad::window::clipboard_get();
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            // In the browser the text arrives with the page's paste event (after the key press), and
+            // miniquad keeps the last pasted text: insert it when it changes.
+            let cur = macroquad::miniquad::window::clipboard_get();
+            if cur.is_some() && cur != self.last_clip {
+                self.last_clip = cur.clone();
+                self.paste = cur;
+            }
+        }
+        // long-press / right-click on a text field opens its COPY/PASTE menu
+        if let Some(p) = self.long_press {
+            if let Some(&(id, _)) = self.prev_fields.iter().find(|(_, r)| r.contains(p)) {
+                self.field_menu = Some(id);
+                self.focused_field = Some(id);
+                self.long_press = None;
+            }
+        }
+        if self.tap.is_some() && !on_menu && self.field_menu.is_some() && self.focused_field != self.field_menu {
+            self.field_menu = None;
+        }
+        if self.field_menu.is_none() {
+            self.field_menu_rect = None;
         }
         self.chars.extend(self.script_text.drain(..));
         if is_key_pressed(KeyCode::F3) {

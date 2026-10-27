@@ -130,6 +130,21 @@ pub fn text_field(inp: &mut Input, r: Rect, f: &mut TextField, placeholder: &str
         if inp.backspace {
             f.text.pop();
         }
+        if let Some(p) = inp.paste.take() {
+            // one line, trimmed to the field's limit
+            for c in p.chars().filter(|c| !c.is_control()) {
+                if f.text.chars().count() >= f.max_len.max(1) {
+                    break;
+                }
+                f.text.push(if f.upper { c.to_ascii_uppercase() } else { c });
+            }
+        }
+        if (inp.copy || inp.cut) && !f.password && !f.text.is_empty() {
+            macroquad::miniquad::window::clipboard_set(&f.text);
+            if inp.cut {
+                f.text.clear();
+            }
+        }
         if inp.enter {
             submit = true;
             f.focused = false;
@@ -146,10 +161,43 @@ pub fn text_field(inp: &mut Input, r: Rect, f: &mut TextField, placeholder: &str
     if shown.is_empty() && !f.focused {
         text(placeholder, r.x + pad, r.center().y, size, Color::new(1.0, 1.0, 1.0, 0.35), FontKind::Body, Align::Left);
     } else {
-        text(&shown, r.x + pad, r.center().y, size, PAPER, FontKind::Body, Align::Left);
+        // long text (e.g. pasted) scrolls left so the end and the cursor stay visible; clipped to the field
+        let w = measure(&shown, FontKind::Body, size).x;
+        let room = r.w - 2.0 * pad - 4.0 * s();
+        let x0 = r.x + pad - (w - room).max(0.0);
+        cel::clip(Some(Rect::new(r.x + 4.0 * s(), r.y, r.w - 8.0 * s(), r.h)));
+        text(&shown, x0, r.center().y, size, PAPER, FontKind::Body, Align::Left);
         if f.focused && (get_time() * 2.0) as i64 % 2 == 0 {
-            let w = measure(&shown, FontKind::Body, size).x;
-            draw_rectangle(r.x + pad + w + 2.0 * s(), r.center().y - size * s() * 0.45, 2.0 * s(), size * s() * 0.9, ACCENT);
+            draw_rectangle(x0 + w + 2.0 * s(), r.center().y - size * s() * 0.45, 2.0 * s(), size * s() * 0.9, ACCENT);
+        }
+        cel::clip(None);
+    }
+    // COPY / PASTE menu (long-press or right-click on the field)
+    if inp.field_menu == Some(f.id) {
+        let bw = 78.0 * s();
+        let mr = Rect::new(r.x + r.w - 2.0 * bw - 12.0 * s(), r.y - 46.0 * s(), 2.0 * bw + 12.0 * s(), 40.0 * s());
+        inp.block(mr);
+        inp.field_menu_rect = Some(mr);
+        cel::panel(mr, alpha(PANEL, 0.98));
+        let b1 = Rect::new(mr.x + 4.0 * s(), mr.y + 4.0 * s(), bw, mr.h - 8.0 * s());
+        let b2 = Rect::new(b1.x + bw + 4.0 * s(), b1.y, bw, b1.h);
+        let can_copy = !f.password && !f.text.is_empty();
+        if button(inp, b1, "COPY", if can_copy { Style::Secondary } else { Style::Ghost }) {
+            if can_copy {
+                macroquad::miniquad::window::clipboard_set(&f.text);
+            }
+            inp.field_menu = None;
+        }
+        if button(inp, b2, "PASTE", Style::Primary) {
+            if let Some(p) = macroquad::miniquad::window::clipboard_get() {
+                for c in p.chars().filter(|c| !c.is_control()) {
+                    if f.text.chars().count() >= f.max_len.max(1) {
+                        break;
+                    }
+                    f.text.push(if f.upper { c.to_ascii_uppercase() } else { c });
+                }
+            }
+            inp.field_menu = None;
         }
     }
     submit
