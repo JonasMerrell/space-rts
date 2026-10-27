@@ -281,6 +281,7 @@ pub fn draw_ships(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64, selec
             ShipClass::Dreadnought => 14.0,
             ShipClass::Tanker => 11.0,
             ShipClass::Constructor => 9.0,
+            ShipClass::Decoy => 6.0,
         } * s();
         if selected == Some(Focus::Ship(sh.id)) {
             let pulse = 1.0 + 0.1 * (time * 6.0).sin();

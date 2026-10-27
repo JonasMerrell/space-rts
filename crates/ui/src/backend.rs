@@ -44,6 +44,10 @@ pub enum UiAction {
     /// `upgrade` is one of `model::UPGRADES`.
     Upgrade { body: BodyId, upgrade: String },
     SetOrder { ship: ShipId, retreat: bool },
+    /// A ship's special action (`Ability::key` from `Backend::ship_abilities`).
+    ShipAbility { ship: ShipId, key: String },
+    /// A station action at a body (`Ability::key` from `StationsView::actions`).
+    StationAbility { body: BodyId, key: String },
     /// Host only.
     ExtendGame { days: u32 },
     /// Host only: delete the war for every player (ask for confirmation first).
@@ -179,6 +183,10 @@ pub trait Backend {
     /// Tech tree state for the research screen.
     fn research(&self) -> Option<ResearchView> {
         None
+    }
+    /// Special actions one of our ships (or fleet tokens) has, e.g. going dark.
+    fn ship_abilities(&self, _ship: ShipId) -> Vec<Ability> {
+        vec![]
     }
     /// Stations at a body and what we could build there.
     fn stations(&self, _id: BodyId) -> Option<StationsView> {

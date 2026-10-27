@@ -953,7 +953,8 @@ fn ship_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
     if targeting {
         return target_bar(g, inp, be, view, sh);
     }
-    let r = sheet_rect(if mine { 200.0 } else { 110.0 });
+    let abilities = if mine && sh.planned.is_none() { be.ship_abilities(sh.id) } else { vec![] };
+    let r = sheet_rect(if mine { 200.0 } else { 110.0 } + if abilities.is_empty() { 0.0 } else { 44.0 });
     inp.block(r);
     cel::panel(r, PANEL);
     ship_icon(view, sh, vec2(r.x + 34.0 * s(), r.y + 34.0 * s()), 40.0 * s());
@@ -1005,6 +1006,9 @@ fn ship_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
                 g.emit(UiAction::SetOrder { ship: sh.id, retreat: *retreat });
             }
         }
+        if !abilities.is_empty() {
+            ability_row(g, inp, &abilities, Rect::new(r.x + 16.0 * s(), oy + 40.0 * s(), r.w - 32.0 * s(), 32.0 * s()), |key| UiAction::ShipAbility { ship: sh.id, key });
+        }
         let by = r.y + r.h - 58.0 * s();
         let bw = (r.w - 4.0 * 12.0 * s()) / 3.0;
         let b = |i: usize| Rect::new(r.x + 12.0 * s() + i as f32 * (bw + 12.0 * s()), by, bw, 46.0 * s());
@@ -1033,6 +1037,36 @@ fn ship_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
     } else if close_x(inp, r) {
         g.selected = None;
         g.mode = Mode::Idle;
+    }
+}
+
+/// A row of special-action chips (go dark, decoy look, lidar sweep...) with the first note or
+/// blocker beside them. Tapping a usable one emits `act(key)`.
+pub(crate) fn ability_row(g: &mut GameScreen, inp: &mut Input, abilities: &[Ability], r: Rect, act: impl Fn(String) -> UiAction) {
+    let gap = 8.0 * s();
+    let mut x = r.x;
+    let mut note = abilities.iter().find_map(|a| a.blocker.clone().or_else(|| (!a.note.is_empty()).then(|| a.note.clone()))).unwrap_or_default();
+    for a in abilities {
+        let w = (measure(&a.label, FontKind::Title, 13.0).x + 28.0 * s()).max(84.0 * s());
+        let cr = Rect::new(x, r.y, w, r.h);
+        let usable = a.blocker.is_none();
+        if widgets::chip(inp, cr, &a.label, a.on, if usable { ACCENT } else { MUTED }) {
+            if usable {
+                art::sfx(if a.on { "toggle_off" } else { "toggle_on" });
+                g.emit(act(a.key.clone()));
+            } else {
+                art::sfx("ui_error");
+                note = a.blocker.clone().unwrap_or_default();
+                g.hint = Some((note.clone(), get_time()));
+            }
+        }
+        x += w + gap;
+    }
+    if x < r.x + r.w - 40.0 * s() {
+        let room = r.x + r.w - x;
+        if let Some(line) = wrap(&note, FontKind::Body, 12.0, room).into_iter().next() {
+            text(&line, x, r.center().y, 12.0, MUTED, FontKind::Body, Align::Left);
+        }
     }
 }
 

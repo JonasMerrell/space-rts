@@ -24,6 +24,7 @@ fn ship_at(g: &mut Game, owner: PlayerId, class: ShipClass, at: BodyId) -> ShipI
         order: StandingOrder::Hold, route: vec![], state: ShipState::Parked { body: at, departure: None }, tech: Default::default(), last_burn_t: sim::game::no_burn(),
         intercept: None,
         cloak: None,
+        mimic: None,
     });
     id
 }

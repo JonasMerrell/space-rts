@@ -53,10 +53,12 @@ pub enum ShipClass {
     Tanker,
     /// Builds space stations where it's parked; more of them build faster.
     Constructor,
+    /// Advanced tier: unarmed drone that looks like a warship to enemy sensors.
+    Decoy,
 }
 
 impl ShipClass {
-    pub const ALL: [ShipClass; 7] = [
+    pub const ALL: [ShipClass; 8] = [
         ShipClass::Scout,
         ShipClass::Interceptor,
         ShipClass::Gunship,
@@ -64,6 +66,7 @@ impl ShipClass {
         ShipClass::Dreadnought,
         ShipClass::Tanker,
         ShipClass::Constructor,
+        ShipClass::Decoy,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -74,6 +77,7 @@ impl ShipClass {
             ShipClass::Dreadnought => "Dreadnought",
             ShipClass::Tanker => "Tanker",
             ShipClass::Constructor => "Constructor",
+            ShipClass::Decoy => "Decoy",
         }
     }
 }
@@ -621,10 +625,26 @@ pub struct StationsView {
     pub constructors: usize,
     /// Workers on our sites here (constructors + our shipyard, capped); build speed multiplier.
     pub workers: usize,
+    /// Actions our stations here can take (lidar sweep...).
+    pub actions: Vec<Ability>,
 }
 
 /// Station kinds (= sim `StationKind`), also the icon names `station_<lowercase>`.
-pub const STATION_KINDS: [&str; 6] = ["Shipyard", "FuelDepot", "Telescope", "Scanner", "Defense", "Relay"];
+pub const STATION_KINDS: [&str; 7] = ["Shipyard", "FuelDepot", "Telescope", "Scanner", "Defense", "Relay", "Gravimetric"];
+
+/// A special action a ship or station has (advanced tier: go dark, decoy look, lidar sweep...).
+/// Shown as a button; tapping it sends `UiAction::ShipAbility` / `StationAbility` with `key`.
+#[derive(Clone, Debug)]
+pub struct Ability {
+    pub key: String,
+    pub label: String,
+    /// Highlighted (e.g. "DARK" while cloaked).
+    pub on: bool,
+    /// Why it can't be used now; None = usable.
+    pub blocker: Option<String>,
+    /// One line of state, e.g. "dark for 9h 12m".
+    pub note: String,
+}
 
 /// Tab of the sensors report.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

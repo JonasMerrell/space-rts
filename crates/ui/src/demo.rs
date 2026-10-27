@@ -55,6 +55,8 @@ pub struct DemoBackend {
     games: Vec<GameSummary>,
     /// Research: indices into DEMO_TECHS done, and (tech, lab, done_t) running.
     techs_done: Vec<usize>,
+    /// ships gone dark (Heat-sink cloaking, DEMO_TECHS[30])
+    dark: Vec<ShipId>,
     research_run: Vec<(usize, BodyId, f64)>,
     /// (body, kind, owner, done_t)
     stations: Vec<(BodyId, String, PlayerId, f64)>,
@@ -85,6 +87,7 @@ impl DemoBackend {
             waiting: vec![],
             user: String::new(),
             techs_done: vec![0, 4, 8, 9, 16],
+            dark: vec![],
             research_run: vec![],
             stations: vec![],
             report: None,
@@ -424,6 +427,7 @@ fn ship_cost(c: ShipClass) -> Cost {
         ShipClass::Dreadnought => (480.0, 220.0, 240.0),
         ShipClass::Tanker => (100.0, 30.0, 60.0),
         ShipClass::Constructor => (100.0, 50.0, 30.0),
+        ShipClass::Decoy => (40.0, 30.0, 10.0),
     };
     Cost { matter: m, energy: e, seconds: min * 60.0 }
 }
@@ -481,6 +485,15 @@ impl Backend for DemoBackend {
             return;
         }
         match action {
+            UiAction::ShipAbility { ship, key } if key == "cloak" => {
+                match self.dark.iter().position(|&d| d == ship) {
+                    Some(i) => {
+                        self.dark.remove(i);
+                    }
+                    None => self.dark.push(ship),
+                }
+            }
+            UiAction::ShipAbility { .. } | UiAction::StationAbility { .. } => {}
             UiAction::Unwait { id } => self.waiting.retain(|w| w.0 != id),
             UiAction::MoveWait { id, to } => {
                 if let Some(i) = self.waiting.iter().position(|w| w.0 == id) {
@@ -755,7 +768,7 @@ impl Backend for DemoBackend {
             .map(|(n, l)| UpgradeInfo { name: n.to_string(), level: l, max: 3, next: (l < 3).then(|| upgrade_cost(l + 1)) })
             .collect();
         let yard = lv[4];
-        let buildable = ShipClass::ALL.iter().filter(|c| yard >= 1 && (**c != ShipClass::Dreadnought || yard >= 3)).map(|&c| (c, ship_cost(c))).collect();
+        let buildable = ShipClass::ALL.iter().filter(|c| yard >= 1 && **c != ShipClass::Decoy && (**c != ShipClass::Dreadnought || yard >= 3)).map(|&c| (c, ship_cost(c))).collect();
         let mut power: Vec<(PlayerId, f64)> = vec![];
         for s in v.ships.iter().filter(|s| s.parked_at == Some(id) && s.trajectory.is_none()) {
             match power.iter_mut().find(|p| p.0 == s.owner) {
@@ -835,6 +848,23 @@ impl Backend for DemoBackend {
         self.report.as_ref()
     }
 
+    fn ship_abilities(&self, ship: ShipId) -> Vec<Ability> {
+        let Some(v) = self.view.as_ref() else { return vec![] };
+        let Some(sh) = v.ships.iter().find(|s| s.id == ship && s.owner == v.me) else { return vec![] };
+        if !self.techs_done.contains(&30) {
+            return vec![];
+        }
+        let dark = self.dark.contains(&ship);
+        let blocker = (sh.class == ShipClass::Dreadnought).then(|| "a Dreadnought runs too hot to hide".to_string());
+        vec![Ability {
+            key: "cloak".into(),
+            label: if dark { "DECLOAK".into() } else { "GO DARK".into() },
+            on: dark,
+            blocker,
+            note: if dark { "dark for 11h 40m · first strike on decloak".into() } else { "30 energy · 12 h heat sink".into() },
+        }]
+    }
+
     fn stations(&self, id: BodyId) -> Option<StationsView> {
         let v = self.view.as_ref()?;
         let now = self.now();
@@ -871,7 +901,7 @@ impl Backend for DemoBackend {
                 StationOption { kind: k.to_string(), name: DEMO_STATIONS[i].0.to_string(), desc: DEMO_STATIONS[i].1.to_string(), cost: demo_station_cost(i), queueable: blocker.as_deref() != Some("already built here"), blocker }
             })
             .collect();
-        Some(StationsView { here, options, present, constructors, workers })
+        Some(StationsView { here, options, present, constructors, workers, actions: vec![] })
     }
 
     fn plan_impact_async(&self, asteroid: BodyId, target: BodyId) -> crate::ImpactPoll {

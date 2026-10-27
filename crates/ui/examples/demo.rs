@@ -80,6 +80,11 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                     g.research_open = true;
                     g.research_branch = if scene == "research" { 2 } else { 0 };
                 }
+                "cloak" => {
+                    be.set_techs_done((0..16).chain([20, 29, 30]).collect());
+                    be.act(ui::UiAction::ShipAbility { ship: 2, key: "cloak".into() });
+                    g.selected = Some(Focus::Ship(2));
+                }
                 "research_adv" | "research_adv_locked" => {
                     if scene == "research_adv" {
                         be.set_techs_done((0..16).chain([20, 29]).collect());

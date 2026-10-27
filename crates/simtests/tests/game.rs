@@ -51,6 +51,7 @@ fn put_ship(g: &mut Game, owner: PlayerId, class: ShipClass, at: BodyId) -> Ship
         last_burn_t: sim::game::no_burn(),
         intercept: None,
         cloak: None,
+        mimic: None,
     });
     id
 }
@@ -225,6 +226,7 @@ fn rocket_equation() {
             last_burn_t: sim::game::no_burn(),
         intercept: None,
         cloak: None,
+        mimic: None,
         };
         let dv = full.dv_left();
         assert!((full.fuel_for(dv) - st.fuel_cap).abs() < 1e-9 * st.fuel_cap, "{c:?}");

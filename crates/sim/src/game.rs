@@ -24,6 +24,8 @@ pub enum ShipClass {
     Tanker,
     /// builds space stations where it is parked; more of them build faster
     Constructor,
+    /// advanced tier: unarmed drone that shows to enemy sensors as `Ship::mimic` (see cloak.rs)
+    Decoy,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,7 +59,7 @@ pub struct ClassStats {
 }
 
 impl ShipClass {
-    pub const ALL: [ShipClass; 7] = [
+    pub const ALL: [ShipClass; 8] = [
         ShipClass::Scout,
         ShipClass::Interceptor,
         ShipClass::Gunship,
@@ -65,7 +67,16 @@ impl ShipClass {
         ShipClass::Dreadnought,
         ShipClass::Tanker,
         ShipClass::Constructor,
+        ShipClass::Decoy,
     ];
+
+    /// Research needed before a shipyard can build this class.
+    pub fn needs(self) -> Option<Tech> {
+        match self {
+            ShipClass::Decoy => Some(Tech::DecoyDrones),
+            _ => None,
+        }
+    }
 
     pub fn stats(self) -> ClassStats {
         use ShipClass::*;
@@ -91,6 +102,8 @@ impl ShipClass {
             Dreadnought => s("Dreadnought", 500.0, 90.0, Weapon::Energy, 300.0, 700.0, 600.0, 300.0, 180.0, 4.0, 2),
             Tanker => s("Tanker", 60.0, 0.0, Weapon::None, 40.0, 600.0, 80.0, 30.0, 20.0, 1.5, 1),
             Constructor => s("Constructor", 50.0, 0.0, Weapon::None, 30.0, 120.0, 100.0, 50.0, 30.0, 0.8, 1),
+            // signature is the mimicked class's (see fog::signature); this is the default look
+            Decoy => s("Decoy", 10.0, 0.0, Weapon::None, 4.0, 40.0, 40.0, 30.0, 10.0, 1.0, 1),
         }
     }
 
@@ -145,6 +158,9 @@ impl ShipClass {
         }
         if self == ShipClass::Tanker {
             out += " Refuels friendly ships parked with it.";
+        }
+        if self == ShipClass::Decoy {
+            out += " Shows to enemy sensors as the warship class you pick, burns and all, until a scanning station, Deep-field interferometry or a fight sees through it.";
         }
         if self == ShipClass::Constructor {
             out += &format!(" Builds space stations where it is parked; each one adds a worker (up to {}).", crate::station::MAX_WORKERS);
@@ -229,6 +245,9 @@ pub struct Ship {
     /// heat-sink cloak state (advanced tier, see cloak.rs)
     #[serde(default)]
     pub cloak: Option<crate::cloak::Cloak>,
+    /// decoys: the class enemy sensors see
+    #[serde(default)]
+    pub mimic: Option<ShipClass>,
 }
 
 /// `last_burn_t` of a ship that never burned (finite so it survives JSON).
@@ -550,6 +569,9 @@ pub struct Game {
     /// pushed asteroids being tracked for flybys and impacts
     #[serde(default)]
     pub drifts: Vec<crate::asteroid::Drift>,
+    /// lidar sweeps running or cooling down (see cloak.rs)
+    #[serde(default)]
+    pub sweeps: Vec<crate::cloak::Sweep>,
 }
 
 /// Commands players send. Applied at the current game time.
@@ -569,6 +591,10 @@ pub enum Command {
     Research { body: BodyId, tech: Tech },
     /// Take ships dark (heat-sink cloak) or bring them out of the dark.
     Cloak { ships: Vec<ShipId>, on: bool },
+    /// Change what class a decoy shows as to enemy sensors.
+    SetDecoy { ship: ShipId, looks_like: ShipClass },
+    /// Lidar sweep from one of your scanning stations.
+    LidarSweep { station: crate::station::StationId },
     BuildStation { body: BodyId, kind: StationKind },
     Chat { text: String },
     Extend { seconds: f64 },
@@ -654,6 +680,7 @@ impl Game {
             next_fleet: 0,
             drives: vec![],
             drifts: vec![],
+            sweeps: vec![],
         };
         let _ = g.add_player(host_name, None);
         g
@@ -792,6 +819,7 @@ impl Game {
             last_burn_t: no_burn(),
             intercept: None,
             cloak: None,
+            mimic: (class == ShipClass::Decoy).then_some(ShipClass::Gunship),
         });
         self.refit(owner);
         let s = self.ships.last_mut().unwrap();
@@ -1038,6 +1066,8 @@ impl Game {
             }
             Command::Research { body, tech } => self.start_research(player, body, tech),
             Command::Cloak { ships, on } => self.set_cloak(player, &ships, on),
+            Command::SetDecoy { ship, looks_like } => self.set_decoy(player, ship, looks_like),
+            Command::LidarSweep { station } => self.lidar_sweep(player, station),
             Command::BuildStation { body, kind } => self.build_station(player, body, kind).map(|_| ()),
             Command::SetOrder { ship, order } => {
                 self.own_ship(player, ship)?;
@@ -1054,6 +1084,9 @@ impl Game {
                 }
                 if yard < st.min_shipyard {
                     return Err(format!("needs shipyard level {}", st.min_shipyard));
+                }
+                if let Some(t) = class.needs().filter(|&t| !self.has_tech(player, t)) {
+                    return Err(format!("needs {}", t.label()));
                 }
                 let b = &self.bodies[body.0 as usize];
                 let busy_until = b.queue.iter().filter(|j| j.owner == player).map(|j| j.done_t).fold(self.t, f64::max);

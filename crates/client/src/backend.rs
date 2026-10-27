@@ -430,6 +430,23 @@ impl ClientBackend {
         vec![self.lead(id)]
     }
 
+    /// The command for a ship ability button (`ship_abilities` keys).
+    fn ability_cmd(&self, ship: ShipId, key: &str) -> Option<Command> {
+        let g = self.game.as_ref()?;
+        let ships = real_ships(g, &[ship]);
+        match key {
+            "cloak_on" | "cloak_off" => Some(Command::Cloak { ships, on: key == "cloak_on" }),
+            "decoy" => {
+                let s = g.ship(*ships.first()?)?;
+                // cycle through the warship looks
+                const LOOKS: [g::ShipClass; 5] = [g::ShipClass::Gunship, g::ShipClass::Dreadnought, g::ShipClass::Bomber, g::ShipClass::Interceptor, g::ShipClass::Tanker];
+                let i = LOOKS.iter().position(|&c| Some(c) == s.mimic).map_or(0, |i| (i + 1) % LOOKS.len());
+                Some(Command::SetDecoy { ship: s.id, looks_like: LOOKS[i] })
+            }
+            _ => None,
+        }
+    }
+
     fn lead(&self, id: ShipId) -> g::ShipId {
         self.game.as_ref().map(|g| lead(g, id)).unwrap_or(g::ShipId(id))
     }
@@ -781,6 +798,7 @@ fn ship_class(c: g::ShipClass) -> m::ShipClass {
         g::ShipClass::Dreadnought => m::ShipClass::Dreadnought,
         g::ShipClass::Tanker => m::ShipClass::Tanker,
         g::ShipClass::Constructor => m::ShipClass::Constructor,
+        g::ShipClass::Decoy => m::ShipClass::Decoy,
     }
 }
 
@@ -793,6 +811,7 @@ fn sim_class(c: m::ShipClass) -> g::ShipClass {
         m::ShipClass::Dreadnought => g::ShipClass::Dreadnought,
         m::ShipClass::Tanker => g::ShipClass::Tanker,
         m::ShipClass::Constructor => g::ShipClass::Constructor,
+        m::ShipClass::Decoy => g::ShipClass::Decoy,
     }
 }
 
@@ -1280,6 +1299,17 @@ impl Backend for ClientBackend {
                     self.send(ClientMsg::Cmd { code, cmd: Command::MoveWait { id, to } });
                 }
             }
+            UiAction::ShipAbility { ship, key } => {
+                if let (Some(code), Some(cmd)) = (code, self.ability_cmd(ship, &key)) {
+                    self.send(ClientMsg::Cmd { code, cmd });
+                }
+            }
+            UiAction::StationAbility { body, key } => {
+                let station = self.game.as_ref().and_then(|g| g.stations.iter().find(|st| st.owner == self.me && st.body == SimBody(body) && st.kind == StationKind::Scanner).map(|st| st.id));
+                if let (Some(code), Some(station), "lidar") = (code, station, key.as_str()) {
+                    self.send(ClientMsg::Cmd { code, cmd: Command::LidarSweep { station } });
+                }
+            }
             UiAction::SetOrder { ship, retreat } => {
                 if let Some(code) = code {
                     let order = if retreat { g::StandingOrder::Retreat } else { g::StandingOrder::Hold };
@@ -1581,6 +1611,7 @@ impl Backend for ClientBackend {
             g::ShipClass::ALL
                 .iter()
                 .filter(|c| g.yard_level(self.me, b) >= c.stats().min_shipyard)
+                .filter(|c| c.needs().is_none_or(|t| g.has_tech(self.me, t)))
                 .map(|&c| {
                     let s = c.stats();
                     (ship_class(c), m::Cost { matter: s.matter, energy: s.energy, seconds: s.build_time })
@@ -1680,6 +1711,35 @@ impl Backend for ClientBackend {
         self.sensors.as_ref()
     }
 
+    fn ship_abilities(&self, ship: ShipId) -> Vec<m::Ability> {
+        let Some(g) = self.game.as_ref() else { return vec![] };
+        let me = self.me;
+        let ships: Vec<&g::Ship> = real_ships(g, &[ship]).into_iter().filter_map(|id| g.ship(id)).filter(|s| s.owner == me).collect();
+        let mut out = vec![];
+        if ships.is_empty() || g.rules < sim::tech::ADVANCED_RULES {
+            return out;
+        }
+        let t = g.t;
+        if g.has_tech(me, Tech::HeatSinkCloaks) {
+            let dark = ships.iter().filter(|s| s.dark(t)).count();
+            if dark > 0 {
+                let left = ships.iter().filter_map(|s| s.cloak).filter(|c| c.dark(t)).map(|c| c.dark_until - t).fold(f64::INFINITY, f64::min);
+                out.push(m::Ability { key: "cloak_off".into(), label: "DECLOAK".into(), on: true, blocker: None, note: format!("dark for {} · first strike on decloak", ui::theme::fmt_dur(left)) });
+            } else {
+                let blocker = ships.iter().find_map(|s| g.cloak_blocker(me, s));
+                let note = format!("{:.0} energy · {} heat sink", sim::cloak::CLOAK_ENERGY * ships.len() as f64, ui::theme::fmt_dur(sim::cloak::DARK_TIME * g.mods(me).cloak_time));
+                out.push(m::Ability { key: "cloak_on".into(), label: "GO DARK".into(), on: false, blocker, note });
+            }
+        }
+        if let [s] = ships.as_slice() {
+            if s.class == g::ShipClass::Decoy {
+                let look = sim::cloak::apparent_class(s).stats().name.to_uppercase();
+                out.push(m::Ability { key: "decoy".into(), label: format!("LOOKS LIKE {look}"), on: false, blocker: None, note: "tap to change what enemies see".into() });
+            }
+        }
+        out
+    }
+
     fn stations(&self, id: BodyId) -> Option<m::StationsView> {
         let g = self.game.as_ref()?;
         let me = self.me;
@@ -1704,6 +1764,8 @@ impl Backend for ClientBackend {
             .collect();
         let options = StationKind::ALL
             .iter()
+            // advanced-tier stations only show once researched
+            .filter(|k| k.needs().is_none_or(|t| !t.advanced() || g.has_tech(me, t)))
             .map(|&k| {
                 let (matter, energy, seconds) = k.cost();
                 m::StationOption {
@@ -1716,7 +1778,15 @@ impl Backend for ClientBackend {
                 }
             })
             .collect();
-        Some(m::StationsView { here, options, present, constructors: g.constructors_at(me, b), workers })
+        let mut actions = vec![];
+        if let Some(sc) = g.stations.iter().find(|st| st.owner == me && st.body == b && st.kind == StationKind::Scanner && st.active(g.t)) {
+            if g.has_tech(me, Tech::LidarSweep) {
+                let sweeping = g.sweeping(sc.id);
+                let note = if sweeping { "sweeping: everything in 3× range shows".to_string() } else { "3× range for 1 h, sees cloaks · lights us up".to_string() };
+                actions.push(m::Ability { key: "lidar".into(), label: "LIDAR SWEEP".into(), on: sweeping, blocker: g.sweep_blocker(me, sc.id).filter(|_| !sweeping), note });
+            }
+        }
+        Some(m::StationsView { here, options, present, constructors: g.constructors_at(me, b), workers, actions })
     }
 
     fn node_outcome(&self, ship: ShipId, nodes: &[m::ManeuverNode]) -> Option<m::NodeOutcome> {

@@ -17,6 +17,8 @@ pub enum StationKind {
     Scanner,
     Defense,
     Relay,
+    /// advanced tier: detects ships by mass, cloaks or not
+    Gravimetric,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -58,8 +60,15 @@ pub const DEPOT_RATE: f64 = 80.0;
 pub const STATION_YARD_LEVEL: u8 = 2;
 
 impl StationKind {
-    pub const ALL: [StationKind; 6] =
-        [StationKind::Shipyard, StationKind::FuelDepot, StationKind::Telescope, StationKind::Scanner, StationKind::Defense, StationKind::Relay];
+    pub const ALL: [StationKind; 7] = [
+        StationKind::Shipyard,
+        StationKind::FuelDepot,
+        StationKind::Telescope,
+        StationKind::Scanner,
+        StationKind::Defense,
+        StationKind::Relay,
+        StationKind::Gravimetric,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -69,6 +78,7 @@ impl StationKind {
             StationKind::Scanner => "Scanning station",
             StationKind::Defense => "Defense platform",
             StationKind::Relay => "Sensor relay",
+            StationKind::Gravimetric => "Gravimetric array",
         }
     }
     pub fn describe(self) -> &'static str {
@@ -79,6 +89,7 @@ impl StationKind {
             StationKind::Scanner => "Short range, but sees every ship in range and reads enemy flight plans.",
             StationKind::Defense => "Armed platform. Fights for the orbit and counts toward control.",
             StationKind::Relay => "Your other sensors within its range reach 50% farther.",
+            StationKind::Gravimetric => "Detects ships by their mass, cloaked or not: dreadnoughts from 2,000,000 km, a scout from ~400,000 km.",
         }
     }
     /// (matter, energy, build seconds for one worker)
@@ -90,6 +101,7 @@ impl StationKind {
             StationKind::Scanner => (200.0, 200.0, 3.0 * 3600.0),
             StationKind::Defense => (250.0, 150.0, 3.0 * 3600.0),
             StationKind::Relay => (150.0, 150.0, 2.0 * 3600.0),
+            StationKind::Gravimetric => (500.0, 500.0, 3.0 * 3600.0),
         }
     }
     pub fn max_hp(self) -> f64 {
@@ -110,6 +122,7 @@ impl StationKind {
         match self {
             StationKind::Scanner | StationKind::Relay => Some(Tech::ScanningStations),
             StationKind::Defense => Some(Tech::DefensePlatforms),
+            StationKind::Gravimetric => Some(Tech::GravimetricArray),
             _ => None,
         }
     }

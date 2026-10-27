@@ -49,6 +49,9 @@ pub enum SensorKind {
     Scanner,
     /// sensor relay: owned sensors inside its range get `RELAY_BOOST` × range
     Relay,
+    /// gravimetric array: ignores signature; `range` is for a `GRAV_REF_MASS` target and scales
+    /// with sqrt(mass)
+    Gravimetric,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -65,6 +68,12 @@ pub const RELAY_BOOST: f64 = 1.5;
 /// Ships parked at one body are spread around its orbit: no passive sensor is ever closer to a
 /// target than this (only matters for very faint targets, i.e. cloaked ships).
 pub const MIN_DETECT_DIST: f64 = 5_000.0;
+/// Target mass (t) at which a gravimetric array reaches its nominal range.
+pub const GRAV_REF_MASS: f64 = 1000.0;
+/// Lidar sweep: range multiplier, how long it lasts, and the cooldown between sweeps.
+pub const LIDAR_RANGE: f64 = 3.0;
+pub const LIDAR_TIME: f64 = 3600.0;
+pub const LIDAR_COOLDOWN: f64 = 6.0 * 3600.0;
 /// Ghost contacts older than this are forgotten.
 pub const CONTACT_TTL: f64 = 2.0 * 86_400.0;
 /// At most this many ghost contacts per player (the most recent are kept).
@@ -90,13 +99,14 @@ pub fn station_sensor(kind: StationKind) -> Option<(f64, SensorKind)> {
         StationKind::Telescope => Some((500_000.0, SensorKind::Passive)),
         StationKind::Scanner => Some((150_000.0, SensorKind::Scanner)),
         StationKind::Relay => Some((400_000.0, SensorKind::Relay)),
+        StationKind::Gravimetric => Some((2_000_000.0, SensorKind::Gravimetric)),
         _ => None,
     }
 }
 
 /// Signature of a ship at time t, including the engine flare after a burn.
 pub fn signature(s: &Ship, t: f64) -> f64 {
-    let mut k = s.class.stats().signature;
+    let mut k = crate::cloak::apparent_class(s).stats().signature;
     if t - s.last_burn_t < FLARE_TIME && t >= s.last_burn_t {
         k *= BURN_FLARE;
     }
@@ -105,13 +115,20 @@ pub fn signature(s: &Ship, t: f64) -> f64 {
 
 /// Is a target with signature `sig` at `pos` detected by these sensors? Returns (seen, scanned).
 pub fn detects(sensors: &[Sensor], pos: V2, sig: f64) -> (bool, bool) {
+    detects_mass(sensors, pos, sig, 0.0)
+}
+
+/// `detects` for a target of `mass` tonnes (gravimetric arrays see mass, not signature).
+pub fn detects_mass(sensors: &[Sensor], pos: V2, sig: f64, mass: f64) -> (bool, bool) {
     let k = sig.max(0.0).sqrt();
+    let km = (mass.max(0.0) / GRAV_REF_MASS).sqrt();
     let mut seen = false;
     for s in sensors {
         let d = s.pos.dist(pos);
         match s.kind {
             SensorKind::Scanner if d <= s.range => return (true, true),
             SensorKind::Passive if d.max(MIN_DETECT_DIST) <= s.range * k => seen = true,
+            SensorKind::Gravimetric if d <= s.range * km => seen = true,
             _ => {}
         }
     }
@@ -120,7 +137,7 @@ pub fn detects(sensors: &[Sensor], pos: V2, sig: f64) -> (bool, bool) {
 
 /// Can these sensors make out what is on a body at `pos`?
 pub fn sees_point(sensors: &[Sensor], pos: V2) -> bool {
-    sensors.iter().any(|s| s.kind != SensorKind::Relay && s.pos.dist(pos) <= s.range)
+    sensors.iter().any(|s| matches!(s.kind, SensorKind::Passive | SensorKind::Scanner) && s.pos.dist(pos) <= s.range)
 }
 
 impl Game {
@@ -130,7 +147,7 @@ impl Game {
             Some(i) => self.signatures()[i],
             None => signature(s, self.t),
         };
-        detects(sensors, self.ship_pos(s, self.t), sig).0
+        detects_mass(sensors, self.ship_pos(s, self.t), sig, s.mass()).0
     }
 
     /// Can this sensor set make out what is on body `b` right now?
@@ -183,6 +200,8 @@ impl Game {
         }
         for st in self.stations.iter().filter(|st| st.owner == p && st.active(t)) {
             if let Some((range, kind)) = station_sensor(st.kind) {
+                // a sweeping lidar reaches farther and, like any scanner, ignores signature
+                let range = if kind == SensorKind::Scanner && self.sweeping(st.id) { range * LIDAR_RANGE } else { range };
                 out.push(Sensor { pos: self.system.pos(st.body, t), range, kind });
             }
         }
@@ -233,7 +252,7 @@ impl Game {
                     v.ships.push(s.id);
                     continue;
                 }
-                let (seen, scanned) = detects(&sensors, pos[i], sig[i]);
+                let (seen, scanned) = detects_mass(&sensors, pos[i], sig[i], s.mass());
                 if seen {
                     v.ships.push(s.id);
                 }
@@ -251,6 +270,13 @@ impl Game {
                     v.scanned_bodies.push(b);
                 }
             }
+            // a sweeping lidar lights itself up for everyone it illuminates
+            for b in self.pinged_by_others(me, &sensors) {
+                if !v.bodies.contains(&b) {
+                    v.bodies.push(b);
+                }
+            }
+            v.bodies.sort();
             v.ships.sort();
             v.scanned.sort();
 
@@ -263,7 +289,19 @@ impl Game {
                 log_sensor_items(&mut self.players[p].sensor_log, news);
             }
             for &b in &v.bodies {
-                let power = self.power_at(b).into_iter().filter(|&(q, _)| q == me || self.bodies[b.0 as usize].owner == Some(q) || self.power_seen(&v, b, q)).collect();
+                let mut power: Vec<(PlayerId, f64)> = self.power_at(b).into_iter().filter(|&(q, _)| q == me || self.bodies[b.0 as usize].owner == Some(q) || self.power_seen(&v, b, q)).collect();
+                // decoys we haven't seen through count as the warship they pretend to be
+                let see_decoys = self.sees_decoys(me);
+                for d in self.ships.iter().filter(|d| d.class == ShipClass::Decoy && d.owner != me && d.parked_at() == Some(b)) {
+                    if see_decoys || v.scanned.binary_search(&d.id).is_ok() || v.ships.binary_search(&d.id).is_err() {
+                        continue;
+                    }
+                    let fake = crate::cloak::apparent_class(d).stats().attack;
+                    match power.iter_mut().find(|e| e.0 == d.owner) {
+                        Some(e) => e.1 += fake,
+                        None => power.push((d.owner, fake)),
+                    }
+                }
                 let mut state = self.bodies[b.0 as usize].clone();
                 state.queue.retain(|j| j.owner == me);
                 self.players[p].intel[b.0 as usize] = Some(Intel { seen_t: t, state, power });
@@ -415,8 +453,17 @@ impl Game {
 
     /// An enemy ship as another player may see it: no plans (unless `scanned`), no exact fuel,
     /// a generic name and no standing order.
+    /// A decoy shows as its mimic class unless `scanned` (callers pass scanned || the viewer's
+    /// `Mods::see_decoys`).
     pub fn redact(&self, s: &Ship, scanned: bool) -> Ship {
         let mut s = s.clone();
+        if !scanned && s.class == ShipClass::Decoy {
+            s.class = crate::cloak::apparent_class(&s);
+            s.hp = s.class.stats().hp;
+            s.tech = Default::default();
+        }
+        s.mimic = None;
+        s.cloak = None;
         s.name = s.class.stats().name.to_string();
         s.order = crate::game::StandingOrder::Hold;
         if !scanned {
@@ -457,12 +504,13 @@ impl Game {
             return g;
         };
         let v = &me.vision;
+        let see_decoys = self.sees_decoys(p);
         let mut g = self.clone();
         g.ships = self
             .ships
             .iter()
             .filter(|s| s.owner == p || v.ships.binary_search(&s.id).is_ok())
-            .map(|s| if s.owner == p { s.clone() } else { self.redact(s, v.scanned.binary_search(&s.id).is_ok()) })
+            .map(|s| if s.owner == p { s.clone() } else { self.redact(s, see_decoys && s.class == ShipClass::Decoy || v.scanned.binary_search(&s.id).is_ok()) })
             .collect();
         g.next_ship = g.ships.iter().map(|s| s.id.0 + 1).max().unwrap_or(0);
         // stations are big: seen whenever their body is

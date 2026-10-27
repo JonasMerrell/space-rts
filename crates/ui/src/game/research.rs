@@ -309,8 +309,13 @@ pub fn stations_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, vie
         }
     }
 
-    // Options grid, 2 columns × 3 rows.
-    let grid = Rect::new(r.x + 12.0 * s(), r.y + 84.0 * s(), r.w - 24.0 * s(), r.h - 84.0 * s() - 48.0 * s());
+    // Station actions (lidar sweep...), then the options grid, 2 columns.
+    let mut top = 84.0 * s();
+    if !sv.actions.is_empty() {
+        super::panels::ability_row(g, inp, &sv.actions, Rect::new(r.x + pad, r.y + top, r.w - 2.0 * pad, 30.0 * s()), |key| UiAction::StationAbility { body, key });
+        top += 40.0 * s();
+    }
+    let grid = Rect::new(r.x + 12.0 * s(), r.y + top, r.w - 24.0 * s(), r.h - top - 48.0 * s());
     let gap = 8.0 * s();
     let cw = (grid.w - gap) / 2.0;
     let rows = sv.options.len().div_ceil(2).max(1);

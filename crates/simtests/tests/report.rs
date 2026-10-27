@@ -37,6 +37,7 @@ fn put_ship(g: &mut Game, owner: PlayerId, class: ShipClass, at: BodyId) -> Ship
         last_burn_t: no_burn(),
         intercept: None,
         cloak: None,
+        mimic: None,
     });
     id
 }
