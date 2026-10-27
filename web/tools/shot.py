@@ -46,7 +46,12 @@ with sync_playwright() as pw:
         elif a == "--tap":
             x, y = map(float, rest[i + 1].split(",")); i += 1
             if mobile:
-                p.touchscreen.tap(x, y)
+                # a held touch (the game samples input once per frame; headless frames are slow)
+                cdp = ctx.new_cdp_session(p) if "cdp" not in dir() else cdp
+                pt = [{"x": x, "y": y, "id": 1}]
+                cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": pt})
+                p.wait_for_timeout(float(os.environ.get("HOLD_MS", "150")))
+                cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
             else:
                 p.mouse.move(x, y); p.mouse.down(); p.wait_for_timeout(120); p.mouse.up()
             p.wait_for_timeout(600)

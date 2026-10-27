@@ -131,7 +131,7 @@
     // from inside a user gesture, so: the game reports its text fields every frame; a tap that
     // ends on one focuses a hidden input right away (in the touchend handler); what's typed there
     // is replayed into the game as key events. A sentinel character lets us see backspaces.
-    let fields = [], fieldFocused = -1;
+    let fields = [], fieldFocused = -1, focusedAt = 0;
     const SENTINEL = "\u200b";
     const kbd = document.createElement("input");
     kbd.id = "kbd";
@@ -195,6 +195,7 @@
         if (inField(t.clientX - r.left, t.clientY - r.top)) {
             kbd.value = SENTINEL;
             kbd.focus({ preventScroll: true });
+            focusedAt = performance.now();
         } else if (document.activeElement === kbd) {
             kbd.blur();
         }
@@ -250,8 +251,9 @@
         env.hr_text_fields = (ptr, n, focused) => {
             fields = Array.from(new Float32Array(wasm_memory.buffer, ptr, n * 4));
             fieldFocused = focused;
-            // the game dropped focus (submitted, or the field went away): put the keyboard away
-            if (focused < 0 && document.activeElement === kbd) kbd.blur();
+            // the game dropped focus (submitted, or the field went away): put the keyboard away.
+            // Not right after our tap: the game may only see it a frame or two later.
+            if (focused < 0 && document.activeElement === kbd && performance.now() - focusedAt > 600) kbd.blur();
         };
         env.hr_notify = (on) => {
             notifyOn = on !== 0;

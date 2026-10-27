@@ -83,7 +83,20 @@ impl Input {
         self.held = None;
 
         let scripted = self.script.pop_front();
-        let t = if scripted.is_some() { vec![] } else { touches() };
+        // macroquad reports touches in physical pixels but the mouse (and all drawing) in logical
+        // ones; they only differ with high_dpi, e.g. a phone browser at devicePixelRatio 3
+        let dpi = macroquad::miniquad::window::dpi_scale().max(0.1);
+        let t: Vec<Touch> = if scripted.is_some() {
+            vec![]
+        } else {
+            touches()
+                .into_iter()
+                .map(|mut t| {
+                    t.position /= dpi;
+                    t
+                })
+                .collect()
+        };
         if let Some(p) = scripted {
             if let Some((p, jump)) = p {
                 self.pointers = vec![(0, p)];
