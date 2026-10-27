@@ -223,6 +223,9 @@ pub struct Ship {
     /// game time of the last engine burn (plumes make the ship easier to detect, see fog.rs)
     #[serde(default = "no_burn")]
     pub last_burn_t: f64,
+    /// standing intercept order (re-planned when the target changes course, see intercept.rs)
+    #[serde(default)]
+    pub intercept: Option<crate::intercept::Order>,
 }
 
 /// `last_burn_t` of a ship that never burned (finite so it survives JSON).
@@ -584,6 +587,9 @@ pub enum Command {
     Unwait { id: u32 },
     /// Move a waiting item to position `to` of the list (earlier = funded first).
     MoveWait { id: u32, to: usize },
+    /// Meet enemy ship `target` at `arrive_t` (a course from `intercept::options`, re-planned from
+    /// these numbers); `matched` = match its velocity there. Ships parked together or one fleet.
+    Intercept { ships: Vec<ShipId>, target: ShipId, depart_t: f64, arrive_t: f64, matched: bool },
 }
 
 pub const TICK: f64 = 60.0;
@@ -776,6 +782,7 @@ impl Game {
             state: ShipState::Parked { body: at, departure: None },
             tech: ShipTech::default(),
             last_burn_t: no_burn(),
+            intercept: None,
         });
         self.refit(owner);
         let s = self.ships.last_mut().unwrap();
@@ -872,6 +879,7 @@ impl Game {
             Command::QueueOrder { to: Some(to), .. } if bad(to) => return Err("no such body".into()),
             Command::SetSpeed { speed } if !speed.is_finite() || *speed <= 0.0 => return Err("invalid speed".into()),
             Command::Extend { seconds } if !seconds.is_finite() => return Err("invalid duration".into()),
+            Command::Intercept { depart_t, arrive_t, .. } if !depart_t.is_finite() || !arrive_t.is_finite() => return Err("invalid course".into()),
             _ => {}
         }
         match cmd {
@@ -979,6 +987,9 @@ impl Game {
                 self.order_push(player, body, plan)
             }
             Command::TransferPlanned { ships, to, depart_t, hint } => self.transfer(player, &ships, to, Some(depart_t), Some(hint)),
+            Command::Intercept { ships, target, depart_t, arrive_t, matched } => {
+                self.order_intercept(player, &ships, crate::intercept::Hint { target, depart_t, arrive_t, matched })
+            }
             Command::CancelDeparture { ship } => {
                 self.own_ship(player, ship)?;
                 if !matches!(self.ship(ship).unwrap().state, ShipState::Parked { departure: Some(_), .. }) {
@@ -989,6 +1000,7 @@ impl Game {
                     if let ShipState::Parked { departure, .. } = &mut s.state {
                         *departure = None;
                         s.route.clear();
+                        s.intercept = None;
                     }
                 }
                 Ok(())
@@ -1003,7 +1015,9 @@ impl Game {
                 burns.sort_by(|a, b| a.t.total_cmp(&b.t));
                 // a fleet flies one course
                 for id in self.with_fleetmates(ship) {
-                    if let ShipState::Flying(f) = &mut self.ship_mut(id).unwrap().state {
+                    let s = self.ship_mut(id).unwrap();
+                    s.intercept = None;
+                    if let ShipState::Flying(f) = &mut s.state {
                         f.burns = burns.clone();
                         f.cache = None;
                     }
@@ -1156,6 +1170,7 @@ impl Game {
         }
         let s = self.ship_mut(id).unwrap();
         s.route = rest;
+        s.intercept = None;
         if let ShipState::Parked { departure, .. } = &mut s.state {
             *departure = Some(Departure { to: p.to, state: p.depart, dv: p.depart_dv, burns: p.burns.clone() });
         }
@@ -1195,6 +1210,7 @@ impl Game {
                 self.fleet_tick(TICK);
                 self.ownership();
                 self.update_intel();
+                self.intercept_tick();
                 if bots {
                     crate::bot::think_all(self);
                 }
@@ -1252,8 +1268,10 @@ impl Game {
                 }
                 ship.fuel -= need;
                 ship.last_burn_t = d.state.t;
-                ship.state = ShipState::Flying(Flight { start: d.state, burns: d.burns, dest: Some(d.to), cache: None });
-                let to = sys.body(d.to).name.clone();
+                // an intercept course flies free (no capture) towards the meeting point
+                let chasing = ship.intercept.is_some();
+                ship.state = ShipState::Flying(Flight { start: d.state, burns: d.burns, dest: (!chasing).then_some(d.to), cache: None });
+                let to = if chasing { "the intercept".to_string() } else { sys.body(d.to).name.clone() };
                 self.event(Some(owner), EventKind::Info, "Departed", &format!("{name} burned {:.1} km/s for {to}", d.dv), None, Some(id));
             }
             ShipState::Flying(f) => {

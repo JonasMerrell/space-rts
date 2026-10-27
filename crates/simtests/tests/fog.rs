@@ -31,6 +31,7 @@ fn put_ship(g: &mut Game, owner: PlayerId, class: ShipClass, at: BodyId) -> Ship
         state: ShipState::Parked { body: at, departure: None },
         tech: Default::default(),
         last_burn_t: no_burn(),
+        intercept: None,
     });
     id
 }

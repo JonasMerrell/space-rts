@@ -121,6 +121,12 @@ pub trait Backend {
     fn plan_between_async(&self, _a: &TransferPlan, _b: &TransferPlan, _f: f32) -> PlanPoll {
         PlanPoll::Done(None)
     }
+    /// Intercept courses for `ship` (or fleet token) on the enemy ship `target`, polled every frame
+    /// like `plan_transfer_async`: a `TransferPlan` with `intercept` set and the fuel ↔ time slider's
+    /// stops in `options`. `matched` = match the target's velocity on arrival. Default: unsupported.
+    fn plan_intercept_async(&self, _ship: ShipId, _target: ShipId, _matched: bool) -> PlanPoll {
+        PlanPoll::Done(None)
+    }
     /// Asteroid impact planner, polled every frame like `plan_transfer_async`. None = can't aim it
     /// (not ours, no tech, no route). Default: unsupported.
     fn plan_impact_async(&self, _asteroid: BodyId, _target: BodyId) -> ImpactPoll {

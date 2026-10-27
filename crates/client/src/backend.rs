@@ -548,8 +548,79 @@ fn compute_plan(g: &Game, now: f64, ship: ShipId, target: BodyId, after: f64) ->
     all.into_iter().next()
 }
 
+/// Intercept courses (cheapest … fastest) for our `ship` token on enemy ship `target`, on what our
+/// sensors know of it. A target sitting in orbit gets an ordinary transfer to that body instead.
+fn compute_intercept(g: &Game, now: f64, ship: ShipId, target: ShipId, matched: bool) -> Option<m::TransferPlan> {
+    let s = g.ship(lead(g, ship))?;
+    let t = g.ship(g::ShipId(target))?;
+    if let Some(body) = t.parked_at() {
+        let mut p = compute_plan(g, now, ship, body.0, now)?;
+        let meet = arr(g.system.pos(body, p.arrive_t));
+        let tag = |p: &mut m::TransferPlan| p.intercept = Some(m::Intercept { target, closing: 0.0, matched: true, meet });
+        tag(&mut p);
+        p.options.iter_mut().for_each(tag);
+        return Some(p);
+    }
+    let tgt = g.view_path(t.id)?;
+    let opts = g.intercept_options(s.id, t.id, &tgt, now, matched);
+    let mut all: Vec<m::TransferPlan> = opts.iter().map(|p| model_intercept(g, s, ship, p, &tgt)).collect();
+    let n = all.len();
+    for (i, p) in all.iter_mut().enumerate() {
+        if n > 1 && (i == 0 || i + 1 == n) {
+            p.label = if i == 0 { "CHEAPEST" } else { "FASTEST" }.into();
+        }
+    }
+    let list = all.clone();
+    for p in &mut all {
+        p.options = list.clone();
+    }
+    all.into_iter().next()
+}
+
+fn model_intercept(g: &Game, s: &g::Ship, ship: ShipId, p: &sim::intercept::InterceptPlan, tgt: &SimTraj) -> m::TransferPlan {
+    let flying = g.with_fleetmates(s.id);
+    let fuel_have: f64 = flying.iter().filter_map(|&id| g.ship(id)).map(|m| m.fuel).sum();
+    let fuel_needed: f64 = flying
+        .iter()
+        .filter_map(|&id| g.ship(id))
+        .map(|m| {
+            let dep = m.fuel_for(p.depart_dv);
+            dep + g::fuel_needed(m.class, (m.fuel - dep).max(0.0), p.match_dv)
+        })
+        .sum();
+    let meet = tgt.abs_pos(&g.system, p.arrive_t()).map(arr).unwrap_or([0.0, 0.0]);
+    // the body the meeting happens around (titles fall back on it)
+    let near = tgt.state_at(&g.system, p.arrive_t()).map(|st| st.parent.0).unwrap_or(0);
+    m::TransferPlan {
+        ship,
+        target: near,
+        depart_t: p.depart_t(),
+        arrive_t: p.arrive_t(),
+        dv_depart: p.depart_dv,
+        dv_mid: 0.0,
+        dv_capture: p.match_dv,
+        fuel_needed: fuel_needed as f32,
+        fuel_have: fuel_have as f32,
+        fuel_problem: g.fleet_fuel_check(&flying, p.depart_dv, p.match_dv).err(),
+        path: to_model_traj(&g.system, &p.traj),
+        via: vec![],
+        label: String::new(),
+        options: vec![],
+        token: serde_json::to_string(&p.hint).unwrap_or_default(),
+        windows: vec![],
+        intercept: Some(m::Intercept { target: p.hint.target.0, closing: p.closing, matched: p.hint.matched, meet }),
+    }
+}
+
 /// The exact course `f` of the way between two neighbouring slider options (see `plan::between`).
 fn compute_between(g: &Game, a: &m::TransferPlan, b: &m::TransferPlan, f: f64) -> Option<m::TransferPlan> {
+    if let (Ok(ha), Ok(hb)) = (serde_json::from_str::<sim::intercept::Hint>(&a.token), serde_json::from_str::<sim::intercept::Hint>(&b.token)) {
+        let s = g.ship(lead(g, a.ship))?;
+        let tgt = g.view_path(ha.target)?;
+        let ch = sim::intercept::Chaser::of(&g.system, s);
+        let p = sim::intercept::between(&g.system, &ch, &tgt, ha, hb, f)?;
+        return Some(model_intercept(g, s, a.ship, &p, &tgt));
+    }
     let s = g.ship(lead(g, a.ship))?;
     let from = s.parked_at()?;
     let first = *sim::plan::route(&g.system, from, SimBody(a.target)).first()?;
@@ -594,6 +665,7 @@ fn model_plan(g: &Game, s: &g::Ship, ship: ShipId, target: BodyId, p: &sim::plan
         options: vec![],
         token: p.hint.and_then(|h| serde_json::to_string(&h).ok()).unwrap_or_default(),
         windows,
+        intercept: None,
     }
 }
 
@@ -855,6 +927,38 @@ fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Tr
     }
 }
 
+impl ClientBackend {
+    /// Poll a course computed on a worker thread (slider blends, intercepts), cached by `key`
+    /// until the next game state.
+    fn poll_course(&self, key: String, ship: ShipId, job: impl FnOnce(Game, f64) -> Option<m::TransferPlan> + Send + 'static) -> ui::PlanPoll {
+        if let Some(p) = self.between.borrow().get(&key) {
+            return ui::PlanPoll::Done(p.clone());
+        }
+        let mut jobs = self.between_jobs.borrow_mut();
+        if let Some(rx) = jobs.get(&key) {
+            return match rx.try_recv() {
+                Ok(res) => {
+                    jobs.remove(&key);
+                    let mut cache = self.between.borrow_mut();
+                    if cache.len() > 64 {
+                        cache.clear();
+                    }
+                    cache.insert(key, res.clone());
+                    ui::PlanPoll::Done(res)
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => ui::PlanPoll::Pending,
+                Err(_) => {
+                    jobs.remove(&key);
+                    ui::PlanPoll::Done(None)
+                }
+            };
+        }
+        let Some((game, now)) = self.plan_input(ship) else { return ui::PlanPoll::Done(None) };
+        jobs.insert(key, Job::spawn(move || job(game, now)));
+        ui::PlanPoll::Pending
+    }
+}
+
 impl Backend for ClientBackend {
     fn poll(&mut self) -> Vec<BackendEvent> {
         let incoming = self.net.as_ref().map(|n| n.poll()).unwrap_or_default();
@@ -1022,7 +1126,12 @@ impl Backend for ClientBackend {
                 if let Some(code) = code {
                     let ships = self.ship_ids(p.ship);
                     let to = SimBody(p.target);
+                    let icp = serde_json::from_str::<sim::intercept::Hint>(&p.token).ok();
                     let cmd = match serde_json::from_str::<sim::plan::PlanHint>(&p.token) {
+                        _ if icp.is_some() => {
+                            let h = icp.unwrap();
+                            Command::Intercept { ships, target: h.target, depart_t: h.depart_t, arrive_t: h.arrive_t, matched: h.matched }
+                        }
                         Ok(hint) => Command::TransferPlanned { ships, to, depart_t: p.depart_t, hint },
                         Err(_) => Command::Transfer { ships, to, depart_t: Some(p.depart_t) },
                     };
@@ -1233,32 +1342,15 @@ impl Backend for ClientBackend {
 
     fn plan_between_async(&self, a: &m::TransferPlan, b: &m::TransferPlan, f: f32) -> ui::PlanPoll {
         let key = format!("{}|{}|{}|{}|{}", a.token, a.depart_t.to_bits(), b.token, b.depart_t.to_bits(), f.to_bits());
-        if let Some(p) = self.between.borrow().get(&key) {
-            return ui::PlanPoll::Done(p.clone());
-        }
-        let mut jobs = self.between_jobs.borrow_mut();
-        if let Some(rx) = jobs.get(&key) {
-            return match rx.try_recv() {
-                Ok(res) => {
-                    jobs.remove(&key);
-                    let mut cache = self.between.borrow_mut();
-                    if cache.len() > 64 {
-                        cache.clear();
-                    }
-                    cache.insert(key, res.clone());
-                    ui::PlanPoll::Done(res)
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => ui::PlanPoll::Pending,
-                Err(_) => {
-                    jobs.remove(&key);
-                    ui::PlanPoll::Done(None)
-                }
-            };
-        }
-        let Some((game, _)) = self.plan_input(a.ship) else { return ui::PlanPoll::Done(None) };
         let (a, b) = (a.clone(), b.clone());
-        jobs.insert(key, Job::spawn(move || compute_between(&game, &a, &b, f as f64)));
-        ui::PlanPoll::Pending
+        self.poll_course(key, a.ship, move |game, _| compute_between(&game, &a, &b, f as f64))
+    }
+
+    fn plan_intercept_async(&self, ship: ShipId, target: ShipId, matched: bool) -> ui::PlanPoll {
+        if ship >= PLANNED_BASE {
+            return ui::PlanPoll::Done(None);
+        }
+        self.poll_course(format!("icp|{ship}|{target}|{matched}"), ship, move |game, now| compute_intercept(&game, now, ship, target, matched))
     }
 
     fn describe(&self, key: &str) -> Option<String> {

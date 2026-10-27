@@ -412,6 +412,21 @@ pub struct TransferPlan {
     pub token: String,
     /// Upcoming good departure times (seconds), best first is not required.
     pub windows: Vec<f64>,
+    /// Set when this course intercepts an enemy ship instead of going to `target`.
+    pub intercept: Option<Intercept>,
+}
+
+/// What an intercept course does at the meeting point (`TransferPlan::arrive_t`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Intercept {
+    /// the enemy ship
+    pub target: ShipId,
+    /// relative speed at the meeting point before any match burn, km/s
+    pub closing: f64,
+    /// a match burn (in `dv_capture`) cancels that speed so we stay with it; else we fly through
+    pub matched: bool,
+    /// where the target will be then (km)
+    pub meet: [f64; 2],
 }
 
 #[derive(Clone, Debug)]

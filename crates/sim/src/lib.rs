@@ -7,6 +7,7 @@ pub mod combat;
 pub mod fog;
 pub mod fleet;
 pub mod game;
+pub mod intercept;
 pub mod kepler;
 pub mod plan;
 pub mod station;
