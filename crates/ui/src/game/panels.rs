@@ -755,7 +755,7 @@ fn body_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Body, ca
     match &b.intel {
         Some(i) => {
             let age = view.now - i.seen_at;
-            let mut lines = vec![format!("Power in orbit {:.0} · scanned {} ago", i.power, fmt_dur(age))];
+            let mut lines = vec![format!("Power in orbit {:.0} · scanned {} ago", i.power.max(0.0), fmt_dur(age))];
             if !i.upgrades.is_empty() {
                 lines.push(format!("Upgrades: {}", i.upgrades.join(", ")));
             }
