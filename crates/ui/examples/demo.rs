@@ -66,6 +66,7 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
             game(ui, be);
             let Screen::Game(g) = &mut ui.screen else { unreachable!() };
             let v = be.view().unwrap().clone();
+            be.report = Some(ui::demo::demo_report(v.now));
             match scene {
                 "body" => g.selected = Some(Focus::Body(1)),
                 "owned" => g.selected = Some(Focus::Body(2)),
@@ -95,7 +96,14 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                     g.selected = Some(Focus::Ship(90));
                     g.mode = Mode::Target(90);
                 }
-                "report" => be.report = Some(ui::demo::demo_report(v.now)),
+                "report" | "report_contacts" | "report_log" => {
+                    g.sensors_open = true;
+                    g.report.show(match scene {
+                        "report" => ReportTab::Now,
+                        "report_contacts" => ReportTab::Contacts,
+                        _ => ReportTab::Log,
+                    });
+                }
                 "rock" => g.selected = Some(Focus::Body(9)),
                 "queue" => {
                     for c in [ShipClass::Gunship, ShipClass::Scout, ShipClass::Bomber] {
