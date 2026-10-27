@@ -19,6 +19,10 @@ pub enum StationKind {
     Relay,
     /// advanced tier: detects ships by mass, cloaks or not
     Gravimetric,
+    /// advanced tier: shoots down incoming ordnance, fragments asteroids
+    Interdiction,
+    /// advanced tier: long-range laser on a body you own
+    LaserBattery,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -62,7 +66,7 @@ pub const DEPOT_START: f64 = 300.0;
 pub const STATION_YARD_LEVEL: u8 = 2;
 
 impl StationKind {
-    pub const ALL: [StationKind; 7] = [
+    pub const ALL: [StationKind; 9] = [
         StationKind::Shipyard,
         StationKind::FuelDepot,
         StationKind::Telescope,
@@ -70,6 +74,8 @@ impl StationKind {
         StationKind::Defense,
         StationKind::Relay,
         StationKind::Gravimetric,
+        StationKind::Interdiction,
+        StationKind::LaserBattery,
     ];
 
     pub fn label(self) -> &'static str {
@@ -81,6 +87,8 @@ impl StationKind {
             StationKind::Defense => "Defense platform",
             StationKind::Relay => "Sensor relay",
             StationKind::Gravimetric => "Gravimetric array",
+            StationKind::Interdiction => "Interdiction grid",
+            StationKind::LaserBattery => "Phased laser battery",
         }
     }
     pub fn describe(self) -> &'static str {
@@ -91,7 +99,9 @@ impl StationKind {
             StationKind::Scanner => "Short range, but sees every ship in range and reads enemy flight plans.",
             StationKind::Defense => "Armed platform. Fights for the orbit and counts toward control.",
             StationKind::Relay => "Your other sensors within its range reach 50% farther.",
-            StationKind::Gravimetric => "Detects ships by their mass, cloaked or not: dreadnoughts from 2,000,000 km, a scout from ~400,000 km.",
+            StationKind::Gravimetric => "Detects ships by their mass, cloaked or not: dreadnoughts from 400,000 km, a scout from ~80,000 km.",
+            StationKind::Interdiction => "Shoots down incoming torpedoes and mass-driver slugs, and halves asteroid impacts here by fragmenting them.",
+            StationKind::LaserBattery => "Laser battery on a body you own: hits ships out to 40,000 km, weaker with distance.",
         }
     }
     /// (matter, energy, build seconds for one worker)
@@ -104,11 +114,15 @@ impl StationKind {
             StationKind::Defense => (250.0, 150.0, 3.0 * 3600.0),
             StationKind::Relay => (150.0, 150.0, 2.0 * 3600.0),
             StationKind::Gravimetric => (500.0, 500.0, 3.0 * 3600.0),
+            StationKind::Interdiction => (600.0, 600.0, 4.0 * 3600.0),
+            StationKind::LaserBattery => (1000.0, 1200.0, 6.0 * 3600.0),
         }
     }
     pub fn max_hp(self) -> f64 {
         match self {
             StationKind::Defense => 400.0,
+            StationKind::LaserBattery => 300.0,
+            StationKind::Interdiction => 250.0,
             StationKind::Shipyard => 300.0,
             _ => 150.0,
         }
@@ -117,6 +131,7 @@ impl StationKind {
     pub fn attack(self) -> f64 {
         match self {
             StationKind::Defense => 60.0,
+            StationKind::LaserBattery => 120.0,
             _ => 0.0,
         }
     }
@@ -125,6 +140,8 @@ impl StationKind {
             StationKind::Scanner | StationKind::Relay => Some(Tech::ScanningStations),
             StationKind::Defense => Some(Tech::DefensePlatforms),
             StationKind::Gravimetric => Some(Tech::GravimetricArray),
+            StationKind::Interdiction => Some(Tech::InterdictionGrid),
+            StationKind::LaserBattery => Some(Tech::PhasedLasers),
             _ => None,
         }
     }
@@ -151,6 +168,9 @@ impl Game {
             if !self.has_tech(p, t) {
                 return Some(format!("needs {}", t.label()));
             }
+        }
+        if kind == StationKind::LaserBattery && self.bodies[body.0 as usize].owner != Some(p) {
+            return Some("only on a body you own".into());
         }
         if self.workers(p, body) == 0 {
             return Some(self.no_constructor_reason(p, body));

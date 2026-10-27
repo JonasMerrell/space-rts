@@ -336,7 +336,7 @@ impl Tech {
             Tech::FusionWarheads => "Torpedo and slug damage +60%; slugs also hit stations.",
             Tech::Minefields => "Constructors seed mines that hit enemy ships capturing into that orbit.",
             Tech::InterdictionGrid => "Station that shoots down incoming torpedoes and slugs and fragments asteroids.",
-            Tech::PhasedLasers => "Planet-based laser battery that hits ships out to 250,000 km.",
+            Tech::PhasedLasers => "Planet-based laser battery that hits ships out to 40,000 km.",
             Tech::DecoyDrones => "Cheap drones that look like a warship to enemy sensors.",
             Tech::HeatSinkCloaks => "Ships can go dark for 12 h by storing their heat, then must vent.",
             Tech::ThermalBaffles => "Cloaks last twice as long; venting is half as bright.",

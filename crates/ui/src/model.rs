@@ -653,7 +653,7 @@ pub struct StationsView {
 }
 
 /// Station kinds (= sim `StationKind`), also the icon names `station_<lowercase>`.
-pub const STATION_KINDS: [&str; 7] = ["Shipyard", "FuelDepot", "Telescope", "Scanner", "Defense", "Relay", "Gravimetric"];
+pub const STATION_KINDS: [&str; 9] = ["Shipyard", "FuelDepot", "Telescope", "Scanner", "Defense", "Relay", "Gravimetric", "Interdiction", "LaserBattery"];
 
 /// A special action a ship or station has (advanced tier: go dark, decoy look, lidar sweep...).
 /// Shown as a button; tapping it sends `UiAction::ShipAbility` / `StationAbility` with `key`.

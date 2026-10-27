@@ -99,7 +99,7 @@ pub fn station_sensor(kind: StationKind) -> Option<(f64, SensorKind)> {
         StationKind::Telescope => Some((500_000.0, SensorKind::Passive)),
         StationKind::Scanner => Some((150_000.0, SensorKind::Scanner)),
         StationKind::Relay => Some((400_000.0, SensorKind::Relay)),
-        StationKind::Gravimetric => Some((2_000_000.0, SensorKind::Gravimetric)),
+        StationKind::Gravimetric => Some((400_000.0, SensorKind::Gravimetric)),
         _ => None,
     }
 }
@@ -494,6 +494,7 @@ impl Game {
             let mut g = self.clone();
             g.ships.clear();
             g.stations.clear();
+            g.minefields.clear();
             g.fleets.clear();
             g.drives.clear();
             g.bodies = vec![BodyState::default(); g.bodies.len()];
@@ -515,6 +516,8 @@ impl Game {
         g.next_ship = g.ships.iter().map(|s| s.id.0 + 1).max().unwrap_or(0);
         // stations are big: seen whenever their body is
         g.stations.retain(|st| st.owner == p || v.bodies.binary_search(&st.body).is_ok());
+        // mines are only seen by their owner and by scanning stations
+        g.minefields.retain(|m| m.owner == p || v.scanned_bodies.contains(&m.body));
         for st in g.stations.iter_mut().filter(|st| st.owner != p) {
             st.fuel = 0.0;
         }

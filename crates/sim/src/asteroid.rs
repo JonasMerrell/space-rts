@@ -400,7 +400,7 @@ impl Game {
         b.orbit = None;
         b.soi = 0.0;
         self.drives.retain(|d| d.body != ast);
-        let s = imp.severity;
+        let s = imp.severity * self.impact_shield(imp.body);
         let mut doomed: Vec<BodyId> = vec![ast];
         let target = imp.body;
         let bi = target.0 as usize;

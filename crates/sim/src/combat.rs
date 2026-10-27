@@ -17,6 +17,9 @@ pub const KINETIC_SPEED: f64 = 25.0;
 pub const LIGHT_SPEED: f64 = 299_792.458;
 pub const KINETIC_RANGE: f64 = 4_000.0;
 pub const ENERGY_RANGE: f64 = 8_000.0;
+/// Phased laser battery reach and falloff distance (km).
+pub const BEAM_RANGE: f64 = 40_000.0;
+pub const BATTERY_FALLOFF: f64 = 15_000.0;
 /// Beam damage halves at this range.
 pub const BEAM_FALLOFF: f64 = 3_000.0;
 /// Kinetic damage relative to energy when a slug hits at muzzle speed.
@@ -31,6 +34,7 @@ pub fn range(w: Weapon) -> f64 {
         Weapon::None => 0.0,
         Weapon::Kinetic => KINETIC_RANGE,
         Weapon::Energy => ENERGY_RANGE,
+        Weapon::Beam => BEAM_RANGE,
     }
 }
 
@@ -123,6 +127,10 @@ pub fn shot(weapon: Weapon, r: V2, u: V2, size: f64, evade: f64) -> Option<Shot>
         Weapon::Energy => {
             let tof = d / LIGHT_SPEED;
             Some(Shot { tof, hit: 1.0, factor: 1.0 / (1.0 + (d / BEAM_FALLOFF).powi(2)) })
+        }
+        Weapon::Beam => {
+            let tof = d / LIGHT_SPEED;
+            Some(Shot { tof, hit: 1.0, factor: 1.0 / (1.0 + (d / BATTERY_FALLOFF).powi(2)) })
         }
         Weapon::Kinetic => {
             let tof = lead_time(r, u, KINETIC_SPEED)?;
@@ -262,6 +270,7 @@ mod tests {
 // ------------------------------------------------------------------ game integration
 
 use crate::game::{EventKind, Game, Ship, ShipId, ShipState};
+use crate::station::StationKind;
 use crate::system::BodyId;
 
 /// Sub-steps per combat tick: flybys at tens of km/s cross a weapon envelope in a minute or two.
@@ -393,11 +402,16 @@ impl Game {
             }
             let (dm, am) = modf(st.owner, Weapon::Energy);
             let armed = st.kind.attack() > 0.0;
+            let weapon = match st.kind {
+                StationKind::LaserBattery => Weapon::Beam,
+                _ if armed => Weapon::Energy,
+                _ => Weapon::None,
+            };
             let c = |t| Combatant {
                 key: 2 << 40 | st.id.0 as u64,
                 owner: st.owner,
                 class: None,
-                weapon: if armed { Weapon::Energy } else { Weapon::None },
+                weapon,
                 attack: st.kind.attack(),
                 hp: st.hp,
                 pos: sys.pos(st.body, t),

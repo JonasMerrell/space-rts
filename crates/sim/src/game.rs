@@ -35,6 +35,8 @@ pub enum Weapon {
     Kinetic,
     /// lasers: light-speed, lower damage
     Energy,
+    /// phased laser battery (stations only): light-speed, very long range, falls off with distance
+    Beam,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -140,6 +142,7 @@ impl ShipClass {
         let weapon = match s.weapon {
             Weapon::Kinetic => "kinetic slugs (hard-hitting, slow projectiles)",
             Weapon::Energy => "lasers (light-speed, lighter hits)",
+            Weapon::Beam => "a long-range laser battery",
             Weapon::None => "no weapons",
         };
         let dv = s.ve * ((s.dry_mass + s.fuel_cap) / s.dry_mass).ln();
@@ -596,6 +599,9 @@ pub struct Game {
     /// lidar sweeps running or cooling down (see cloak.rs)
     #[serde(default)]
     pub sweeps: Vec<crate::cloak::Sweep>,
+    /// orbital minefields (see bastion.rs)
+    #[serde(default)]
+    pub minefields: Vec<crate::bastion::Minefield>,
 }
 
 /// Commands players send. Applied at the current game time.
@@ -619,6 +625,8 @@ pub enum Command {
     SetDecoy { ship: ShipId, looks_like: ShipClass },
     /// Lidar sweep from one of your scanning stations.
     LidarSweep { station: crate::station::StationId },
+    /// Seed (or top up) an orbital minefield with a construction ship parked there.
+    LayMines { body: BodyId },
     BuildStation { body: BodyId, kind: StationKind },
     Chat { text: String },
     Extend { seconds: f64 },
@@ -705,6 +713,7 @@ impl Game {
             drives: vec![],
             drifts: vec![],
             sweeps: vec![],
+            minefields: vec![],
         };
         let _ = g.add_player(host_name, None);
         g
@@ -925,6 +934,7 @@ impl Game {
             | Command::QueueOrder { body, .. }
             | Command::CancelJob { body, .. }
             | Command::MoveJob { body, .. }
+            | Command::LayMines { body }
                 if bad(body) =>
             {
                 return Err("no such body".into())
@@ -1093,6 +1103,7 @@ impl Game {
             Command::Cloak { ships, on } => self.set_cloak(player, &ships, on),
             Command::SetDecoy { ship, looks_like } => self.set_decoy(player, ship, looks_like),
             Command::LidarSweep { station } => self.lidar_sweep(player, station),
+            Command::LayMines { body } => self.lay_mines(player, body),
             Command::BuildStation { body, kind } => self.build_station(player, body, kind).map(|_| ()),
             Command::SetOrder { ship, order } => {
                 self.own_ship(player, ship)?;
@@ -1278,6 +1289,7 @@ impl Game {
                 self.research_tick();
                 self.cloak_tick();
                 self.stations_tick(TICK);
+                self.mines_tick(TICK);
                 self.combat_tick(TICK);
                 self.fleet_tick(TICK);
                 self.ownership();
@@ -1382,6 +1394,7 @@ impl Game {
                             ship.state = ShipState::Parked { body, departure: None };
                             self.event(Some(owner), EventKind::Good, "Arrived", &format!("{name} is in orbit of {bname}"), Some(body), Some(id));
                             self.continue_route(i);
+                            self.trip_mines(id, body, dv);
                         } else {
                             // can't brake: fly past
                             let st = tr.state_at(sys, te).unwrap();

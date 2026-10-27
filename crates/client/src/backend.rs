@@ -436,6 +436,7 @@ impl ClientBackend {
         let ships = real_ships(g, &[ship]);
         match key {
             "cloak_on" | "cloak_off" => Some(Command::Cloak { ships, on: key == "cloak_on" }),
+            "mines" => ships.iter().filter_map(|&id| g.ship(id)).find(|s| s.class == g::ShipClass::Constructor).and_then(|s| s.parked_at()).map(|body| Command::LayMines { body }),
             "decoy" => {
                 let s = g.ship(*ships.first()?)?;
                 // cycle through the warship looks
@@ -1771,6 +1772,15 @@ impl Backend for ClientBackend {
                 let blocker = ships.iter().find_map(|s| g.cloak_blocker(me, s));
                 let note = format!("{:.0} energy · {} heat sink", sim::cloak::CLOAK_ENERGY * ships.len() as f64, ui::theme::fmt_dur(sim::cloak::DARK_TIME * g.mods(me).cloak_time));
                 out.push(m::Ability { key: "cloak_on".into(), label: "GO DARK".into(), on: false, blocker, note });
+            }
+        }
+        // construction ships seed minefields where they're parked
+        if g.has_tech(me, Tech::Minefields) {
+            if let Some(b) = ships.iter().find(|s| s.class == g::ShipClass::Constructor).and_then(|s| s.parked_at()) {
+                let n = g.mines_at(me, b);
+                let (mm, me_) = sim::bastion::MINE_COST;
+                let note = if n > 0 { format!("our field here: {n}/{} charges", sim::bastion::MINE_CHARGES) } else { format!("{mm:.0}M {me_:.0}E · {} charges", sim::bastion::MINE_CHARGES) };
+                out.push(m::Ability { key: "mines".into(), label: if n > 0 { "RESTOCK MINES".into() } else { "LAY MINES".into() }, on: n > 0, blocker: g.mines_blocker(me, b), note });
             }
         }
         if let [s] = ships.as_slice() {

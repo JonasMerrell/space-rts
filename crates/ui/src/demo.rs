@@ -915,8 +915,10 @@ impl Backend for DemoBackend {
             .collect();
         let scanning = self.techs_done.contains(&17);
         let platforms = self.techs_done.contains(&15);
+        // the demo has no advanced-tier stations
         let options = STATION_KINDS
             .iter()
+            .take(DEMO_STATIONS.len())
             .enumerate()
             .map(|(i, k)| {
                 let blocker = if !present {
@@ -1134,7 +1136,7 @@ const DEMO_TECHS: [(&str, &str, &str); 35] = [
     ("FusionWarheads", "Fusion warheads", "Torpedo and slug damage +60%; slugs also hit stations."),
     ("Minefields", "Orbital minefields", "Constructors seed mines that hit enemy ships capturing into that orbit."),
     ("InterdictionGrid", "Interdiction grid", "Station that shoots down incoming torpedoes and slugs and fragments asteroids."),
-    ("PhasedLasers", "Phased laser battery", "Planet-based laser battery that hits ships out to 250,000 km."),
+    ("PhasedLasers", "Phased laser battery", "Planet-based laser battery that hits ships out to 40,000 km."),
     ("DecoyDrones", "Decoy drones", "Cheap drones that look like a warship to enemy sensors."),
     ("HeatSinkCloaks", "Heat-sink cloaking", "Ships can go dark for 12 h by storing their heat, then must vent."),
     ("ThermalBaffles", "Thermal baffles", "Cloaks last twice as long; venting is half as bright."),
