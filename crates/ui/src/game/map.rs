@@ -62,7 +62,16 @@ fn min_radius(kind: BodyKind) -> f32 {
 }
 
 pub fn body_radius_px(b: &Body, cam: &Camera) -> f32 {
-    ((b.radius * cam.zoom) as f32).max(min_radius(b.kind) * s())
+    let true_px = (b.radius * cam.zoom) as f32;
+    match b.kind {
+        // Planets and moons start growing as soon as you zoom in (min dot + 1.6× true size) instead of
+        // sitting at the minimum until the true size catches up; close up they approach true size.
+        BodyKind::Planet | BodyKind::Moon => {
+            let m = min_radius(b.kind) * s();
+            (m + true_px * 1.6).min(true_px.max(m) + m * 1.5)
+        }
+        _ => true_px.max(min_radius(b.kind) * s()),
+    }
 }
 
 /// Where a ship token is drawn. Parked ships sit on a little ring around their body.

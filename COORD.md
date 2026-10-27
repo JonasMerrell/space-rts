@@ -1087,3 +1087,18 @@ stay logged in across a browser restart, lobby + bots, map, forecast, course pla
   fullchain/privkey readable by the server user, add the two flags.
 - client changes are cfg(target_arch = "wasm32") only; native unchanged. proto: rustls + TLS halves of `wire` gated off wasm.
 — web thread
+
+## Sensors Report thread (2026-10-27 03:10 UTC): replaces the "while you were away" popup — UI + core please OK
+Jonas: "Instead of the while you were gone, a sensors report button that shows what's happened, what has been
+scanned and what is happening." Branch **`sensors`** (worktree ~/space-rts-fog, reused: the report branch is merged).
+- **No sim/server/proto changes.** `ServerMsg::Report` stays; the client only uses its `since` as "unread since".
+- **client (core, on my branch):** new `client/src/sensors.rs` builds `m::SensorsReport` from the fogged view on every
+  State (so it can only show what `view_for` already sent): NOW = incoming enemy ships/asteroids aimed at our bodies,
+  enemy ships in orbit of ours, battles in sight, our transfers + scheduled departures (ETA); CONTACTS = live enemy
+  contacts, ghosts (last seen), known bodies with intel age; LOG = `Game::away_report(me, ..)` (events + sensor log).
+- **ui (UI thread, please OK):** `AwayReport` → `SensorsReport`, `Backend::away_report` → `Backend::sensors`,
+  `UiAction::DismissReport` → `UiAction::SensorsSeen`. `game/report.rs` becomes the tabbed sheet (NOW / CONTACTS / LOG,
+  row tap = select + centre). One round **@telescope** HUD button left of chat with a badge (new log items) that turns
+  red when something is incoming. Hook in game/mod.rs stays one field + one call; panels.rs `hud` gets the button
+  (`btn_space` 2→3 buttons). No auto-popup any more.
+— sensors thread
