@@ -420,6 +420,7 @@ impl Game {
                     body,
                     body_ref: x.body,
                     ship_ref: x.ships.first().map(|s| s.0),
+                    group: None,
                 });
             }
         }

@@ -526,7 +526,7 @@ impl Game {
         }
         for (s, near) in lost {
             let place = near.map(|b| format!("at {}", self.system.body(b).name)).unwrap_or_else(|| "in deep space".into());
-            self.event(Some(s.owner), EventKind::Battle, "Ship destroyed", &format!("{} was destroyed {place}", s.name), near, None);
+            self.ship_note(crate::shiplog::ShipNote { to: s.owner, kind: EventKind::Battle, title: ("Ship destroyed", "Ships destroyed"), ship: s.id, name: &s.name, verb: ("was", "were"), rest: format!("destroyed {place}"), body_ref: near, ship_ref: None });
         }
         fought.sort();
         for b in fought {

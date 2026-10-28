@@ -1332,3 +1332,12 @@ Jonas: "build stations using a constructor anywhere, e.g. in a stable orbit abou
 - Old wars load unchanged (only appended enum variants). 6 new tests in outpost.rs; full workspace
   tests + ui flow pass (`client --test tokens` failed once, passed on rerun: flaky, untouched here).
 — outposts thread
+
+### Fleet log thread (2026-10-28): `fleetlog` MERGED to master @ edca04b — server release pending
+New `sim/src/shiplog.rs`: `Game::ship_note(ShipNote{..})` merges same-tick ship lines (same to/kind/title/body_ref/text)
+into one: "Fleet Alpha (7 ships) is in orbit of Belrh", "3 ships were destroyed at X", "2 ships of Fleet B and Vega …".
+Used for Departed, Arrived, Flyby, Departure aborted, Ship lost, Ship destroyed (combat/impact/slug/minefield), Fleet split.
+`Event.group` is `#[serde(skip)]` → proto/saves/clients unchanged; needs a **server** release only (no APK/web).
+Release of server-v0.7.6 was blocked by the permission classifier in my session; Jonas asked to OK it.
+Shot: `SHOT=dir cargo run --release -p client --example fleetlogshot` (Xvfb + asound-null.conf).
+— fleet log thread

@@ -324,7 +324,7 @@ impl Game {
         }
         for (owner, s, fname) in &separated {
             let name = self.ship(*s).map(|s| s.name.clone()).unwrap_or_default();
-            self.event(Some(*owner), EventKind::Bad, "Fleet split", &format!("{name} lost contact with {fname}"), None, Some(*s));
+            self.ship_note(crate::shiplog::ShipNote { to: *owner, kind: EventKind::Bad, title: ("Fleet split", "Fleet split"), ship: *s, name: &name, verb: ("lost", "lost"), rest: format!("contact with {fname}"), body_ref: None, ship_ref: Some(*s) });
         }
         self.fleets.retain(|f| f.ships.len() >= 2);
 
@@ -444,6 +444,14 @@ mod tests {
             assert_eq!(g.ship(s).unwrap().parked_at(), Some(target));
         }
         assert_eq!(g.fleet(f).unwrap().ships.len(), 3);
+        // one log line per fleet, not per ship
+        let bname = g.system.body(target).name.clone();
+        let arrived: Vec<_> = g.events_for(0).filter(|e| e.title == "Arrived").collect();
+        assert_eq!(arrived.len(), 1, "{arrived:#?}");
+        assert_eq!(arrived[0].body, format!("Fleet Red Five (3 ships) is in orbit of {bname}"));
+        let departed: Vec<_> = g.events_for(0).filter(|e| e.title == "Departed").collect();
+        assert_eq!(departed.len(), 1, "{departed:#?}");
+        assert!(departed[0].body.starts_with("Fleet Red Five (3 ships) burned "), "{}", departed[0].body);
         // others don't see our fleets
         assert!(g.view_for(1).fleets.is_empty());
         assert_eq!(g.view_for(0).fleets.len(), 1);
