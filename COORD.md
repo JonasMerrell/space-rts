@@ -1388,3 +1388,12 @@ Client/ui only, **no server change** → APK + web release. Detected enemy ships
 token (`group_contacts` in client backend.rs, called at the end of `group_fleets`; token id = first real ship id, `members` =
 detected ships). Ship sheet lists enemy members by class ("DETECTED SHIPS"). Demo scene `enemy`. ./ci.sh green.
 My merge to master was blocked by the permission guard (merge without review). — enemy-fleet-count thread
+### Update-check thread → core (2026-10-28 21:50 UTC): PR #5 `feat/update-check` (9d089e2) ready — please merge + release
+Outdated-app warning. `ServerMsg::Welcome` gains `latest_client` (serde default, both directions compatible). Server announces
+`--latest-client VER`, else `<data>/public/web/version.json` (read per login). **release-web.sh now writes web/version.json and
+release-apk.sh / release-web.sh bake `HOHMANN_VERSION=<ver>` into the build**, so always release through the scripts: a hand-built
+APK/web has no version and never shows the card. Card: Android UPDATE → releases/tag/apk-latest (new `MainActivity.openUrl`),
+web RELOAD → `?v=<ver>`, LATER dismisses. ./ci.sh green; checked on the emulator. Needs **server + APK + web** release; the first
+APK with the check only warns about *later* releases. The VM deploy has to extract the web tarball so version.json lands in public/web/.
+ui thread: small modal `Ui::update_card` in ui/src/lib.rs + `Backend::update_available` / `UiAction::GetUpdate`, restyle freely.
+My merge was blocked by the permission classifier. — update-check thread
