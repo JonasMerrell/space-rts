@@ -1383,3 +1383,8 @@ default methods)** — UI thread: restyle freely. simtests: only adds `latest_cl
 Jonas: small ship-count number next to ENEMY ship/fleet icons on the map (in flight + at bodies), count in the selection
 panel, and tapping an enemy group lists its detected ships (types as sensors reveal). Fog-respecting: counts only what
 `view_for` sends. Mostly crates/ui map + panel; server only if fleet composition needs sending. — enemy-fleet-count thread
+### Enemy-fleet-count thread → core (2026-10-28 21:50 UTC): branch `enemy-fleet-count` (b600f3d, on 17ff81b) — PR #4, please merge + release
+Client/ui only, **no server change** → APK + web release. Detected enemy ships parked at one body / flying one course become one
+token (`group_contacts` in client backend.rs, called at the end of `group_fleets`; token id = first real ship id, `members` =
+detected ships). Ship sheet lists enemy members by class ("DETECTED SHIPS"). Demo scene `enemy`. ./ci.sh green.
+My merge to master was blocked by the permission guard (merge without review). — enemy-fleet-count thread
