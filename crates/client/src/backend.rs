@@ -1541,7 +1541,8 @@ impl Backend for ClientBackend {
             ("ship", name) => g::ShipClass::ALL.into_iter().find(|c| c.stats().name.eq_ignore_ascii_case(name)).map(|c| c.describe()),
             ("upgrade", name) => {
                 let level = parts.next().and_then(|l| l.parse().ok()).unwrap_or(1);
-                upgrade_by_name(name).map(|u| u.describe(level))
+                let g = self.game.as_ref()?;
+                upgrade_by_name(name).map(|u| g.describe_upgrade(u, level))
             }
             _ => None,
         }
@@ -1665,8 +1666,8 @@ impl Backend for ClientBackend {
                 .filter(|c| g.yard_level(self.me, b) >= c.stats().min_shipyard)
                 .filter(|c| **c != g::ShipClass::Slug && c.needs().is_none_or(|t| g.has_tech(self.me, t)))
                 .map(|&c| {
-                    let s = c.stats();
-                    (ship_class(c), m::Cost { matter: s.matter, energy: s.energy, seconds: s.build_time })
+                    let (matter, energy, seconds) = g.ship_cost(c);
+                    (ship_class(c), m::Cost { matter, energy, seconds })
                 })
                 .collect()
         } else {
@@ -1684,7 +1685,7 @@ impl Backend for ClientBackend {
                 let lane = j.lane();
                 let prev = st.queue[..i].iter().rev().find(|p| p.lane() == lane).map(|p| p.done_t);
                 let (label, ship, dur) = match &j.kind {
-                    g::JobKind::Ship(c) => (c.stats().name.to_string(), Some(ship_class(*c)), c.stats().build_time / yard_speed),
+                    g::JobKind::Ship(c) => (c.stats().name.to_string(), Some(ship_class(*c)), g.ship_cost(*c).2 / yard_speed),
                     g::JobKind::Upgrade(u) => {
                         let k = ups_before.entry(u.index()).or_insert(0);
                         *k += 1;

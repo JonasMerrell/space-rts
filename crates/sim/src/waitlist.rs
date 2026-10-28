@@ -118,7 +118,10 @@ impl Game {
     /// Matter and energy `wish` costs, with `ahead` more of the same upgrade bought before it.
     pub fn wish_cost(&self, _p: PlayerId, wish: Wish, ahead: u8) -> (f64, f64) {
         match wish {
-            Wish::Build { class, .. } => (class.stats().matter, class.stats().energy),
+            Wish::Build { class, .. } => {
+                let (m, e, _) = self.ship_cost(class);
+                (m, e)
+            }
             Wish::Upgrade { body, upgrade } => {
                 let next = self.upgrade_level_after_queue(body, upgrade) + ahead + 1;
                 let (m, e, _) = upgrade.cost(next.min(Upgrade::MAX_LEVEL));
