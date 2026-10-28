@@ -693,8 +693,8 @@ pub enum Command {
 pub const TICK: f64 = 60.0;
 /// Most ships one player can have in orbit of a planet, counting ships on their way there and
 /// ships in its build queue (keeps huge stacks, and the lag they cause, out of the game).
-/// Gas giants hold more, moons and asteroids fewer: see `Game::orbit_cap`.
-pub const ORBIT_CAP: usize = 12;
+/// Moons and asteroids hold fewer (Jonas: 7 / 12 / 15): see `Game::orbit_cap`.
+pub const ORBIT_CAP: usize = 15;
 
 /// A game time that may be "never" (INFINITY). JSON has no infinity (serde_json writes `null`, which
 /// then fails to load), so it is stored as a huge finite number and read back as INFINITY.
@@ -1203,10 +1203,9 @@ impl Game {
     /// Most of one player's ships that fit in orbit of `body`.
     pub fn orbit_cap(&self, body: BodyId) -> usize {
         match self.system.body(body).kind {
-            BodyKind::GasGiant => 16,
-            BodyKind::Planet | BodyKind::Star => ORBIT_CAP,
-            BodyKind::Moon => 8,
-            BodyKind::Asteroid => 4,
+            BodyKind::GasGiant | BodyKind::Planet | BodyKind::Star => ORBIT_CAP,
+            BodyKind::Moon => 12,
+            BodyKind::Asteroid => 7,
         }
     }
 
