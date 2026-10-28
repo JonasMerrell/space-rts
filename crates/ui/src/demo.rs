@@ -243,13 +243,20 @@ impl DemoBackend {
             ship(2, "Lucky Star", ShipClass::Interceptor, 1, 5, Some(2)),
             ship(3, "Big Gulp", ShipClass::Tanker, 1, 1, Some(6)),
             ship(4, "Hammerhead", ShipClass::Bomber, 1, 2, Some(2)),
-            ship(10, "Corsair pack", ShipClass::Interceptor, 2, 4, Some(1)),
-            ship(11, "Choir", ShipClass::Gunship, 3, 2, Some(4)),
-            ship(12, "Miner swarm", ShipClass::Bomber, 4, 6, Some(5)),
+            ship(10, "Ship group", ShipClass::Interceptor, 2, 4, Some(1)),
+            ship(11, "Gunship", ShipClass::Gunship, 3, 2, Some(4)),
+            ship(12, "Bomber", ShipClass::Bomber, 4, 6, Some(5)),
         ];
         // our multi-ship tokens are fleets; a few loose ships at Borealis to group
         for sh in ships.iter_mut().filter(|s| s.owner == 1 && s.count > 1) {
             sh.members = (0..sh.count).map(|k| FleetMember { id: 100 * sh.id + k, name: format!("{} {}", sh.class.label(), k + 1), class: sh.class, fuel: 300.0 + 20.0 * k as f32, fuel_max: 400.0 }).collect();
+        }
+        // enemy multi-ship tokens: the detected ships flying/parked together, as sensors report them
+        for sh in ships.iter_mut().filter(|s| s.owner != 1 && s.count > 1) {
+            sh.members = (0..sh.count).map(|k| {
+                let class = if sh.id == 10 && k == 3 { ShipClass::Scout } else { sh.class };
+                FleetMember { id: 100 * sh.id + k, name: class.label().into(), class, fuel: 0.0, fuel_max: 400.0 }
+            }).collect();
         }
         ships.push(ship(5, "Wasp", ShipClass::Interceptor, 1, 1, Some(2)));
         ships.push(ship(6, "Sparrow", ShipClass::Scout, 1, 1, Some(2)));

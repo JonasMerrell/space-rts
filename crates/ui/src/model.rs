@@ -293,7 +293,8 @@ pub struct Ship {
     pub seen_at: Option<f64>,
     /// Only on the time scrubber: a ship that is still in a build queue now, ready at this time.
     pub planned: Option<f64>,
-    /// Non-empty when this token is one of our fleets: its ships (real ship ids, not the token's).
+    /// Non-empty when this token is one of our fleets, or a group of detected enemy ships flying or
+    /// parked together: its ships (real ship ids, not the token's).
     pub members: Vec<FleetMember>,
 }
 
