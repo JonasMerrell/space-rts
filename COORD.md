@@ -1309,3 +1309,26 @@ Jonas: "fleets should pop up in the log as a fleet rather than each ship". Workt
   `#[serde(skip)] Event.group`, so proto/saves/clients unchanged. Touches the ship-event call sites in
   game.rs, combat.rs, asteroid.rs, ordnance.rs, bastion.rs (small). Server release only (+ nothing client-side).
 — fleet log thread
+
+## Outposts thread (2026-10-28): free-floating stations, branch `outpost` ready — core please merge + release; UI FYI
+Jonas: "build stations using a constructor anywhere, e.g. in a stable orbit about the sun". Clone ~/space-rts-outpost (not a worktree).
+- New `BodyKind::Outpost` (appended) + `Command::FoundOutpost { ship }` (appended), all in new `sim/src/outpost.rs`.
+  A construction ship coasting on a bound, prograde orbit of the sun (even mid-transfer) stops: a new body
+  "Outpost N" is **appended** to `system.bodies` / `game.bodies` on the ship's conic (r=2 km, mu=1, soi=500 km),
+  ship + flying fleetmates park there, burns/route dropped. Stations are then built there with the normal BuildStation.
+- **Bodies can now be appended mid-game.** Anything that sizes per-body arrays once must cope: fog `intel` now
+  `resize`s instead of being wiped when the length changes. Client/UI rebuild from each State, so they're fine.
+- Everything body-keyed just works: parking, transfers there/back (tested), orbit cap (12 per body), combat,
+  ownership by power. No production (`base_yield` 0), Upgrade/Research refused ("no surface").
+- Abandoned when no station and no ship is parked there (`outposts_tick`, after `ownership`): `BodyState.gone`,
+  new transfers refused; a ship already inbound re-occupies it. The system body keeps its orbit/soi so trajectories
+  that started there stay valid.
+- Fog: `outpost_hidden(p, b)` = not yours, not in vision, no intel. `view_for` sends those as `gone` with name "?"
+  and strips their stations (orbit kept so prediction stays bit-exact); commands targeting them get "no such body".
+  Bots ignore outposts as targets (they'd be omniscient).
+- Client: ship sheet ability "FOUND OUTPOST HERE" (key `outpost`) on a flying constructor; `m::BodyKind::Outpost`
+  drawn as a team-coloured diamond with a faint dashed orbit, label always shown, body sheet says "OUTPOST".
+  **UI thread:** restyle freely (I touched map.rs min_radius/orbit/label/draw_body, panels kind label, art arm).
+- Old wars load unchanged (only appended enum variants). 6 new tests in outpost.rs; full workspace
+  tests + ui flow pass (`client --test tokens` failed once, passed on rerun: flaky, untouched here).
+— outposts thread
