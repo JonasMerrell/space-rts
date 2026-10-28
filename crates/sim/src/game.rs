@@ -1022,8 +1022,13 @@ impl Game {
             if self.abandoned(b) {
                 return Err(format!("{} is abandoned", self.system.body(b).name));
             }
-            if self.is_outpost(b) && matches!(cmd, Command::Upgrade { .. } | Command::Research { .. }) {
-                return Err("an outpost has no surface to build on: use stations".into());
+            if self.is_outpost(b) && matches!(cmd, Command::Research { .. }) {
+                return Err("an outpost has no room for a lab".into());
+            }
+            if let Command::Upgrade { upgrade, .. } = cmd {
+                if let Some(why) = self.outpost_upgrade_blocker(b, upgrade) {
+                    return Err(why);
+                }
             }
         }
         match cmd {

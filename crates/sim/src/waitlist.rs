@@ -157,7 +157,7 @@ impl Game {
                     None
                 }
             }
-            Wish::Upgrade { body, .. } => (self.bodies[body.0 as usize].owner != Some(p)).then(|| "you don't own that body".into()),
+            Wish::Upgrade { body, upgrade } => self.outpost_upgrade_blocker(body, upgrade).or_else(|| (self.bodies[body.0 as usize].owner != Some(p)).then(|| "you don't own that body".into())),
             Wish::Station { body, kind } => self.station_blocker(p, body, kind),
             Wish::Research { body, tech } => self.research_blocker(p, body, tech),
         }

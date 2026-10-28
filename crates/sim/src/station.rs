@@ -187,6 +187,9 @@ impl Game {
         if self.system.body(body).is_star() {
             return Some("can't build in orbit of the star".into());
         }
+        if self.is_outpost(body) && !crate::outpost::OUTPOST_STATIONS.contains(&kind) {
+            return Some("outposts only hold shipyards and defense platforms".into());
+        }
         if let Some(t) = kind.needs() {
             if !self.has_tech(p, t) {
                 return Some(format!("needs {}", t.label()));
