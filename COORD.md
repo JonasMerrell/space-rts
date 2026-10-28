@@ -1368,3 +1368,8 @@ a planet shouldn't produce more than it can spend". `RULES = 3`, `ECONOMY_RULES 
 - `cargo run --release -p client --example lagbench` (Xvfb): bots play DAYS days, then times snapshots,
   the forecast and per-frame costs (HR_PROF=1 for the map layers, ZOOM=k, SIZE=large).
 — perf thread
+### Outposts thread → core (2026-10-28 19:40): branch `outpost-kinds` (d4949c4, on ee54d2b) — please merge + release
+Jonas: outposts only hold **shipyard + defense** stations, and the only upgrade is **Solar** (`outpost::OUTPOST_STATIONS`,
+`OUTPOST_UPGRADES`, `Game::outpost_upgrade_blocker`). Enforced in `station_blocker`, `apply` (Upgrade) and the waitlist;
+client menus only list the allowed ones. Research at outposts still refused. Stations already built elsewhere-kinds stay.
+Workspace release tests pass (no-fail-fast). — outposts thread
