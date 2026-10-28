@@ -60,6 +60,11 @@ impl<T: 'static> Job<T> {
     }
 }
 
+/// Least real time between two forecast restarts for other players' changes (each one simulates
+/// a week ahead), and the oldest a forecast may get before it is redone anyway.
+const FORECAST_GAP: f64 = 10.0;
+const FORECAST_MAX_AGE: f64 = 300.0;
+
 pub struct ClientBackend {
     server: String,
     /// who we log in as, and with what (a token once the server handed one out)
@@ -77,6 +82,8 @@ pub struct ClientBackend {
     view: Option<m::GameView>,
     /// cached absolute paths of flying ships
     paths: HashMap<u32, m::Trajectory>,
+    /// predicted courses by `course_key`, kept across server snapshots
+    courses: HashMap<u64, (SimTraj, m::Trajectory)>,
     last_event_seq: u64,
     was_running: bool,
     plan_cache: RefCell<HashMap<(ShipId, BodyId, i64), Option<m::TransferPlan>>>,
@@ -104,6 +111,13 @@ pub struct ClientBackend {
     last_ping: f64,
     last_error: Option<String>,
     forecast: Forecaster,
+    /// input signature and wall time of the running forecast, and whether a newer snapshot
+    /// changed something it depends on (restarted from `poll` once `FORECAST_GAP` has passed)
+    forecast_sig: u64,
+    forecast_at: f64,
+    forecast_due: bool,
+    /// wall time of the last command we sent: its result restarts the forecast at once
+    acted_at: std::cell::Cell<f64>,
     /// last `predicted` answer: (run gen, frame index, view)
     predicted: RefCell<Option<(u64, usize, Rc<m::GameView>)>>,
     /// Sensors report for the open game, rebuilt with the view.
@@ -141,6 +155,7 @@ impl ClientBackend {
             anchor: (0.0, 0.0),
             view: None,
             paths: HashMap::new(),
+            courses: HashMap::new(),
             last_event_seq: 0,
             was_running: false,
             plan_cache: RefCell::new(HashMap::new()),
@@ -160,6 +175,10 @@ impl ClientBackend {
             last_ping: 0.0,
             last_error: None,
             forecast: Forecaster::default(),
+            forecast_sig: 0,
+            forecast_at: 0.0,
+            forecast_due: false,
+            acted_at: std::cell::Cell::new(0.0),
             predicted: RefCell::new(None),
             sensors: None,
             sensors_seen: None,
@@ -167,6 +186,9 @@ impl ClientBackend {
     }
 
     fn send(&self, msg: ClientMsg) {
+        if matches!(msg, ClientMsg::Cmd { .. }) {
+            self.acted_at.set(unix_now());
+        }
         match &self.net {
             Some(n) if self.online => n.send(msg),
             // queued until we're back: taps made while reconnecting still go through
@@ -306,13 +328,13 @@ impl ClientBackend {
 
     fn on_state(&mut self, game: Game, me: g::PlayerId, real_time: f64) {
         let new_game = self.game.as_ref().is_none_or(|old| old.code != game.code);
+        let new_status = self.game.as_ref().is_none_or(|old| old.status != game.status);
         if new_game {
             self.last_event_seq = game.events_for(me).last().map(|e| e.seq).unwrap_or(0);
             self.was_running = false;
             self.plan_cache.borrow_mut().clear();
             self.windows.borrow_mut().clear();
             self.between.borrow_mut().clear();
-        self.impact_cache.borrow_mut().clear();
             self.impact_cache.borrow_mut().clear();
         }
         // notices for events we haven't seen
@@ -342,7 +364,31 @@ impl ClientBackend {
         self.plan_cache.borrow_mut().clear();
         self.between.borrow_mut().clear();
         self.rebuild();
-        self.forecast.restart(self.game.as_ref().unwrap(), me, self.now());
+        let sig = forecast::input_signature(self.game.as_ref().unwrap(), me);
+        let wall = unix_now();
+        let mine = wall - self.acted_at.get() < 5.0;
+        if new_game || new_status || mine || sig != self.forecast_sig && wall - self.forecast_at >= FORECAST_GAP || wall - self.forecast_at >= FORECAST_MAX_AGE {
+            self.restart_forecast();
+        } else {
+            // a snapshot that only moved the clock (most of them: any player's event re-sends the
+            // game to everyone) keeps the running forecast; a real change waits for `poll`
+            self.forecast_due |= sig != self.forecast_sig;
+        }
+    }
+
+    /// Simulate the week ahead again from the current snapshot (seconds of CPU on a phone).
+    fn restart_forecast(&mut self) {
+        let Some(game) = &self.game else { return };
+        self.forecast_sig = forecast::input_signature(game, self.me);
+        self.forecast_at = unix_now();
+        self.forecast_due = false;
+        self.forecast.restart(game, self.me, self.now());
+    }
+
+    /// Benchmarks/tests: take a game snapshot as if the server had just sent it.
+    #[doc(hidden)]
+    pub fn inject_state(&mut self, game: Game, me: g::PlayerId, real_time: f64) {
+        self.on_state(game, me, real_time);
     }
 
     /// How far the forecast for the latest snapshot has got (`forecast_until` also counts the
@@ -392,24 +438,50 @@ impl ClientBackend {
         };
         let sys = game.system.clone();
         self.paths.clear();
+        // The server re-sends the whole game on every event and every 20 s. Predicting every course
+        // again each time took ~0.2 s on a PC (a second or more on a phone): reuse the courses
+        // whose inputs haven't changed, and keep only the ones still in use.
+        let mut old = std::mem::take(&mut self.courses);
+        let courses = &mut self.courses;
+        let mut course = |key: u64, compute: &mut dyn FnMut() -> SimTraj| -> (SimTraj, m::Trajectory) {
+            let c = old.remove(&key).or_else(|| courses.get(&key).cloned()).unwrap_or_else(|| {
+                let tr = compute();
+                let model = to_model_traj(&sys, &tr);
+                (tr, model)
+            });
+            courses.insert(key, c.clone());
+            c
+        };
+        let mut flights: Vec<&mut g::Flight> = vec![];
+        let mut ids = vec![];
         for s in game.ships.iter_mut() {
             if let ShipState::Flying(f) = &mut s.state {
-                let tr = f.trajectory(&sys).clone();
-                self.paths.insert(s.id.0, to_model_traj(&sys, &tr));
+                ids.push(s.id.0);
+                flights.push(f);
             }
         }
+        // ghosts coast on their last known arc
         let me = self.me;
         for c in game.players.get_mut(me as usize).map(|p| p.contacts.as_mut_slice()).unwrap_or_default() {
-            // ghosts coast on their last known arc
             if let ShipState::Flying(f) = &mut c.ship.state {
-                let tr = f.trajectory(&sys).clone();
-                self.paths.insert(c.ship.id.0, to_model_traj(&sys, &tr));
+                ids.push(c.ship.id.0);
+                flights.push(f);
             }
+        }
+        for (f, id) in flights.into_iter().zip(ids) {
+            let key = course_key(&sys, &f.start, &f.burns, f.dest);
+            let (tr, model) = match &f.cache {
+                Some(tr) => course(key, &mut || tr.clone()),
+                None => course(key, &mut || g::Flight::compute(f, &sys)),
+            };
+            f.cache.get_or_insert(tr);
+            self.paths.insert(id, model);
         }
         for s in &game.ships {
             if let ShipState::Parked { departure: Some(d), .. } = &s.state {
-                let tr = sim::traj::predict(&sys, d.state, &d.burns, Some(d.to), d.state.t + g::Flight::HORIZON);
-                self.paths.insert(s.id.0, to_model_traj(&sys, &tr));
+                let key = course_key(&sys, &d.state, &d.burns, Some(d.to));
+                let (_, model) = course(key, &mut || sim::traj::predict(&sys, d.state, &d.burns, Some(d.to), d.state.t + g::Flight::HORIZON));
+                self.paths.insert(s.id.0, model);
             }
         }
         let game = self.game.as_ref().unwrap();
@@ -838,6 +910,20 @@ fn arr(v: V2) -> [f64; 2] {
     [v.x, v.y]
 }
 
+/// Everything a predicted course depends on: the same key means the same path.
+fn course_key(sys: &sim::System, start: &sim::traj::State, burns: &[sim::traj::Burn], dest: Option<SimBody>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    // founding an outpost adds a body
+    sys.bodies.len().hash(&mut h);
+    (start.parent.0, start.t.to_bits(), start.r.x.to_bits(), start.r.y.to_bits(), start.v.x.to_bits(), start.v.y.to_bits()).hash(&mut h);
+    for b in burns {
+        (b.t.to_bits(), b.prograde.to_bits(), b.radial.to_bits()).hash(&mut h);
+    }
+    dest.map(|d| d.0).hash(&mut h);
+    h.finish()
+}
+
 /// Timed absolute polyline of a sim trajectory (dense near bodies, where paths curve hardest).
 pub(crate) fn to_model_traj(sys: &sim::System, tr: &SimTraj) -> m::Trajectory {
     let mut points = vec![];
@@ -1125,6 +1211,9 @@ impl Backend for ClientBackend {
         let now = self.now();
         if let Some(v) = &mut self.view {
             v.now = now;
+        }
+        if self.forecast_due && wall - self.forecast_at >= FORECAST_GAP {
+            self.restart_forecast();
         }
         std::mem::take(&mut self.events)
     }
@@ -1986,5 +2075,42 @@ mod tests {
         // other players see neither the fleet nor its name
         let bob = game.view_for(1);
         assert!(build_view(&bob, 1, game.t, &HashMap::new()).ships.iter().all(|s| !s.is_fleet()));
+    }
+
+    #[test]
+    fn snapshots_reuse_unchanged_courses() {
+        let settings = g::Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 86_400.0, speed: 1.0 };
+        let mut game = Game::new("CRS1".into(), settings, 7, "ann");
+        game.add_player("bob", None).unwrap();
+        game.start();
+        let ship = game.ships.iter().find(|s| s.owner == 0).unwrap().id;
+        let home = game.players[0].home.unwrap();
+        let to = game.system.bodies.iter().find(|b| b.kind == SimKind::Planet && b.id != home).unwrap().id;
+        game.apply(0, Command::Transfer { ships: vec![ship], to, depart_t: None }).unwrap();
+        // the planner may wait for a window
+        while !matches!(game.ship(ship).unwrap().state, ShipState::Flying(_)) {
+            assert!(game.t < 86_400.0 * 0.9, "never departed");
+            game.advance_to(game.t + 1800.0);
+        }
+        let mut be = ClientBackend::new("127.0.0.1:1".into());
+        be.inject_state(game.view_for(0), 0, unix_now());
+        let first = be.paths[&ship.0].points.clone();
+        assert!(first.len() > 10);
+        // the next snapshot only moved the clock: same course, kept in the flight's cache too
+        game.advance_to(game.t + 60.0);
+        be.inject_state(game.view_for(0), 0, unix_now());
+        assert_eq!(be.paths[&ship.0].points, first);
+        let g2 = be.game.as_ref().unwrap();
+        assert!(matches!(&g2.ship(ship).unwrap().state, ShipState::Flying(f) if f.cache.is_some()));
+        // a new burn is a new course
+        let mut v = game.view_for(0);
+        if let Some(ShipState::Flying(f)) = v.ships.iter_mut().find(|s| s.id == ship).map(|s| &mut s.state) {
+            f.burns.push(sim::traj::Burn { t: game.t + 600.0, prograde: 0.5, radial: 0.0 });
+            // as it arrives from the server (the cache isn't sent)
+            f.cache = None;
+        }
+        be.inject_state(v, 0, unix_now());
+        assert_ne!(be.paths[&ship.0].points, first);
+        assert!(be.courses.len() <= 2, "courses no longer in use are dropped");
     }
 }
