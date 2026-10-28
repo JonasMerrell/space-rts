@@ -691,8 +691,9 @@ pub enum Command {
 }
 
 pub const TICK: f64 = 60.0;
-/// Most ships one player can have in orbit of one body, counting ships on their way there and
+/// Most ships one player can have in orbit of a planet, counting ships on their way there and
 /// ships in its build queue (keeps huge stacks, and the lag they cause, out of the game).
+/// Gas giants hold more, moons and asteroids fewer: see `Game::orbit_cap`.
 pub const ORBIT_CAP: usize = 12;
 
 /// A game time that may be "never" (INFINITY). JSON has no infinity (serde_json writes `null`, which
@@ -1156,8 +1157,9 @@ impl Game {
             }
             Command::Build { body, class } => {
                 let st = class.stats();
-                if self.orbit_load(player, body) >= ORBIT_CAP {
-                    return Err(format!("orbit full: at most {ORBIT_CAP} of your ships per body (counting ships on the way and in the build queue)"));
+                let cap = self.orbit_cap(body);
+                if self.orbit_load(player, body) >= cap {
+                    return Err(format!("orbit full: at most {cap} of your ships here (counting ships on the way and in the build queue)"));
                 }
                 let yard = self.yard_level(player, body);
                 if yard == 0 {
@@ -1198,7 +1200,17 @@ impl Game {
         }
     }
 
-    /// Ships `p` has at, heading to, or being built at `body` (see `ORBIT_CAP`).
+    /// Most of one player's ships that fit in orbit of `body`.
+    pub fn orbit_cap(&self, body: BodyId) -> usize {
+        match self.system.body(body).kind {
+            BodyKind::GasGiant => 16,
+            BodyKind::Planet | BodyKind::Star => ORBIT_CAP,
+            BodyKind::Moon => 8,
+            BodyKind::Asteroid => 4,
+        }
+    }
+
+    /// Ships `p` has at, heading to, or being built at `body` (see `orbit_cap`).
     pub fn orbit_load(&self, p: PlayerId, body: BodyId) -> usize {
         let ships = self.ships.iter().filter(|s| s.owner == p && (s.parked_at() == Some(body) && s.dest().is_none_or(|d| d == body) || s.dest() == Some(body))).count();
         let queued = self.bodies[body.0 as usize].queue.iter().filter(|j| j.owner == p && matches!(j.kind, JobKind::Ship(_))).count();
@@ -1263,9 +1275,10 @@ impl Game {
         let ships = self.expand_fleets(ships);
         // ships already headed there (re-planning) don't count twice
         let new = ships.iter().filter(|&&id| self.ship(id).is_some_and(|s| s.dest() != Some(to))).count();
-        if new > 0 && self.orbit_load(player, to) + new > ORBIT_CAP {
-            let room = ORBIT_CAP.saturating_sub(self.orbit_load(player, to));
-            return Err(format!("orbit full there: at most {ORBIT_CAP} of your ships per body, room for {room} more"));
+        let cap = self.orbit_cap(to);
+        if new > 0 && self.orbit_load(player, to) + new > cap {
+            let room = cap.saturating_sub(self.orbit_load(player, to));
+            return Err(format!("orbit full there: at most {cap} of your ships at this body, room for {room} more"));
         }
         let mut plans: Vec<(BodyId, (TransferPlan, Vec<BodyId>))> = vec![];
         let mut todo: Vec<(ShipId, usize)> = vec![];
@@ -1977,7 +1990,7 @@ mod tests {
         let home = g.players[0].home.unwrap();
         g.players[0].matter = 1e9;
         g.players[0].energy = 1e9;
-        while g.orbit_load(0, home) < ORBIT_CAP {
+        while g.orbit_load(0, home) < g.orbit_cap(home) {
             g.apply(0, Command::Build { body: home, class: ShipClass::Scout }).unwrap();
         }
         let e = g.apply(0, Command::Build { body: home, class: ShipClass::Scout }).unwrap_err();
