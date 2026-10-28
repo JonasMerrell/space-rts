@@ -1073,8 +1073,10 @@ impl ClientBackend {
 impl Backend for ClientBackend {
     fn poll(&mut self) -> Vec<BackendEvent> {
         let incoming = self.net.as_ref().map(|n| n.poll()).unwrap_or_default();
+        // the browser has one thread for drawing and the forecast: give it what a 60 Hz frame can
+        // spare, and less when frames are already slow (phones)
         #[cfg(target_arch = "wasm32")]
-        self.forecast.pump(0.006);
+        self.forecast.pump(if macroquad::time::get_frame_time() > 1.0 / 45.0 { 0.0015 } else { 0.004 });
         let wall = unix_now();
         for e in incoming {
             match e {
