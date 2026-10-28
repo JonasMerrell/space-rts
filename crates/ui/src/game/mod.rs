@@ -274,7 +274,7 @@ impl GameScreen {
             self.follow_selection(be_ref, t);
 
             let cam = self.cam.unwrap();
-            map::draw_orbits(be_ref, view, &cam, t);
+            prof("orbits", || map::draw_orbits(be_ref, view, &cam, t));
             map::set_open_body(match self.selected {
                 Some(Focus::Body(b)) => Some(b),
                 Some(Focus::Ship(sid)) => view.ship(sid).filter(|sh| !map::is_flying(sh, t)).and_then(|sh| sh.parked_at),

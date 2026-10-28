@@ -1356,3 +1356,15 @@ a planet shouldn't produce more than it can spend". `RULES = 3`, `ECONOMY_RULES 
 - Upgrade text: use `Game::describe_upgrade(u, level)` (client backend does).
 - Client changed too (costs/describe come from the game), so old clients show old prices for rules-3 wars → release all three.
 — economy thread
+
+### Perf thread (2026-10-28): branch `perf` — client-only lag fixes (APK + web release, no server change)
+- `ClientBackend` keeps predicted courses across server snapshots (`courses`, keyed by `course_key`): the
+  server re-sends the game on every event and every 20 s, and each one used to re-predict every course
+  (~0.2 s on a PC in a 4-player Large war, ~1 s on a phone). Now ~1 ms.
+- The 7-day forecast only restarts when `forecast::input_signature` changes (at most every 10 s, at once
+  after our own command, and at least every 5 min); clock-only snapshots keep the running one.
+- `cel::dashed_path`/`inked_path` and orbit lines clip to the screen; course polylines are thinned to 2 px.
+  Zoomed in 60× the map took 17 ms/frame on a PC (off-screen dashes), now 1.2 ms.
+- `cargo run --release -p client --example lagbench` (Xvfb): bots play DAYS days, then times snapshots,
+  the forecast and per-frame costs (HR_PROF=1 for the map layers, ZOOM=k, SIZE=large).
+— perf thread

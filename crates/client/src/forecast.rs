@@ -239,6 +239,34 @@ impl Work {
     }
 }
 
+/// Changes whenever the forecast from this snapshot could come out different (not just later):
+/// a server snapshot with the same input signature only moves the clock, so the running forecast
+/// stays valid and doesn't have to be thrown away and simulated again.
+pub fn input_signature(game: &Game, me: g::PlayerId) -> u64 {
+    let mut h = DefaultHasher::new();
+    signature(game).hash(&mut h);
+    (game.status == Status::Running, game.end_t.to_bits(), game.system.bodies.len(), game.fleets.len()).hash(&mut h);
+    for s in &game.ships {
+        (s.route.len(), s.order as u8, s.cloak.is_some()).hash(&mut h);
+    }
+    for b in &game.bodies {
+        (b.levels, b.shattered, b.gone).hash(&mut h);
+        for j in &b.queue {
+            (j.owner, j.done_t.to_bits(), j.then.is_some()).hash(&mut h);
+        }
+    }
+    for st in &game.stations {
+        (st.id.0, st.owner, st.body.0, st.done_t.to_bits()).hash(&mut h);
+    }
+    if let Some(p) = game.players.get(me as usize) {
+        (p.techs.len(), p.research.len()).hash(&mut h);
+        for w in &p.waiting {
+            w.id.hash(&mut h);
+        }
+    }
+    h.finish()
+}
+
 /// Changes whenever a frame would look different (apart from positions along known paths).
 fn signature(game: &Game) -> u64 {
     let mut h = DefaultHasher::new();

@@ -84,15 +84,73 @@ pub fn inked_path(pts: &[Vec2], w: f32, color: Color) {
         return;
     }
     let ink = 2.0 * s();
+    let view = screen_view(w + ink * 2.0);
     for pass in 0..2 {
         let (ww, col) = if pass == 0 { (w + ink * 2.0, INK) } else { (w, color) };
         for seg in pts.windows(2) {
-            draw_line(seg[0].x, seg[0].y, seg[1].x, seg[1].y, ww, col);
+            if let Some((a, b)) = clip_segment(seg[0], seg[1], view) {
+                draw_line(a.x, a.y, b.x, b.y, ww, col);
+            }
         }
-        for p in pts {
+        for p in pts.iter().filter(|p| view.contains(**p)) {
             draw_circle(p.x, p.y, ww / 2.0, col);
         }
     }
+}
+
+/// The screen grown by `margin` on every side: what's outside it can't show.
+pub fn screen_view(margin: f32) -> Rect {
+    Rect::new(-margin, -margin, screen_width() + 2.0 * margin, screen_height() + 2.0 * margin)
+}
+
+/// Fractions (t0, t1) of segment a→b that lie inside `r` (Liang–Barsky), if any part does.
+fn clip_params(a: Vec2, b: Vec2, r: Rect) -> Option<(f32, f32)> {
+    let d = b - a;
+    let (mut t0, mut t1) = (0.0f32, 1.0f32);
+    for (p, q) in [(-d.x, a.x - r.x), (d.x, r.x + r.w - a.x), (-d.y, a.y - r.y), (d.y, r.y + r.h - a.y)] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return None;
+            }
+        } else {
+            let k = q / p;
+            if p < 0.0 {
+                t0 = t0.max(k);
+            } else {
+                t1 = t1.min(k);
+            }
+            if t0 > t1 {
+                return None;
+            }
+        }
+    }
+    Some((t0, t1))
+}
+
+/// The part of segment a→b inside `r`, if any. Zoomed in, paths and orbits run thousands of px
+/// off screen; drawing (or dashing) those parts was most of the frame.
+pub fn clip_segment(a: Vec2, b: Vec2, r: Rect) -> Option<(Vec2, Vec2)> {
+    let (t0, t1) = clip_params(a, b, r)?;
+    Some((a + (b - a) * t0, a + (b - a) * t1))
+}
+
+/// Drop points closer than `min_px` to the last kept one (the last point is always kept): a
+/// course is sampled densely enough for close-ups, which is hundreds of sub-pixel segments zoomed out.
+pub fn thin(pts: &mut Vec<Vec2>, min_px: f32) {
+    if pts.len() < 3 {
+        return;
+    }
+    let last = *pts.last().unwrap();
+    let min2 = min_px * min_px;
+    let mut keep = 1;
+    for i in 1..pts.len() - 1 {
+        if pts[i].distance_squared(pts[keep - 1]) >= min2 {
+            pts[keep] = pts[i];
+            keep += 1;
+        }
+    }
+    pts.truncate(keep);
+    pts.push(last);
 }
 
 /// Dashed polyline, no casing (orbits, predicted paths).
@@ -100,7 +158,10 @@ pub fn dashed_path(pts: &[Vec2], w: f32, dash: f32, color: Color) {
     if dash <= 0.0 {
         return;
     }
-    // `phase` = distance into the current dash+gap period, carried across segments.
+    let period = 2.0 * dash;
+    let view = screen_view(w + dash);
+    // `phase` = distance into the current dash+gap period, carried across segments (and across
+    // the parts clipped off screen, so the dashes don't crawl while panning).
     let mut phase = 0.0f32;
     for seg in pts.windows(2) {
         let (a, b) = (seg[0], seg[1]);
@@ -108,19 +169,26 @@ pub fn dashed_path(pts: &[Vec2], w: f32, dash: f32, color: Color) {
         if len <= f32::EPSILON {
             continue;
         }
+        let Some((c0, c1)) = clip_params(a, b, view) else {
+            phase = (phase + len) % period;
+            continue;
+        };
         let dir = (b - a) / len;
-        let mut t = 0.0f32;
-        while t < len {
+        let mut t = c0 * len;
+        let end = c1 * len;
+        phase = (phase + t) % period;
+        while t < end {
             let on = phase < dash;
-            let left = if on { dash - phase } else { 2.0 * dash - phase };
-            let step = left.min(len - t).max(0.01);
+            let left = if on { dash - phase } else { period - phase };
+            let step = left.min(end - t).max(0.01);
             if on {
-                let (p0, p1) = (a + dir * t, a + dir * (t + step).min(len));
+                let (p0, p1) = (a + dir * t, a + dir * (t + step).min(end));
                 draw_line(p0.x, p0.y, p1.x, p1.y, w, color);
             }
             t += step;
-            phase = (phase + step) % (2.0 * dash);
+            phase = (phase + step) % period;
         }
+        phase = (phase + (len - end).max(0.0)) % period;
     }
 }
 
@@ -331,4 +399,32 @@ pub fn clip(r: Option<Rect>) {
     // browsers) an unscaled rect clipped the list to a sliver in the top-left.
     let k = screen_dpi_scale();
     gl.quad_gl.scissor(r.map(|r| ((r.x * k) as i32, (r.y * k) as i32, (r.w.max(0.0) * k).ceil() as i32, (r.h.max(0.0) * k).ceil() as i32)));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn segments_clip_to_the_view() {
+        let r = Rect::new(0.0, 0.0, 100.0, 100.0);
+        // crosses the whole view
+        let (a, b) = clip_segment(vec2(-1000.0, 50.0), vec2(1000.0, 50.0), r).unwrap();
+        assert!((a - vec2(0.0, 50.0)).length() < 1e-3 && (b - vec2(100.0, 50.0)).length() < 1e-3);
+        // inside: untouched
+        assert_eq!(clip_segment(vec2(10.0, 10.0), vec2(20.0, 30.0), r), Some((vec2(10.0, 10.0), vec2(20.0, 30.0))));
+        // outside, including past a corner
+        assert_eq!(clip_segment(vec2(-50.0, -10.0), vec2(500.0, -1.0), r), None);
+        assert_eq!(clip_segment(vec2(-50.0, 40.0), vec2(40.0, -50.0), r), None);
+    }
+
+    #[test]
+    fn thinning_keeps_the_ends_and_spacing() {
+        let mut pts: Vec<Vec2> = (0..=100).map(|i| vec2(i as f32 * 0.5, 0.0)).collect();
+        thin(&mut pts, 2.0);
+        assert_eq!(pts.first(), Some(&vec2(0.0, 0.0)));
+        assert_eq!(pts.last(), Some(&vec2(50.0, 0.0)));
+        assert!(pts.len() < 30);
+        assert!(pts.windows(2).rev().skip(1).all(|w| w[0].distance(w[1]) >= 2.0));
+    }
 }

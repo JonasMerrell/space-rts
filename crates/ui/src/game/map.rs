@@ -218,7 +218,7 @@ pub fn draw_orbits(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64) {
         let pts: Vec<Vec2> = b.orbit_path.iter().map(|p| cam.to_screen([pc[0] + p[0], pc[1] + p[1]])).collect();
         let (min, max) = pts.iter().fold((pts[0], pts[0]), |(a, b), p| (a.min(*p), b.max(*p)));
         let size = (max - min).length();
-        if size < 14.0 * s() {
+        if size < 14.0 * s() || !Rect::new(min.x, min.y, max.x - min.x, max.y - min.y).overlaps(&cel::screen_view(4.0 * s())) {
             continue;
         }
         let w = match b.kind {
@@ -231,8 +231,11 @@ pub fn draw_orbits(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64) {
         if faint {
             cel::dashed_path(&pts, w, 6.0 * s(), col);
         } else {
+            let view = cel::screen_view(w);
             for seg in pts.windows(2) {
-                draw_line(seg[0].x, seg[0].y, seg[1].x, seg[1].y, w, col);
+                if let Some((a, b)) = cel::clip_segment(seg[0], seg[1], view) {
+                    draw_line(a.x, a.y, b.x, b.y, w, col);
+                }
             }
         }
     }
@@ -331,13 +334,15 @@ pub fn draw_trajectories(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64
         }
         let (l, _) = team(view.color_of(Some(sh.owner)));
         let (past, future): (Vec<&(f64, [f64; 2])>, Vec<_>) = tr.points.iter().partition(|p| p.0 < t);
-        let past: Vec<Vec2> = past.iter().map(|p| cam.to_screen(p.1)).collect();
+        let mut past: Vec<Vec2> = past.iter().map(|p| cam.to_screen(p.1)).collect();
         let mut future: Vec<Vec2> = future.iter().map(|p| cam.to_screen(p.1)).collect();
         if let Some(p) = be.ship_pos(sh.id, t) {
             if !future.is_empty() && is_flying(sh, t) {
                 future.insert(0, cam.to_screen(p));
             }
         }
+        cel::thin(&mut past, 2.0 * s());
+        cel::thin(&mut future, 2.0 * s());
         // Only the selected ship's course is drawn in full colour; the rest are faint grey dashes so the
         // map doesn't turn into spaghetti.
         let sel = highlight == Some(sh.id);
