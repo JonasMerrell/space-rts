@@ -280,9 +280,8 @@ impl Game {
             v.ships.sort();
             v.scanned.sort();
 
-            if self.players[p].intel.len() != self.bodies.len() {
-                self.players[p].intel = vec![None; self.bodies.len()];
-            }
+            // outposts append bodies: keep what we know about the others
+            self.players[p].intel.resize(self.bodies.len(), None);
             // vision isn't saved, so after a restart (or at game start) there's nothing to diff against
             if !self.players[p].vision.ships.is_empty() {
                 let news = self.sensor_news(me, &self.players[p].vision, &v, &pos);
@@ -541,6 +540,15 @@ impl Game {
             } else {
                 // ghosts are only for ships that are out of sight now
                 pl.contacts.retain(|c| g.ships.iter().all(|s| s.id != c.ship.id));
+            }
+        }
+        // outposts nobody told us about: drawn as gone. The orbit stays so prediction matches the server.
+        for i in 0..g.bodies.len() {
+            let b = BodyId(i as u32);
+            if self.outpost_hidden(p, b) && !g.ships.iter().any(|s| s.parked_at() == Some(b)) {
+                g.bodies[i] = BodyState { gone: true, ..Default::default() };
+                g.system.bodies[i].name = "?".into();
+                g.stations.retain(|st| st.body != b);
             }
         }
         g.events.retain(|e| e.to.is_none() || e.to == Some(p));

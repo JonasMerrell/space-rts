@@ -12,6 +12,7 @@ pub mod game;
 pub mod intercept;
 pub mod kepler;
 pub mod ordnance;
+pub mod outpost;
 pub mod plan;
 pub mod reroute;
 pub mod station;

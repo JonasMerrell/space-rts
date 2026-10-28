@@ -660,6 +660,9 @@ pub enum Command {
     /// Jump ships parked at one of your stargates to another of your gates.
     Jump { ships: Vec<ShipId>, to: BodyId },
     BuildStation { body: BodyId, kind: StationKind },
+    /// A construction ship coasting around the sun stops where it is and founds an outpost there
+    /// (a new body on its orbit, see outpost.rs).
+    FoundOutpost { ship: ShipId },
     Chat { text: String },
     Extend { seconds: f64 },
     /// Form, split, merge, rename or disband fleets (see fleet.rs).
@@ -995,6 +998,24 @@ impl Game {
             Command::Reroute { depart_t, aim_t, .. } if !depart_t.is_finite() || !aim_t.is_finite() => return Err("invalid course".into()),
             _ => {}
         }
+        // outposts the player doesn't know about don't exist for them; abandoned ones take no new arrivals
+        let target = match &cmd {
+            Command::Transfer { to, .. } | Command::TransferPlanned { to, .. } | Command::Reroute { to, .. } | Command::QueueOrder { to: Some(to), .. } | Command::Jump { to, .. } => Some(*to),
+            Command::AimAsteroid { target, .. } => Some(*target),
+            Command::Build { body, .. } | Command::Upgrade { body, .. } | Command::Research { body, .. } | Command::BuildStation { body, .. } | Command::LayMines { body } | Command::LoadSlug { body } => Some(*body),
+            _ => None,
+        };
+        if let Some(b) = target {
+            if self.outpost_hidden(player, b) {
+                return Err("no such body".into());
+            }
+            if self.abandoned(b) {
+                return Err(format!("{} is abandoned", self.system.body(b).name));
+            }
+            if self.is_outpost(b) && matches!(cmd, Command::Upgrade { .. } | Command::Research { .. }) {
+                return Err("an outpost has no surface to build on: use stations".into());
+            }
+        }
         match cmd {
             Command::Fleet(c) => self.fleet_command(player, c),
             Command::Wait { wish } => self.wait_for_funds(player, wish),
@@ -1148,6 +1169,7 @@ impl Game {
             Command::LoadSlug { body } => self.load_slug(player, body).map(|_| ()),
             Command::Jump { ships, to } => self.jump(player, &ships, to),
             Command::BuildStation { body, kind } => self.build_station(player, body, kind).map(|_| ()),
+            Command::FoundOutpost { ship } => self.found_outpost(player, ship).map(|_| ()),
             Command::SetOrder { ship, order } => {
                 self.own_ship(player, ship)?;
                 for id in self.with_fleetmates(ship) {
@@ -1370,6 +1392,7 @@ impl Game {
                 self.ordnance_tick();
                 self.fleet_tick(TICK);
                 self.ownership();
+                self.outposts_tick();
                 self.update_intel();
                 self.intercept_tick();
                 if bots {
@@ -1578,6 +1601,7 @@ impl Game {
             BodyKind::GasGiant => (60.0, 60.0),
             BodyKind::Moon => (30.0, 20.0),
             BodyKind::Asteroid => (15.0, 20.0),
+            BodyKind::Outpost => (0.0, 0.0),
         }
     }
 

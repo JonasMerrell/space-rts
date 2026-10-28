@@ -11,6 +11,8 @@ pub enum BodyKind {
     Planet,
     Moon,
     Asteroid,
+    /// a free-floating station's spot in orbit of the star
+    Outpost,
 }
 
 #[derive(Clone, Debug)]

@@ -14,6 +14,8 @@ pub enum BodyKind {
     GasGiant,
     Moon,
     Asteroid,
+    /// a free-floating station's spot, founded by a construction ship in orbit of the sun (outpost.rs)
+    Outpost,
 }
 
 /// Elliptic orbit around the parent, fixed for the whole game.
@@ -68,7 +70,7 @@ impl Body {
     /// Radius of the standard parking orbit used for parked ships.
     pub fn park_radius(&self) -> f64 {
         match self.kind {
-            BodyKind::Asteroid => self.radius * 3.0,
+            BodyKind::Asteroid | BodyKind::Outpost => self.radius * 3.0,
             _ => self.radius * 1.6,
         }
     }
