@@ -645,7 +645,7 @@ impl Backend for DemoBackend {
                 }
             }
             UiAction::BackToMenu => self.view = None,
-            UiAction::Reconnect => {}
+            UiAction::Reconnect | UiAction::GetUpdate => {}
             UiAction::MoveJob { body, from, to } => {
                 let ids: Vec<usize> = (0..self.queue.len()).filter(|&i| self.queue[i].0 == body).collect();
                 if let (Some(&a), Some(&b)) = (ids.get(from), ids.get(to)) {

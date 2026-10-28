@@ -58,6 +58,9 @@ pub enum UiAction {
     SetSpeed { speed: f64 },
     /// Retry the server connection now instead of waiting for the backoff.
     Reconnect,
+    /// The "update available" card's button: open the app download page (phone/desktop) or
+    /// reload the page (browser).
+    GetUpdate,
     /// Remove item `index` (0 = building now) from a body's build queue, refunding its cost.
     CancelJob { body: BodyId, index: usize },
     /// Move queue item `from` to position `to` (indices into `BodyInfo.queue`).
@@ -208,6 +211,10 @@ pub trait Backend {
     }
     /// Some(text) while logged in but not connected ("Reconnecting..."); None when online.
     fn connection_status(&self) -> Option<String> {
+        None
+    }
+    /// A newer app / browser build than this one has been released (the server says so at login).
+    fn update_available(&self) -> Option<AppUpdate> {
         None
     }
     /// Time scrubber: the game as predicted at a future time `t`, simulated forward from what the

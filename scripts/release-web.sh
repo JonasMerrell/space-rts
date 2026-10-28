@@ -12,7 +12,9 @@ cd "$(dirname "$0")/.."
 VER="${1:?usage: release-web.sh <version>}"
 REPO=JonasMerrell/space-rts
 DIST="$(mktemp -d)"
-scripts/build-web.sh "$DIST/web"
+# baked into the wasm and written to web/version.json: once deployed, the server announces it at
+# login and older apps / open browser tabs ask to update (server::Server::latest_client)
+HOHMANN_VERSION="$VER" scripts/build-web.sh "$DIST/web"
 tar -C "$DIST" --owner=0 --group=0 -czf "$DIST/hohmann-web.tar.gz" web
 (cd "$DIST" && sha256sum hohmann-web.tar.gz > hohmann-web.tar.gz.sha256)
 SHA="$(git rev-parse HEAD)"

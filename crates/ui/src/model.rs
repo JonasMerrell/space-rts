@@ -349,6 +349,17 @@ pub enum NoticeKind {
     Battle,
 }
 
+/// A newer release than the running app (`Backend::update_available`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct AppUpdate {
+    /// "0.8.3"
+    pub latest: String,
+    /// this build's version
+    pub current: String,
+    /// Browser build: getting it is a page reload, not a download.
+    pub reload: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct Notice {
     pub kind: NoticeKind,

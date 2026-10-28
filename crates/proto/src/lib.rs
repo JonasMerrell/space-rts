@@ -104,6 +104,10 @@ pub enum ServerMsg {
         /// A new session token, when the Hello asked to stay logged in (store it instead of the password).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         token: Option<String>,
+        /// Newest released app / browser build ("0.8.3"), when the server knows it. Clients older
+        /// than this tell the player to update (old servers don't send it, old clients ignore it).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        latest_client: Option<String>,
     },
     Error { msg: String },
     Games(Vec<GameSummary>),
@@ -121,6 +125,26 @@ pub enum ServerMsg {
     GameDeleted { code: String, name: String },
 }
 
+/// "v0.8.2" / "0.8.2" / "0.8" → (0, 8, 2); a "-beta"/"+build" suffix is ignored. None if it isn't a version.
+pub fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
+    let v = v.trim();
+    let v = v.strip_prefix('v').unwrap_or(v);
+    let core = v.split(['-', '+']).next()?;
+    let mut parts = core.split('.');
+    let mut num = |need: bool| match parts.next() {
+        Some(p) => p.parse::<u32>().ok(),
+        None if need => None,
+        None => Some(0),
+    };
+    let ver = (num(true)?, num(false)?, num(false)?);
+    parts.next().is_none().then_some(ver)
+}
+
+/// True when `latest` is a newer version than `mine` (false if either doesn't parse).
+pub fn is_newer(latest: &str, mine: &str) -> bool {
+    matches!((parse_version(latest), parse_version(mine)), (Some(l), Some(m)) if l > m)
+}
+
 pub fn encode<T: Serialize>(m: &T) -> String {
     // only maps with non-string keys can fail, and the protocol has none
     let mut s = serde_json::to_string(m).unwrap_or_else(|_| "\"Ping\"".into());
@@ -134,4 +158,42 @@ pub fn decode<'a, T: Deserialize<'a>>(line: &'a str) -> Result<T, String> {
 
 pub fn unix_now() -> f64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn versions_compare_numerically() {
+        assert_eq!(parse_version("v0.8.2"), Some((0, 8, 2)));
+        assert_eq!(parse_version("0.10"), Some((0, 10, 0)));
+        assert_eq!(parse_version("1.2.3-beta+x"), Some((1, 2, 3)));
+        assert_eq!(parse_version(""), None);
+        assert_eq!(parse_version("0.8.2.1"), None);
+        assert_eq!(parse_version("latest"), None);
+        assert!(is_newer("0.8.10", "0.8.9"));
+        assert!(is_newer("v0.9.0", "0.8.2"));
+        assert!(is_newer("1.0", "0.99.99"));
+        assert!(!is_newer("0.8.2", "v0.8.2"));
+        assert!(!is_newer("0.8.1", "0.8.2"));
+        assert!(!is_newer("garbage", "0.8.2"));
+        assert!(!is_newer("0.9.0", "dev"));
+    }
+
+    #[test]
+    fn welcome_without_latest_client_still_decodes() {
+        // an old server's Welcome
+        let m: ServerMsg = decode(r#"{"Welcome":{"user":"jonas"}}"#).unwrap();
+        assert!(matches!(m, ServerMsg::Welcome { latest_client: None, .. }));
+        let line = encode(&ServerMsg::Welcome { user: "j".into(), token: None, latest_client: Some("0.9.0".into()) });
+        assert!(line.contains(r#""latest_client":"0.9.0""#));
+        // an old client's view of it: unknown fields are ignored
+        #[derive(Deserialize)]
+        enum OldServerMsg {
+            Welcome { user: String },
+        }
+        let OldServerMsg::Welcome { user } = decode::<OldServerMsg>(&line).unwrap();
+        assert_eq!(user, "j");
+    }
 }

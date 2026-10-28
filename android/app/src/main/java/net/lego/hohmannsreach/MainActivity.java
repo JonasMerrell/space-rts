@@ -22,6 +22,7 @@ import android.view.inputmethod.InputMethodManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
+import android.net.Uri;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 
@@ -380,6 +381,14 @@ public class MainActivity extends Activity {
         }
 
         return clipData.toString();
+    }
+    /** "New version" card: open the download page in the browser. */
+    public void openUrl(String url) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        } catch (Exception e) {
+            Log.w("HohmannsReach", "can't open " + url, e);
+        }
     }
     public void setClipboardText(String text) {
         ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);

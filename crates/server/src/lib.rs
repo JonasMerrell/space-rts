@@ -114,6 +114,9 @@ pub struct Config {
     pub port: u16,
     /// Browser build files, scanned from `<data>/public/web/` when the server starts.
     pub site: Arc<http::LiveSite>,
+    /// Newest released client version told to apps at login (`--latest-client`); without it the
+    /// version in the deployed browser build's `version.json` (see `Server::latest_client`).
+    pub latest_client: Option<String>,
 }
 
 /// Who may connect without TLS (old app builds, LAN tools, tests).
@@ -138,6 +141,7 @@ impl Config {
             web_hosts: vec![],
             port: proto::DEFAULT_PORT,
             site: Arc::default(),
+            latest_client: None,
         }
     }
 
@@ -177,6 +181,8 @@ pub struct Server {
     changed: HashSet<String>,
     /// feedback reports per user in the current hour (user -> (hour, count))
     feedback: HashMap<String, (u64, u32)>,
+    /// `Config::latest_client`
+    pub latest_client: Option<String>,
 }
 
 fn legacy_hash(salt: &str, pass: &str) -> String {
@@ -284,7 +290,21 @@ impl Server {
             }
         }
         eprintln!("loaded {} accounts, {} games from {}", accounts_len(&accounts), games.len(), data.display());
-        Server { data, invites: None, guard: None, accounts, games, conns: HashMap::new(), next_conn: 1, dirty: HashSet::new(), changed: HashSet::new(), feedback: HashMap::new() }
+        Server { data, invites: None, guard: None, accounts, games, conns: HashMap::new(), next_conn: 1, dirty: HashSet::new(), changed: HashSet::new(), feedback: HashMap::new(), latest_client: None }
+    }
+
+    /// The newest client version to announce in the Welcome: `--latest-client`, else the
+    /// `{"version": "0.8.3"}` that scripts/release-web.sh puts in `<data>/public/web/version.json`
+    /// (so deploying a web release announces it; APK and web releases share version numbers).
+    /// Read at each login, so it needs no restart. None (nothing announced) without either.
+    pub fn latest_client(&self) -> Option<String> {
+        let v = self.latest_client.clone().or_else(|| {
+            let s = std::fs::read_to_string(self.data.join("public").join("web").join("version.json")).ok()?;
+            let j: serde_json::Value = serde_json::from_str(&s).ok()?;
+            Some(j.get("version")?.as_str()?.to_string())
+        })?;
+        let v = v.trim().trim_start_matches('v').to_string();
+        (v.len() <= 32 && proto::parse_version(&v).is_some()).then_some(v)
     }
 
     fn save(&mut self) {
@@ -835,7 +855,8 @@ fn welcome(s: &mut Server, id: u64, user: String, token: Option<String>) {
     if let Some(c) = s.conns.get_mut(&id) {
         c.user = Some(user.clone());
     }
-    s.send(id, &ServerMsg::Welcome { user, token });
+    let latest_client = s.latest_client();
+    s.send(id, &ServerMsg::Welcome { user, token, latest_client });
     s.handle(id, ClientMsg::ListGames);
 }
 
@@ -1004,6 +1025,7 @@ pub fn serve_with(listener: TcpListener, mut cfg: Config) -> Result<(), String> 
     let guard = Guard::new(cfg.limits.clone());
     let mut srv = Server::load(cfg.data.clone());
     srv.invites = cfg.invites.clone();
+    srv.latest_client = cfg.latest_client.clone();
     srv.guard = Some(guard.clone());
     let server = Arc::new(Mutex::new(srv));
     let cfg = Arc::new(cfg);

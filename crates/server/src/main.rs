@@ -12,7 +12,9 @@ const USAGE: &str = "usage: server [--port 7777] [--data DIR] [--tls-cert PEM --
                         used when a browser connects (ALPN); the app keeps the pinned cert.
                         Re-read when the file changes. The browser build is served at /play/
                         from DIR/public/web/ (scripts/build-web.sh)
-  --web-host NAME       public name of the browser page (allowed WebSocket origin; repeatable)";
+  --web-host NAME       public name of the browser page (allowed WebSocket origin; repeatable)
+  --latest-client VER   newest released app version, told to apps at login so older ones ask to update;
+                        default: the version in DIR/public/web/version.json (from the web release)";
 
 fn main() {
     let mut port = proto::DEFAULT_PORT;
@@ -34,6 +36,7 @@ fn main() {
             "--no-plain" => cfg.plain = server::Plain::Never,
             "--web-cert" => cfg.web_cert = Some(path()),
             "--web-key" => cfg.web_key = Some(path()),
+            "--latest-client" => cfg.latest_client = Some(path().to_string_lossy().to_string()),
             "--web-host" => cfg.web_hosts.push(path().to_string_lossy().to_string()),
             "--make-invites" => make = Some(path().to_str().and_then(|n| n.parse::<usize>().ok()).unwrap_or_else(|| usage())),
             _ => usage(),

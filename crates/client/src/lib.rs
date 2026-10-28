@@ -6,6 +6,7 @@ pub mod notify;
 pub mod sensors;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tls;
+pub mod update;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
 
