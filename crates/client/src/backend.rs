@@ -1735,6 +1735,7 @@ impl Backend for ClientBackend {
         };
         let upgrades = g::Upgrade::ALL
             .iter()
+            .filter(|&&u| g.outpost_upgrade_blocker(b, u).is_none())
             .map(|&u| {
                 let next_level = st.level(u) + pending(u) + 1;
                 m::UpgradeInfo {
@@ -1955,6 +1956,7 @@ impl Backend for ClientBackend {
             .iter()
             // advanced-tier stations only show once researched
             .filter(|k| k.needs().is_none_or(|t| !t.advanced() || g.has_tech(me, t)))
+            .filter(|k| !g.is_outpost(b) || sim::outpost::OUTPOST_STATIONS.contains(k))
             .map(|&k| {
                 let (matter, energy, seconds) = k.cost();
                 m::StationOption {

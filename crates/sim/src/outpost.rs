@@ -2,16 +2,23 @@
 //! drop anchor wherever it is. The spot becomes a tiny body ("Outpost 3") on the ship's orbit, with
 //! the ship parked at it, so everything that works at an asteroid works there too: stations (built
 //! the usual way), parking, transfers to and from it, the orbit cap, combat and ownership by power.
-//! It produces nothing and has no surface for upgrades.
+//! Only shipyards and defense platforms can be built there, and the only upgrade is solar panels
+//! (its sole income, once you hold it).
 //!
 //! Fog: other players don't know an outpost exists until their sensors cover it (or they see a ship
 //! parked there); after that it stays on their map like any body they have intel on.
 //! An outpost with no station and no ship left at it is abandoned (hidden, no new transfers); a
 //! ship that was already on its way re-occupies it on arrival.
 use crate::asteroid::orbit_from_state;
-use crate::game::{BodyState, EventKind, Flight, Game, PlayerId, ShipClass, ShipId, ShipState, ORBIT_CAP};
+use crate::game::{Upgrade, BodyState, EventKind, Flight, Game, PlayerId, ShipClass, ShipId, ShipState, ORBIT_CAP};
+use crate::station::StationKind;
 use crate::system::{Body, BodyId, BodyKind, STAR_MU};
 use crate::traj::State;
+
+/// The only stations an outpost holds (Jonas): shipyards and defense platforms. Power comes from
+/// solar panels, the one upgrade it takes (`OUTPOST_UPGRADES`).
+pub const OUTPOST_STATIONS: [StationKind; 2] = [StationKind::Shipyard, StationKind::Defense];
+pub const OUTPOST_UPGRADES: [Upgrade; 1] = [Upgrade::Solar];
 
 /// km. Small enough that nothing passing by crashes into it by accident.
 pub const OUTPOST_RADIUS: f64 = 2.0;
@@ -23,6 +30,11 @@ pub const OUTPOST_SOI: f64 = 500.0;
 impl Game {
     pub fn is_outpost(&self, b: BodyId) -> bool {
         self.system.bodies.get(b.0 as usize).is_some_and(|b| b.kind == BodyKind::Outpost)
+    }
+
+    /// Why upgrade `u` can't go on body `b` because it's an outpost (None = fine / not an outpost).
+    pub fn outpost_upgrade_blocker(&self, b: BodyId, u: Upgrade) -> Option<String> {
+        (self.is_outpost(b) && !OUTPOST_UPGRADES.contains(&u)).then(|| "outposts only take solar panels".into())
     }
 
     /// An outpost that nothing is at any more (see module doc).
@@ -198,11 +210,11 @@ mod tests {
         // a station goes up there the usual way, and the outpost stays on the ship's old orbit
         g.players[0].matter = 1e6;
         g.players[0].energy = 1e6;
-        g.apply(0, Command::BuildStation { body: b, kind: crate::station::StationKind::FuelDepot }).unwrap();
+        g.apply(0, Command::BuildStation { body: b, kind: crate::station::StationKind::Shipyard }).unwrap();
         let t1 = g.t + 86_400.0;
         g.advance_to(t1);
         assert!(!g.bodies[b.0 as usize].gone);
-        assert!(g.has_station(0, b, crate::station::StationKind::FuelDepot));
+        assert!(g.has_station(0, b, crate::station::StationKind::Shipyard));
         let r = g.system.pos(b, t1).len();
         let r0 = pos0.len();
         assert!((r - r0).abs() < r0 * 1e-6, "circular orbit drifted: {r} vs {r0}");
@@ -301,5 +313,28 @@ mod tests {
         let b = g.ship(c).unwrap().parked_at().unwrap();
         assert!(g.is_outpost(b));
         assert_eq!(g.ship(c).unwrap().dest(), None);
+    }
+
+    #[test]
+    fn outposts_take_only_shipyards_defense_and_solar() {
+        let (mut g, id) = coasting();
+        g.apply(0, Command::FoundOutpost { ship: id }).unwrap();
+        let b = BodyId(g.system.bodies.len() as u32 - 1);
+        g.players[0].matter = 1e6;
+        g.players[0].energy = 1e6;
+        use crate::station::StationKind as K;
+        g.players[0].techs.push(crate::tech::Tech::DefensePlatforms);
+        assert!(g.station_blocker(0, b, K::Telescope).is_some());
+        assert!(g.apply(0, Command::BuildStation { body: b, kind: K::FuelDepot }).is_err());
+        g.apply(0, Command::BuildStation { body: b, kind: K::Defense }).unwrap();
+        g.apply(0, Command::BuildStation { body: b, kind: K::Shipyard }).unwrap();
+        let t = g.t + 3.0 * 86_400.0;
+        g.advance_to(t);
+        assert_eq!(g.bodies[b.0 as usize].owner, Some(0), "the defense platform should hold it");
+        assert!(g.apply(0, Command::Upgrade { body: b, upgrade: Upgrade::Mining }).is_err());
+        g.apply(0, Command::Upgrade { body: b, upgrade: Upgrade::Solar }).unwrap();
+        let t = g.t + 3.0 * 86_400.0;
+        g.advance_to(t);
+        assert!(g.production(b).1 > 0.0, "solar panels make energy");
     }
 }
