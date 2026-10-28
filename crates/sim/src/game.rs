@@ -312,6 +312,14 @@ impl Ship {
         let s = self.stats();
         (s.dry_mass + fuel) * (1.0 - (-dv / s.ve).exp())
     }
+    /// Where the ship is going: its scheduled departure's target, or its flight's destination.
+    pub fn dest(&self) -> Option<BodyId> {
+        match &self.state {
+            ShipState::Parked { departure: Some(d), .. } => Some(d.to),
+            ShipState::Parked { .. } => None,
+            ShipState::Flying(f) => f.dest,
+        }
+    }
     pub fn parked_at(&self) -> Option<BodyId> {
         match self.state {
             ShipState::Parked { body, .. } => Some(body),
@@ -683,6 +691,9 @@ pub enum Command {
 }
 
 pub const TICK: f64 = 60.0;
+/// Most ships one player can have in orbit of one body, counting ships on their way there and
+/// ships in its build queue (keeps huge stacks, and the lag they cause, out of the game).
+pub const ORBIT_CAP: usize = 12;
 
 /// A game time that may be "never" (INFINITY). JSON has no infinity (serde_json writes `null`, which
 /// then fails to load), so it is stored as a huge finite number and read back as INFINITY.
@@ -1145,6 +1156,9 @@ impl Game {
             }
             Command::Build { body, class } => {
                 let st = class.stats();
+                if self.orbit_load(player, body) >= ORBIT_CAP {
+                    return Err(format!("orbit full: at most {ORBIT_CAP} of your ships per body (counting ships on the way and in the build queue)"));
+                }
                 let yard = self.yard_level(player, body);
                 if yard == 0 {
                     return Err("you need the body or a shipyard station there".into());
@@ -1182,6 +1196,13 @@ impl Game {
                 Ok(())
             }
         }
+    }
+
+    /// Ships `p` has at, heading to, or being built at `body` (see `ORBIT_CAP`).
+    pub fn orbit_load(&self, p: PlayerId, body: BodyId) -> usize {
+        let ships = self.ships.iter().filter(|s| s.owner == p && (s.parked_at() == Some(body) && s.dest().is_none_or(|d| d == body) || s.dest() == Some(body))).count();
+        let queued = self.bodies[body.0 as usize].queue.iter().filter(|j| j.owner == p && matches!(j.kind, JobKind::Ship(_))).count();
+        ships + queued
     }
 
     /// Shipyard level `p` can build at: the body's own shipyard if theirs, or a shipyard station.
@@ -1240,6 +1261,12 @@ impl Game {
     /// need fuel for the capture burn (their tankers can cover it in flight).
     pub(crate) fn transfer(&mut self, player: PlayerId, ships: &[ShipId], to: BodyId, depart_t: Option<f64>, hint: Option<PlanHint>) -> Result<(), String> {
         let ships = self.expand_fleets(ships);
+        // ships already headed there (re-planning) don't count twice
+        let new = ships.iter().filter(|&&id| self.ship(id).is_some_and(|s| s.dest() != Some(to))).count();
+        if new > 0 && self.orbit_load(player, to) + new > ORBIT_CAP {
+            let room = ORBIT_CAP.saturating_sub(self.orbit_load(player, to));
+            return Err(format!("orbit full there: at most {ORBIT_CAP} of your ships per body, room for {room} more"));
+        }
         let mut plans: Vec<(BodyId, (TransferPlan, Vec<BodyId>))> = vec![];
         let mut todo: Vec<(ShipId, usize)> = vec![];
         for &id in &ships {
@@ -1942,6 +1969,24 @@ mod tests {
         assert!(q[0].done_t < second);
         assert!((g.players[0].matter - (m0 - ShipClass::Scout.stats().matter)).abs() < 1e-9);
         assert!(g.apply(1, Command::CancelJob { body: home, index: 0 }).is_err());
+    }
+
+    #[test]
+    fn orbit_cap_limits_builds_and_arrivals() {
+        let mut g = game();
+        let home = g.players[0].home.unwrap();
+        g.players[0].matter = 1e9;
+        g.players[0].energy = 1e9;
+        while g.orbit_load(0, home) < ORBIT_CAP {
+            g.apply(0, Command::Build { body: home, class: ShipClass::Scout }).unwrap();
+        }
+        let e = g.apply(0, Command::Build { body: home, class: ShipClass::Scout }).unwrap_err();
+        assert!(e.contains("orbit full"), "{e}");
+        // the other player can still build at their own home
+        let h1 = g.players[1].home.unwrap();
+        g.players[1].matter = 1e9;
+        g.players[1].energy = 1e9;
+        assert!(g.apply(1, Command::Build { body: h1, class: ShipClass::Scout }).is_ok());
     }
 
     #[test]
