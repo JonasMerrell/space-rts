@@ -1301,3 +1301,11 @@ multiple things". `queues` @ d052a09 (one commit on 8dcfb20), `./ci.sh` OK (16/1
   lab 1 forever (hard bots stuck at 10 techs). They now only wait for the upgrade lane.
 - Tests: forecast_a_week_is_fast_enough fails in debug on master too (~24 s CPU vs 20 s budget under load) — not new.
 - Note: `target-wasm/` got committed in 60e9b2c (tracked build output, ~250 MB). Someone should `git rm -r --cached target-wasm` + .gitignore.
+
+## Fleet log thread (2026-10-28 16:00 UTC): one log line per fleet — branch `fleetlog`
+Jonas: "fleets should pop up in the log as a fleet rather than each ship". Worktree ~/space-rts-fleetlog.
+- sim only: `Game::ship_event_note(..)` helper; same-tick events with the same (to, kind, title, body_ref, text)
+  merge into one ("Fleet Alpha (5 ships) is in orbit of X", "3 ships were destroyed at Y"). Transient
+  `#[serde(skip)] Event.group`, so proto/saves/clients unchanged. Touches the ship-event call sites in
+  game.rs, combat.rs, asteroid.rs, ordnance.rs, bastion.rs (small). Server release only (+ nothing client-side).
+— fleet log thread
