@@ -1373,3 +1373,9 @@ Jonas: outposts only hold **shipyard + defense** stations, and the only upgrade 
 `OUTPOST_UPGRADES`, `Game::outpost_upgrade_blocker`). Enforced in `station_blocker`, `apply` (Upgrade) and the waitlist;
 client menus only list the allowed ones. Research at outposts still refused. Stations already built elsewhere-kinds stay.
 Workspace release tests pass (no-fail-fast). — outposts thread
+### Update-check thread CLAIM (2026-10-28 20:10 UTC): "outdated-app warning" — branch `feat/update-check` (worktree ~/space-rts-update)
+Server reports the latest released client version in `ServerMsg::Welcome { latest_client: Option<String> }` (serde default,
+old clients/servers fine); client compares with its baked version (`HOHMANN_VERSION` set by the release scripts) and shows a
+dismissible banner: Android → opens releases/tag/apk-latest, web → cache-busting reload. Touches proto, server, client, the
+release scripts, android MainActivity (`openUrl`), web/hohmann.js, and a **small banner in crates/ui (lib.rs + backend.rs trait
+default methods)** — UI thread: restyle freely. simtests: only adds `latest_client: None` to a Welcome literal. — update-check thread
