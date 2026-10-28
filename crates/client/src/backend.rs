@@ -611,6 +611,9 @@ fn real_ships(g: &Game, ids: &[ShipId]) -> Vec<g::ShipId> {
     ids.iter()
         .flat_map(|&id| match token_fleet(g, id) {
             Some(f) => f.ships.clone(),
+            // a fleet that's gone since the view was built, or a ship that so far only exists in
+            // the forecast: the server would answer "no such ship"
+            None if id >= FLEET_TOKEN => vec![],
             None => vec![g::ShipId(id)],
         })
         .collect()
@@ -2128,6 +2131,23 @@ mod tests {
         // other players see neither the fleet nor its name
         let bob = game.view_for(1);
         assert!(build_view(&bob, 1, game.t, &HashMap::new()).ships.iter().all(|s| s.name != "Hammer" && s.id < FLEET_TOKEN));
+    }
+
+    #[test]
+    fn forming_a_fleet_skips_forecast_only_ships_and_gone_fleets() {
+        // Jonas: "can't do that: no such ship" forming a fleet. Scrubbed ahead, ships still in a
+        // build queue (ids from PLANNED_BASE) sit parked at their yard and could be picked; the
+        // server has no such ship. Same for a fleet token whose fleet dissolved meanwhile.
+        let settings = g::Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 86_400.0, speed: 1.0 };
+        let mut game = Game::new("FLT3".into(), settings, 5, "ann");
+        game.add_player("bob", None).unwrap();
+        game.start();
+        let gs: Vec<g::ShipId> = game.ships.iter().filter(|s| s.owner == 0 && s.class == g::ShipClass::Gunship).map(|s| s.id).collect();
+        let gone_fleet = FLEET_TOKEN + 41;
+        let ids = vec![gs[0].0, PLANNED_BASE + 3, gs[1].0, gone_fleet];
+        assert_eq!(real_ships(&game, &ids), vec![gs[0], gs[1]]);
+        game.apply(0, Command::Fleet(sim::fleet::FleetCommand::Form { ships: real_ships(&game, &ids), name: "Anvil".into() })).unwrap();
+        assert_eq!(game.fleets.last().unwrap().ships, vec![gs[0], gs[1]]);
     }
 
     #[test]
