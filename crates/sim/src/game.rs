@@ -697,8 +697,8 @@ pub enum Command {
 }
 
 pub const TICK: f64 = 60.0;
-/// Most ships one player can have in orbit of a planet, counting ships on their way there and
-/// ships in its build queue (keeps huge stacks, and the lag they cause, out of the game).
+/// Most ships one player can have at a planet before its yards stop building there (ships parked,
+/// on their way and in the build queue count). Flying ships in is never limited (Jonas).
 /// Moons and asteroids hold fewer (Jonas: 7 / 12 / 15): see `Game::orbit_cap`.
 pub const ORBIT_CAP: usize = 15;
 
@@ -1308,13 +1308,6 @@ impl Game {
     /// need fuel for the capture burn (their tankers can cover it in flight).
     pub(crate) fn transfer(&mut self, player: PlayerId, ships: &[ShipId], to: BodyId, depart_t: Option<f64>, hint: Option<PlanHint>) -> Result<(), String> {
         let ships = self.expand_fleets(ships);
-        // ships already headed there (re-planning) don't count twice
-        let new = ships.iter().filter(|&&id| self.ship(id).is_some_and(|s| s.dest() != Some(to))).count();
-        let cap = self.orbit_cap(to);
-        if new > 0 && self.orbit_load(player, to) + new > cap {
-            let room = cap.saturating_sub(self.orbit_load(player, to));
-            return Err(format!("orbit full there: at most {cap} of your ships at this body, room for {room} more"));
-        }
         let mut plans: Vec<(BodyId, (TransferPlan, Vec<BodyId>))> = vec![];
         let mut todo: Vec<(ShipId, usize)> = vec![];
         for &id in &ships {
@@ -2146,6 +2139,20 @@ mod tests {
         assert!(q[0].done_t < second);
         assert!((g.players[0].matter - (m0 - g.ship_cost(ShipClass::Scout).0)).abs() < 1e-9);
         assert!(g.apply(1, Command::CancelJob { body: home, index: 0 }).is_err());
+    }
+
+    #[test]
+    fn orbit_cap_never_blocks_flying_in() {
+        let mut g = game();
+        let home = g.players[0].home.unwrap();
+        let enemy = g.players[1].home.unwrap();
+        // fill player 0's slots at the enemy home with inbound-looking ships by parking them there
+        for _ in 0..g.orbit_cap(enemy) {
+            g.spawn(0, ShipClass::Scout, enemy);
+        }
+        let gs = g.spawn(0, ShipClass::Gunship, home);
+        let r = g.apply(0, Command::Transfer { ships: vec![gs], to: enemy, depart_t: None });
+        assert!(r.as_ref().map_or_else(|e| !e.contains("orbit full"), |_| true), "{r:?}");
     }
 
     #[test]
