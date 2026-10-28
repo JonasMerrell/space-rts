@@ -14,6 +14,7 @@ pub mod kepler;
 pub mod ordnance;
 pub mod plan;
 pub mod reroute;
+pub mod shiplog;
 pub mod station;
 pub mod tech;
 pub mod traj;

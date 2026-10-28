@@ -9,7 +9,7 @@
 //! every push), so `System::pos/vel` keep working everywhere. Its patched-conic future is
 //! predicted with `traj::predict`; inside a planet's sphere of influence that prediction
 //! decides whether it hits, and after a flyby the rails are rebased onto the deflected orbit.
-use crate::game::{EventKind, Game, PlayerId, ShipClass, ShipState, Upgrade};
+use crate::game::{EventKind, Game, PlayerId, ShipClass, ShipId, ShipState, Upgrade};
 use crate::kepler::{lambert, Conic};
 use crate::system::{BodyId, BodyKind, Orbit, System};
 use crate::traj::{predict, Burn, End, State, Trajectory};
@@ -428,8 +428,8 @@ impl Game {
                 }
             }
         }
-        let lost: Vec<(PlayerId, String, BodyId)> =
-            self.ships.iter().filter_map(|sh| sh.parked_at().filter(|b| doomed.contains(b) || sh.hp <= 0.0).map(|b| (sh.owner, sh.name.clone(), b))).collect();
+        let lost: Vec<(PlayerId, ShipId, String, BodyId)> =
+            self.ships.iter().filter_map(|sh| sh.parked_at().filter(|b| doomed.contains(b) || sh.hp <= 0.0).map(|b| (sh.owner, sh.id, sh.name.clone(), b))).collect();
         self.ships.retain(|sh| !sh.parked_at().is_some_and(|b| doomed.contains(&b)) && sh.hp > 0.0);
         let dead: Vec<(PlayerId, String, BodyId)> =
             self.stations.iter().filter(|st| doomed.contains(&st.body) || st.hp <= 0.0).map(|st| (st.owner, st.kind.label().to_string(), st.body)).collect();
@@ -438,9 +438,9 @@ impl Game {
             let bn = self.system.body(b).name.clone();
             self.event(Some(o), EventKind::Battle, "Station destroyed", &format!("{label} at {bn} was destroyed by the impact"), Some(b), None);
         }
-        for (o, n, b) in lost {
+        for (o, id, n, b) in lost {
             let bn = self.system.body(b).name.clone();
-            self.event(Some(o), EventKind::Battle, "Ship destroyed", &format!("{n} was destroyed by the impact at {bn}"), Some(b), None);
+            self.ship_note(crate::shiplog::ShipNote { to: o, kind: EventKind::Battle, title: ("Ship destroyed", "Ships destroyed"), ship: id, name: &n, verb: ("was", "were"), rest: format!("destroyed by the impact at {bn}"), body_ref: Some(b), ship_ref: None });
         }
         let pj = imp.energy / 1e6;
         let (title, what) = if self.bodies[bi].shattered && s >= SHATTER {

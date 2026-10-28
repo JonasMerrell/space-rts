@@ -558,6 +558,9 @@ pub struct Event {
     pub body: String,
     pub body_ref: Option<BodyId>,
     pub ship_ref: Option<ShipId>,
+    /// ships behind this line, so a fleet's same-tick lines merge (see shiplog.rs); not sent or saved
+    #[serde(skip)]
+    pub group: Option<crate::shiplog::ShipGroup>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -930,7 +933,7 @@ impl Game {
     pub(crate) fn event(&mut self, to: Option<PlayerId>, kind: EventKind, title: &str, body: &str, body_ref: Option<BodyId>, ship_ref: Option<ShipId>) {
         let seq = self.next_event;
         self.next_event += 1;
-        self.events.push(Event { seq, t: self.t, to, kind, title: title.into(), body: body.into(), body_ref, ship_ref });
+        self.events.push(Event { seq, t: self.t, to, kind, title: title.into(), body: body.into(), body_ref, ship_ref, group: None });
         if self.events.len() > 400 {
             self.events.drain(..100);
         }
@@ -1429,7 +1432,7 @@ impl Game {
                 if need > ship.fuel {
                     let body = *body;
                     ship.route.clear();
-                    self.event(Some(owner), EventKind::Bad, "Departure aborted", &format!("{name} lacks fuel for the burn"), Some(body), Some(id));
+                    self.ship_note(crate::shiplog::ShipNote { to: owner, kind: EventKind::Bad, title: ("Departure aborted", "Departures aborted"), ship: id, name: &name, verb: ("lacks", "lack"), rest: "fuel for the burn".into(), body_ref: Some(body), ship_ref: Some(id) });
                     return;
                 }
                 ship.fuel -= need;
@@ -1438,7 +1441,7 @@ impl Game {
                 let chasing = ship.intercept.is_some();
                 ship.state = ShipState::Flying(Flight { start: d.state, burns: d.burns, dest: (!chasing).then_some(d.to), cache: None });
                 let to = if chasing { "the intercept".to_string() } else { sys.body(d.to).name.clone() };
-                self.event(Some(owner), EventKind::Info, "Departed", &format!("{name} burned {:.1} km/s for {to}", d.dv), None, Some(id));
+                self.ship_note(crate::shiplog::ShipNote { to: owner, kind: EventKind::Info, title: ("Departed", "Departed"), ship: id, name: &name, verb: ("burned", "burned"), rest: format!("{:.1} km/s for {to}", d.dv), body_ref: None, ship_ref: Some(id) });
             }
             ShipState::Flying(f) => {
                 let tr = f.trajectory(sys).clone();
@@ -1478,7 +1481,7 @@ impl Game {
                             ship.fuel -= need;
                             ship.last_burn_t = te;
                             ship.state = ShipState::Parked { body, departure: None };
-                            self.event(Some(owner), EventKind::Good, "Arrived", &format!("{name} is in orbit of {bname}"), Some(body), Some(id));
+                            self.ship_note(crate::shiplog::ShipNote { to: owner, kind: EventKind::Good, title: ("Arrived", "Arrived"), ship: id, name: &name, verb: ("is", "are"), rest: format!("in orbit of {bname}"), body_ref: Some(body), ship_ref: Some(id) });
                             self.continue_route(i);
                             self.trip_mines(id, body, dv);
                         } else {
@@ -1488,13 +1491,13 @@ impl Game {
                             f.dest = None;
                             f.cache = None;
                             ship.route.clear();
-                            self.event(Some(owner), EventKind::Bad, "Flyby", &format!("{name} lacks fuel to brake at {bname}"), Some(body), Some(id));
+                            self.ship_note(crate::shiplog::ShipNote { to: owner, kind: EventKind::Bad, title: ("Flyby", "Flyby"), ship: id, name: &name, verb: ("lacks", "lack"), rest: format!("fuel to brake at {bname}"), body_ref: Some(body), ship_ref: Some(id) });
                         }
                     }
                     End::Impact { body, .. } => {
                         let bname = sys.body(body).name.clone();
                         self.ships.remove(i);
-                        self.event(Some(owner), EventKind::Bad, "Ship lost", &format!("{name} crashed into {bname}"), Some(body), None);
+                        self.ship_note(crate::shiplog::ShipNote { to: owner, kind: EventKind::Bad, title: ("Ship lost", "Ships lost"), ship: id, name: &name, verb: ("crashed", "crashed"), rest: format!("into {bname}"), body_ref: Some(body), ship_ref: None });
                     }
                     End::Horizon { t } => {
                         // keep coasting: rebase so the prediction window moves forward
@@ -1506,7 +1509,7 @@ impl Game {
                             _ => {
                                 // prediction can't make progress (pathological path): the ship is lost
                                 self.ships.remove(i);
-                                self.event(Some(owner), EventKind::Bad, "Ship lost", &format!("{name} was lost in deep space"), None, None);
+                                self.ship_note(crate::shiplog::ShipNote { to: owner, kind: EventKind::Bad, title: ("Ship lost", "Ships lost"), ship: id, name: &name, verb: ("was", "were"), rest: "lost in deep space".into(), body_ref: None, ship_ref: None });
                             }
                         }
                     }

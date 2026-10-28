@@ -108,15 +108,15 @@ impl Game {
         }
         hurt.sort();
         hurt.dedup();
-        let lost: Vec<(PlayerId, String)> = self.ships.iter().filter(|s| s.hp <= 0.0).map(|s| (s.owner, s.name.clone())).collect();
+        let lost: Vec<(PlayerId, ShipId, String)> = self.ships.iter().filter(|s| s.hp <= 0.0).map(|s| (s.owner, s.id, s.name.clone())).collect();
         self.ships.retain(|s| s.hp > 0.0);
         self.stations.retain(|s| s.hp > 0.0);
         self.event(Some(owner), EventKind::Battle, "Slug impact", &format!("Our slug hit {bname} at {v:.1} km/s ({dmg:.0} damage)"), Some(body), None);
         for q in hurt {
             self.event(Some(q), EventKind::Battle, "Slug impact", &format!("A mass-driver slug hit {bname} at {v:.1} km/s"), Some(body), None);
         }
-        for (q, name) in lost {
-            self.event(Some(q), EventKind::Battle, "Ship destroyed", &format!("{name} was destroyed by a slug at {bname}"), Some(body), None);
+        for (q, id, name) in lost {
+            self.ship_note(crate::shiplog::ShipNote { to: q, kind: EventKind::Battle, title: ("Ship destroyed", "Ships destroyed"), ship: id, name: &name, verb: ("was", "were"), rest: format!("destroyed by a slug at {bname}"), body_ref: Some(body), ship_ref: None });
         }
     }
 

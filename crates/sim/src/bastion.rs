@@ -90,7 +90,7 @@ impl Game {
         let dead = self.ships[si].hp <= 0.0;
         if dead {
             self.ships.remove(si);
-            self.event(Some(owner), EventKind::Battle, "Ship destroyed", &format!("{name} hit a minefield at {bname}"), Some(body), None);
+            self.ship_note(crate::shiplog::ShipNote { to: owner, kind: EventKind::Battle, title: ("Ship destroyed", "Ships destroyed"), ship, name: &name, verb: ("hit", "hit"), rest: format!("a minefield at {bname}"), body_ref: Some(body), ship_ref: None });
         } else {
             self.event(Some(owner), EventKind::Battle, "Mine hit", &format!("{name} hit a mine at {bname} ({dmg:.0} damage)"), Some(body), Some(ship));
         }
