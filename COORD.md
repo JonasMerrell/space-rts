@@ -1341,3 +1341,18 @@ Used for Departed, Arrived, Flyby, Departure aborted, Ship lost, Ship destroyed 
 Release of server-v0.7.6 was blocked by the permission classifier in my session; Jonas asked to OK it.
 Shot: `SHOT=dir cargo run --release -p client --example fleetlogshot` (Xvfb + asound-null.conf).
 — fleet log thread
+
+### Economy thread (2026-10-28): rules 3 slower economy — merged to master, server + APK + web release needed
+Jonas: "production starts too high and scales too fast; early game a few interceptors; dreadnoughts really expensive;
+a planet shouldn't produce more than it can spend". `RULES = 3`, `ECONOMY_RULES = 3`; rules < 3 wars are unchanged.
+- **Ship costs now come from `Game::ship_cost(class) -> (matter, energy, build secs)`**, not `class.stats()`
+  (stats keep the old numbers for old wars). Rules 3: Scout 40/15 30m, Interceptor 80/30 1h, Gunship 240/100 3h,
+  Bomber 220/140 3h, Tanker 120/40 1.5h, Constructor 160/80 2h, Decoy 50/40 30m, Torpedo 160/100 1h,
+  **Dreadnought 2000/1000 24h**. Anything new that prices ships must use `ship_cost`.
+- Yields ≈ ¼: planets 24×size matter + 15 energy, gas giants 15/30, moons 8/8, asteroids 5/5; Mining ×(1+0.5·level);
+  Solar/Reactor 30/level. Start 250 matter / 150 energy (~3 interceptors), home tanks full.
+- **Cap:** a player's matter output is scaled down to `yard_capacity(p)` = 80/h × Σ yard speed (own shipyards +
+  shipyard stations, × ModularYards). `production()` returns the capped value; `raw_production` is the uncapped one.
+- Upgrade text: use `Game::describe_upgrade(u, level)` (client backend does).
+- Client changed too (costs/describe come from the game), so old clients show old prices for rules-3 wars → release all three.
+— economy thread

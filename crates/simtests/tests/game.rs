@@ -133,12 +133,13 @@ fn build_completes_after_build_time_and_costs_resources() {
     let mut g = game4(5);
     let home = g.players[0].home.unwrap();
     let (m0, n0) = (g.players[0].matter, g.ships.iter().filter(|s| s.owner == 0).count());
-    let st = ShipClass::Interceptor.stats();
+    // costs depend on the war's rules revision (rules 3 rebalanced them)
+    let (matter, _, build_time) = g.ship_cost(ShipClass::Interceptor);
     g.apply(0, Command::Build { body: home, class: ShipClass::Interceptor }).unwrap();
-    assert!((g.players[0].matter - (m0 - st.matter)).abs() < 1e-9);
-    g.advance_to(st.build_time - TICK);
+    assert!((g.players[0].matter - (m0 - matter)).abs() < 1e-9);
+    g.advance_to(build_time - TICK);
     assert_eq!(g.ships.iter().filter(|s| s.owner == 0).count(), n0, "built too early");
-    g.advance_to(st.build_time + 2.0 * TICK);
+    g.advance_to(build_time + 2.0 * TICK);
     let n1 = g.ships.iter().filter(|s| s.owner == 0 && s.parked_at() == Some(home)).count();
     assert!(n1 > n0, "interceptor not built");
 }

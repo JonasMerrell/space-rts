@@ -539,7 +539,7 @@ mod tests {
         g.apply(0, Command::Build { body: away, class: ShipClass::Dreadnought }).unwrap();
         // can't upgrade a body you don't own through a station
         assert!(g.apply(0, Command::Upgrade { body: away, upgrade: Upgrade::Mining }).is_err());
-        g.advance_to(4.0 * 3600.0);
+        g.advance_to(g.ship_cost(ShipClass::Dreadnought).2 + 60.0);
         assert!(g.events.iter().any(|e| e.to == Some(0) && e.title == "Ship built" && e.body.starts_with("Dreadnought")));
     }
 
