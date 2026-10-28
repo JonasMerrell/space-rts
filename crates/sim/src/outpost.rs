@@ -10,7 +10,7 @@
 //! An outpost with no station and no ship left at it is abandoned (hidden, no new transfers); a
 //! ship that was already on its way re-occupies it on arrival.
 use crate::asteroid::orbit_from_state;
-use crate::game::{Upgrade, BodyState, EventKind, Flight, Game, PlayerId, ShipClass, ShipId, ShipState, ORBIT_CAP};
+use crate::game::{Upgrade, BodyState, EventKind, Game, PlayerId, ShipClass, ShipId, ShipState, ORBIT_CAP};
 use crate::station::StationKind;
 use crate::system::{Body, BodyId, BodyKind, STAR_MU};
 use crate::traj::State;
@@ -164,7 +164,7 @@ fn fmt_dur(secs: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::Command;
+    use crate::game::{Command, Flight};
     use crate::v2::v2;
 
     /// A running game with player 0's construction ship coasting on a circular orbit of the sun,
