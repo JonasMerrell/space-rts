@@ -110,6 +110,8 @@ pub struct ClientBackend {
     last_rx: f64,
     last_ping: f64,
     last_error: Option<String>,
+    /// Newest released client version, from the server's Welcome.
+    latest_client: Option<String>,
     forecast: Forecaster,
     /// input signature and wall time of the running forecast, and whether a newer snapshot
     /// changed something it depends on (restarted from `poll` once `FORECAST_GAP` has passed)
@@ -174,6 +176,7 @@ impl ClientBackend {
             last_rx: 0.0,
             last_ping: 0.0,
             last_error: None,
+            latest_client: None,
             forecast: Forecaster::default(),
             forecast_sig: 0,
             forecast_at: 0.0,
@@ -252,7 +255,8 @@ impl ClientBackend {
 
     fn on_msg(&mut self, msg: ServerMsg) {
         match msg {
-            ServerMsg::Welcome { user, token } => {
+            ServerMsg::Welcome { user, token, latest_client } => {
+                self.latest_client = latest_client;
                 // a reconnect after a dropped connection: keep the player where they were
                 let reconnect = self.logged_in;
                 self.logged_in = true;
@@ -1274,6 +1278,11 @@ impl Backend for ClientBackend {
                     self.send(ClientMsg::Cmd { code, cmd: Command::AimAsteroid { body: SimBody(body), target: SimBody(target) } });
                 }
             }
+            UiAction::GetUpdate => {
+                if let Some(v) = &self.latest_client {
+                    crate::update::get(v);
+                }
+            }
             UiAction::Reconnect => {
                 self.reconnect_at = 0.0;
                 self.retry_delay = 1.0;
@@ -1314,7 +1323,7 @@ impl Backend for ClientBackend {
             UiAction::DeleteGame { code } => self.send(ClientMsg::DeleteGame { code }),
             UiAction::Feedback { bug, text } => {
                 let platform = if cfg!(target_arch = "wasm32") { "web" } else if cfg!(target_os = "android") { "android" } else { "desktop" };
-                let client = format!("{} {platform}", env!("CARGO_PKG_VERSION"));
+                let client = format!("{} {platform}", crate::update::APP_VERSION.unwrap_or(env!("CARGO_PKG_VERSION")));
                 self.send(ClientMsg::Feedback { bug, text, game: code, client });
             }
             UiAction::OpenGame { code } => {
@@ -1758,6 +1767,10 @@ impl Backend for ClientBackend {
         let wait = (self.reconnect_at - unix_now()).ceil();
         let why = self.last_error.clone().unwrap_or_else(|| "connecting".into());
         Some(if self.net.is_some() || wait <= 0.0 { format!("Connecting to {}...", self.server) } else { format!("Offline ({why}). Retrying in {wait:.0}s") })
+    }
+
+    fn update_available(&self) -> Option<m::AppUpdate> {
+        crate::update::update_for(self.latest_client.as_deref(), crate::update::APP_VERSION)
     }
 
     fn body_info(&self, id: BodyId) -> Option<m::BodyInfo> {

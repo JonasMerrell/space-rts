@@ -20,6 +20,7 @@ extern "C" {
     fn hr_loaded();
     fn hr_text_fields(rects: *const f32, n: usize, focused: i32);
     fn hr_paste();
+    fn hr_reload(ptr: *const u8, len: usize);
 }
 
 /// The JS plugin checks this against its own version.
@@ -34,6 +35,11 @@ fn staged(len: i32) -> Option<String> {
     let mut buf = vec![0u8; len];
     unsafe { hr_take(buf.as_mut_ptr()) };
     String::from_utf8(buf).ok()
+}
+
+/// Reload the page for version `ver` (a `?v=` query so no cache serves the old build).
+pub fn reload(ver: &str) {
+    unsafe { hr_reload(ver.as_ptr(), ver.len()) }
 }
 
 pub fn store_get(key: &str) -> Option<String> {

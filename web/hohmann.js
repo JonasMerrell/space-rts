@@ -272,6 +272,12 @@
             setClipboard(ptr, len);
             if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(str(ptr, len)).catch(() => {});
         };
+        // "new version" card: reload with ?v=<version> so nothing cached serves the old build
+        env.hr_reload = (ptr, len) => {
+            const u = new URL(location.href);
+            u.searchParams.set("v", str(ptr, len));
+            location.replace(u.toString());
+        };
         env.hr_notify = (on) => {
             notifyOn = on !== 0;
             if (notifyOn) askPermission();

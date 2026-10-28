@@ -9,7 +9,8 @@ cd "$(dirname "$0")/.."
 VER="${1:?usage: release-apk.sh <version>}"
 REPO=JonasMerrell/space-rts
 DIST="$(mktemp -d)"
-ABIS=arm64-v8a OUT="$DIST/hohmann-reach.apk" ./build-apk.sh
+# the app compares this with the version the server announces and asks to update when older
+HOHMANN_VERSION="$VER" ABIS=arm64-v8a OUT="$DIST/hohmann-reach.apk" ./build-apk.sh
 (cd "$DIST" && sha256sum hohmann-reach.apk > hohmann-reach.apk.sha256)
 SHA="$(git rev-parse HEAD)"
 NOTES="Android app (arm64) at ${SHA:0:12}. Verify: sha256sum -c hohmann-reach.apk.sha256"

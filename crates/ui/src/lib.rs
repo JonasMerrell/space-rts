@@ -30,6 +30,8 @@ pub struct Ui {
     pub input: Input,
     pub user: String,
     pub me: model::PlayerId,
+    /// The "update available" card was closed for this version.
+    pub update_dismissed: Option<String>,
 }
 
 impl Default for Ui {
@@ -42,7 +44,7 @@ impl Ui {
     /// Loads fonts; call after the macroquad window exists.
     pub fn new() -> Self {
         theme::init();
-        Ui { screen: Screen::Login(Login::new()), input: Input::new(), user: String::new(), me: 0 }
+        Ui { screen: Screen::Login(Login::new()), input: Input::new(), user: String::new(), me: 0, update_dismissed: None }
     }
 
     pub fn frame(&mut self, be: &mut dyn Backend) {
@@ -64,6 +66,11 @@ impl Ui {
         if !matches!(self.screen, Screen::Login(_)) {
             if let Some(st) = be.connection_status() {
                 self.offline_banner(&st, be);
+            }
+        }
+        if let Some(u) = be.update_available() {
+            if self.update_dismissed.as_deref() != Some(u.latest.as_str()) {
+                self.update_card(&u, be);
             }
         }
         self.input.draw_debug();
@@ -138,6 +145,49 @@ impl Ui {
         let br = Rect::new(r.x + r.w - 86.0 * s(), r.y + 6.0 * s(), 80.0 * s(), h - 12.0 * s());
         if widgets::button(&mut self.input, br, "RETRY", widgets::Style::Secondary) {
             be.act(UiAction::Reconnect);
+        }
+    }
+
+    /// "A new version is available" over everything, until UPDATE/RELOAD or LATER (or back).
+    /// Play isn't blocked: LATER closes it for this version until the app restarts.
+    fn update_card(&mut self, u: &model::AppUpdate, be: &mut dyn Backend) {
+        use theme::*;
+        let (sw, sh) = (screen_width(), screen_height());
+        self.input.block(Rect::new(0.0, 0.0, sw, sh));
+        draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.0, 0.0, 0.0, 0.55));
+        let w = (sw - 32.0 * s()).min(440.0 * s());
+        let pad = 18.0 * s();
+        let body = if u.reload {
+            format!("Version {} of Hohmann's Reach is out (this page is {}). Reload to get it; your wars carry on.", u.latest, u.current)
+        } else {
+            format!("Version {} of Hohmann's Reach is out (you have {}). Download and install it to keep up; your wars carry on.", u.latest, u.current)
+        };
+        let lines = wrap(&body, FontKind::Body, 15.0, w - 2.0 * pad);
+        let line_h = 21.0 * s();
+        let h = pad + 30.0 * s() + lines.len() as f32 * line_h + 16.0 * s() + 44.0 * s() + pad;
+        let r = Rect::new((sw - w) / 2.0, ((sh - h) / 2.0).max(screens::safe_top() + 8.0 * s()), w, h);
+        cel::panel(r, PANEL);
+        cel::round_rect_lines(r, 8.0 * s(), 1.5 * s(), ACCENT);
+        let mut y = r.y + pad + 12.0 * s();
+        text("NEW VERSION AVAILABLE", r.x + pad, y, 20.0, ACCENT, FontKind::Title, Align::Left);
+        y += 18.0 * s() + line_h / 2.0;
+        for l in &lines {
+            text(l, r.x + pad, y, 15.0, PAPER, FontKind::Body, Align::Left);
+            y += line_h;
+        }
+        let bh = 44.0 * s();
+        let by = r.y + r.h - pad - bh;
+        let bw = (w - 2.0 * pad - 12.0 * s()) / 2.0;
+        let later = Rect::new(r.x + pad, by, bw, bh);
+        let get = Rect::new(r.x + r.w - pad - bw, by, bw, bh);
+        if widgets::button(&mut self.input, get, if u.reload { "RELOAD" } else { "UPDATE" }, widgets::Style::Primary) {
+            be.act(UiAction::GetUpdate);
+            if !u.reload {
+                self.update_dismissed = Some(u.latest.clone());
+            }
+        }
+        if widgets::button(&mut self.input, later, "LATER", widgets::Style::Secondary) || self.input.take_back() {
+            self.update_dismissed = Some(u.latest.clone());
         }
     }
 

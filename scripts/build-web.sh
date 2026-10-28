@@ -14,4 +14,7 @@ cp web/index.html web/pre.js web/style.css web/boot.js web/hohmann.js web/mq_js_
 cp assets/icon/ic_launcher_512.png "$OUT/icon.png"
 cp "$WASM" "$OUT/hohmann.wasm"
 cp -r assets/sprites assets/audio assets/manifest.json "$OUT/assets/"
+if [ -n "${HOHMANN_VERSION:-}" ]; then
+  printf '{"version":"%s"}\n' "$HOHMANN_VERSION" > "$OUT/version.json"
+fi
 du -sh "$OUT"
