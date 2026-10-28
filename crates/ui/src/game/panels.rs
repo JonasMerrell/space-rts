@@ -981,30 +981,52 @@ fn ship_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
         return target_bar(g, inp, be, view, sh);
     }
     let abilities = if mine && sh.planned.is_none() { be.ship_abilities(sh.id) } else { vec![] };
-    let r = sheet_rect(if mine { 200.0 } else { 110.0 } + if abilities.is_empty() { 0.0 } else { 44.0 });
+    // an enemy group: its detected ships by class (as our sensors report them)
+    let mut tally: Vec<(ShipClass, u32)> = vec![];
+    if !mine {
+        for m in &sh.members {
+            match tally.iter_mut().find(|t| t.0 == m.class) {
+                Some(t) => t.1 += 1,
+                None => tally.push((m.class, 1)),
+            }
+        }
+    }
+    let list_h = if tally.is_empty() { 0.0 } else { 16.0 + 30.0 * tally.len() as f32 };
+    let r = sheet_rect(if mine { 200.0 } else { 110.0 + list_h } + if abilities.is_empty() { 0.0 } else { 44.0 });
     inp.block(r);
     cel::panel(r, PANEL);
     ship_icon(view, sh, vec2(r.x + 34.0 * s(), r.y + 34.0 * s()), 40.0 * s());
     let title = if sh.count > 1 { format!("{} ×{}", sh.name.to_uppercase(), sh.count) } else { sh.name.to_uppercase() };
     inked(&title, r.x + 64.0 * s(), r.y + 24.0 * s(), 22.0, PAPER, Align::Left);
+    let what = if tally.len() > 1 { "Mixed" } else { sh.class.label() };
     let building = sh.planned.filter(|&t| t > view.now);
     let status = if let Some(ready) = building {
         let dest = sh.destination.and_then(|d| view.body(d)).map(|d| format!(" · then {}", d.name)).unwrap_or_default();
-        format!("{} · ready in {}{}", sh.class.label(), fmt_dur(ready - view.now), dest)
+        format!("{} · ready in {}{}", what, fmt_dur(ready - view.now), dest)
     } else if map::is_flying(sh, view.now) {
         let dest = sh.destination.and_then(|d| view.body(d)).map(|b| b.name.clone()).unwrap_or_else(|| "deep space".into());
         let eta = sh.trajectory.as_ref().and_then(|t| t.end()).map(|e| fmt_dur(e - view.now)).unwrap_or_default();
-        format!("{} · to {} · ETA {}", sh.class.label(), dest, eta)
+        format!("{} · to {} · ETA {}", what, dest, eta)
     } else if let Some(b) = sh.parked_at.and_then(|b| view.body(b)) {
         let dep = sh.trajectory.as_ref().and_then(|t| t.start()).filter(|&t0| t0 > view.now);
         match dep {
-            Some(t0) => format!("{} · at {} · departs in {}", sh.class.label(), b.name, fmt_dur(t0 - view.now)),
-            None => format!("{} · orbiting {}", sh.class.label(), b.name),
+            Some(t0) => format!("{} · at {} · departs in {}", what, b.name, fmt_dur(t0 - view.now)),
+            None => format!("{} · orbiting {}", what, b.name),
         }
     } else {
-        sh.class.label().to_string()
+        what.to_string()
     };
     text(&status, r.x + 64.0 * s(), r.y + 48.0 * s(), 14.0, MUTED, FontKind::Body, Align::Left);
+    if !tally.is_empty() {
+        let mut y = r.y + 92.0 * s();
+        text(&format!("DETECTED SHIPS ({})", sh.count), r.x + 16.0 * s(), y, 13.0, MUTED, FontKind::Title, Align::Left);
+        for (class, n) in &tally {
+            y += 30.0 * s();
+            ship_icon(view, &Ship { class: *class, ..sh.clone() }, vec2(r.x + 30.0 * s(), y), 26.0 * s());
+            text(class.label(), r.x + 52.0 * s(), y, 15.0, PAPER, FontKind::Body, Align::Left);
+            text(&format!("×{n}"), r.x + r.w - 20.0 * s(), y, 15.0, PAPER, FontKind::Title, Align::Right);
+        }
+    }
     if mine && building.is_some() {
         // Still in the build queue: only a transfer can be queued (tap a target), or cancelled.
         text("Tap a target to send it there once it's built", r.x + 16.0 * s(), r.y + 92.0 * s(), 14.0, PAPER, FontKind::Body, Align::Left);

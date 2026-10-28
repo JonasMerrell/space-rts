@@ -1013,6 +1013,44 @@ fn group_fleets(game: &Game, me: g::PlayerId, ships: Vec<m::Ship>) -> Vec<m::Shi
             ..ms[0].clone()
         });
     }
+    group_contacts(me, out)
+}
+
+/// Detected enemy ships that sit together (parked at one body, or flying one course) become one
+/// token with a count and a member list. Only ships in our (fog-filtered) view are counted, with
+/// the classes our sensors report; the token keeps the first ship's real id so targeting works.
+fn group_contacts(me: g::PlayerId, ships: Vec<m::Ship>) -> Vec<m::Ship> {
+    let bits = |p: Option<&(f64, [f64; 2])>| p.map(|(t, r)| [t.to_bits(), r[0].to_bits(), r[1].to_bits()]);
+    let mut out = vec![];
+    let mut groups: Vec<(_, Vec<m::Ship>)> = vec![];
+    for s in ships {
+        let tr = s.trajectory.as_ref();
+        // a flying ship we have no course for can't be matched with anything
+        if s.owner == me || s.seen_at.is_some() || s.planned.is_some() || (s.parked_at.is_none() && tr.is_none()) {
+            out.push(s);
+            continue;
+        }
+        let key = (s.owner, s.parked_at, s.destination, tr.and_then(|t| bits(t.points.first())), tr.and_then(|t| bits(t.points.last())));
+        match groups.iter_mut().find(|g| g.0 == key) {
+            Some(g) => g.1.push(s),
+            None => groups.push((key, vec![s])),
+        }
+    }
+    for (_, ms) in groups {
+        if ms.len() == 1 {
+            out.extend(ms);
+            continue;
+        }
+        let class = ms.iter().map(|s| s.class).max_by_key(|c| ms.iter().filter(|s| s.class == *c).count()).unwrap();
+        let mixed = ms.iter().any(|s| s.class != class);
+        out.push(m::Ship {
+            name: if mixed { "Ship group".into() } else { ms[0].name.clone() },
+            class,
+            count: ms.len() as u32,
+            members: ms.iter().map(|s| m::FleetMember { id: s.id, name: s.name.clone(), class: s.class, fuel: s.fuel, fuel_max: s.fuel_max }).collect(),
+            ..ms[0].clone()
+        });
+    }
     out
 }
 
@@ -2076,7 +2114,32 @@ mod tests {
         assert_eq!(plan.fuel_problem.is_none(), server.is_ok(), "{:?} vs {:?}", plan.fuel_problem, server);
         // other players see neither the fleet nor its name
         let bob = game.view_for(1);
-        assert!(build_view(&bob, 1, game.t, &HashMap::new()).ships.iter().all(|s| !s.is_fleet()));
+        assert!(build_view(&bob, 1, game.t, &HashMap::new()).ships.iter().all(|s| s.name != "Hammer" && s.id < FLEET_TOKEN));
+    }
+
+    #[test]
+    fn enemy_ships_together_show_as_one_counted_token_of_detected_ships_only() {
+        let settings = g::Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 86_400.0, speed: 1.0 };
+        let mut game = Game::new("EFC1".into(), settings, 5, "ann");
+        game.add_player("bob", None).unwrap();
+        game.start();
+        let ann: Vec<&g::Ship> = game.ships.iter().filter(|s| s.owner == 0).collect();
+        // all-seeing: ann's home ships are one token for bob, listing every ship by class
+        let v = build_view(&game, 1, game.t, &HashMap::new());
+        let toks: Vec<&m::Ship> = v.ships.iter().filter(|s| s.owner == 0).collect();
+        assert_eq!(toks.iter().map(|s| s.count).sum::<u32>() as usize, ann.len());
+        let tok = toks.iter().find(|s| s.count > 1).expect("a group");
+        assert_eq!(tok.members.len(), tok.count as usize);
+        assert!(ann.iter().any(|s| s.id.0 == tok.id), "token keeps a real ship id");
+        // our own ships are never merged this way
+        assert!(v.ships.iter().filter(|s| s.owner == 1).all(|s| s.members.is_empty()));
+        // fogged: only what bob's sensors report is counted
+        let fog = game.view_for(1);
+        let seen = fog.ships.iter().filter(|s| s.owner == 0).count();
+        let fv = build_view(&fog, 1, game.t, &HashMap::new());
+        let counted: u32 = fv.ships.iter().filter(|s| s.owner == 0 && s.seen_at.is_none()).map(|s| s.count).sum();
+        assert_eq!(counted as usize, seen);
+        assert!(seen < ann.len(), "test wants some of ann's ships hidden from bob");
     }
 
     #[test]

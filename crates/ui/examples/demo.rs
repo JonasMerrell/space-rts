@@ -1,6 +1,6 @@
 //! Offline UI demo on the fake backend.
 //!   cargo run -p ui --example demo
-//! Screenshot mode: UI_SCENE=<login|menu|create|lobby|lobby_guest|map|body|owned|yard|ship|gmenu|queue|status|res_energy|detail_up|detail_ship|rock|impact|target|plan|nodes|scrub|chat|toast> UI_SHOT=out.png
+//! Screenshot mode: UI_SCENE=<login|menu|create|lobby|lobby_guest|map|body|owned|yard|ship|enemy|gmenu|queue|status|res_energy|detail_up|detail_ship|rock|impact|target|plan|nodes|scrub|chat|toast> UI_SHOT=out.png
 //! sets the scene up, renders a few frames, saves the PNG and exits.
 
 use macroquad::prelude::*;
@@ -228,6 +228,7 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                     }
                 }
                 "ship" => g.selected = Some(Focus::Ship(1)),
+                "enemy" => g.selected = Some(Focus::Ship(10)),
                 "fleet" | "fleet_new" => {
                     let (anchor, other) = if scene == "fleet" { (1, 5) } else { (5, 6) };
                     g.selected = Some(Focus::Ship(anchor));
