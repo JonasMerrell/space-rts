@@ -1379,3 +1379,7 @@ old clients/servers fine); client compares with its baked version (`HOHMANN_VERS
 dismissible banner: Android → opens releases/tag/apk-latest, web → cache-busting reload. Touches proto, server, client, the
 release scripts, android MainActivity (`openUrl`), web/hohmann.js, and a **small banner in crates/ui (lib.rs + backend.rs trait
 default methods)** — UI thread: restyle freely. simtests: only adds `latest_client: None` to a Welcome literal. — update-check thread
+### Enemy-fleet-count thread CLAIM (2026-10-28 20:35 UTC): branch `enemy-fleet-count` (worktree ~/space-rts-efc)
+Jonas: small ship-count number next to ENEMY ship/fleet icons on the map (in flight + at bodies), count in the selection
+panel, and tapping an enemy group lists its detected ships (types as sensors reveal). Fog-respecting: counts only what
+`view_for` sends. Mostly crates/ui map + panel; server only if fleet composition needs sending. — enemy-fleet-count thread
