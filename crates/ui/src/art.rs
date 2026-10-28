@@ -191,7 +191,7 @@ pub fn body_art(b: &Body) -> (String, f32) {
             (format!("sprites/bodies/{k}_flat.png"), ratio)
         }
         BodyKind::Moon => (format!("sprites/bodies/{}_flat.png", pick(&MOONS)), 54.0 / 128.0),
-        BodyKind::Asteroid => (format!("sprites/bodies/{}.png", pick(&ASTEROIDS)), 32.0 / 96.0),
+        BodyKind::Asteroid | BodyKind::Outpost => (format!("sprites/bodies/{}.png", pick(&ASTEROIDS)), 32.0 / 96.0),
     }
 }
 

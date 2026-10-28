@@ -830,6 +830,7 @@ fn body_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
         BodyKind::Planet => "PLANET",
         BodyKind::Moon => "MOON",
         BodyKind::Asteroid => "ASTEROID",
+        BodyKind::Outpost => "OUTPOST",
     };
     let owner = match b.owner.and_then(|o| view.player(o)) {
         Some(p) if p.id == view.me => "YOURS".to_string(),

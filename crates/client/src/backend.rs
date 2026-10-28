@@ -437,6 +437,7 @@ impl ClientBackend {
         match key {
             "cloak_on" | "cloak_off" => Some(Command::Cloak { ships, on: key == "cloak_on" }),
             k if k.starts_with("jump:") => k[5..].parse().ok().map(|b| Command::Jump { ships, to: SimBody(b) }),
+            "outpost" => Some(Command::FoundOutpost { ship: *ships.first()? }),
             "mines" => ships.iter().filter_map(|&id| g.ship(id)).find(|s| s.class == g::ShipClass::Constructor).and_then(|s| s.parked_at()).map(|body| Command::LayMines { body }),
             "decoy" => {
                 let s = g.ship(*ships.first()?)?;
@@ -951,6 +952,7 @@ fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Tr
                     SimKind::Planet | SimKind::GasGiant => m::BodyKind::Planet,
                     SimKind::Moon => m::BodyKind::Moon,
                     SimKind::Asteroid => m::BodyKind::Asteroid,
+                    SimKind::Outpost => m::BodyKind::Outpost,
                 },
                 parent: b.parent.map(|p| p.0),
                 radius: b.radius,
@@ -1780,6 +1782,11 @@ impl Backend for ClientBackend {
         let me = self.me;
         let ships: Vec<&g::Ship> = real_ships(g, &[ship]).into_iter().filter_map(|id| g.ship(id)).filter(|s| s.owner == me).collect();
         let mut out = vec![];
+        // a construction ship coasting around the star can stop anywhere and found an outpost
+        if let Some(c) = ships.iter().find(|s| s.class == g::ShipClass::Constructor && matches!(s.state, g::ShipState::Flying(_))) {
+            let blocker = g.outpost_blocker(me, c.id);
+            out.push(m::Ability { key: "outpost".into(), label: "FOUND OUTPOST HERE".into(), on: false, blocker, note: "stop here: a new station site on this orbit".into() });
+        }
         if ships.is_empty() || g.rules < sim::tech::ADVANCED_RULES {
             return out;
         }

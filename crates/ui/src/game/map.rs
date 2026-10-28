@@ -58,6 +58,7 @@ fn min_radius(kind: BodyKind) -> f32 {
         BodyKind::Planet => 13.0,
         BodyKind::Moon => 7.0,
         BodyKind::Asteroid => 5.0,
+        BodyKind::Outpost => 6.0,
     }
 }
 
@@ -118,8 +119,9 @@ pub fn draw_orbits(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64) {
             BodyKind::Moon => 2.0,
             _ => 1.5,
         } * s();
-        let col = Color::new(1.0, 1.0, 1.0, if b.kind == BodyKind::Asteroid { 0.12 } else { 0.25 });
-        if b.kind == BodyKind::Asteroid {
+        let faint = matches!(b.kind, BodyKind::Asteroid | BodyKind::Outpost);
+        let col = Color::new(1.0, 1.0, 1.0, if faint { 0.12 } else { 0.25 });
+        if faint {
             cel::dashed_path(&pts, w, 6.0 * s(), col);
         } else {
             for seg in pts.windows(2) {
@@ -177,6 +179,7 @@ pub fn draw_labels(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64) {
             BodyKind::Star => false,
             BodyKind::Planet => true,
             BodyKind::Moon => cam.zoom * b.soi * 2.0 > 40.0 * s() as f64,
+            BodyKind::Outpost => true,
             BodyKind::Asteroid => cam.zoom * b.soi * 2.0 > 60.0 * s() as f64,
         };
         if show_label {
@@ -483,6 +486,13 @@ pub fn draw_body(b: &Body, c: Vec2, r: f32, star: Vec2, owner_color: Option<usiz
             let rock = Body { id: b.id.wrapping_mul(31).wrapping_add(i), kind: BodyKind::Asteroid, art: None, ..b.clone() };
             draw_body(&rock, c + Vec2::from_angle(a) * d, rr, star, None, time);
         }
+        return;
+    }
+    if b.kind == BodyKind::Outpost {
+        // just a beacon: the stations there are drawn around it
+        let (l, _) = team(owner_color);
+        cel::diamond(c, r + 2.0 * s(), INK);
+        cel::diamond(c, r, l);
         return;
     }
     let (key, ratio) = art::body_art(b);
