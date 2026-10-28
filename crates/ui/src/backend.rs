@@ -224,6 +224,10 @@ pub trait Backend {
     fn dark_until(&self, _ship: ShipId, _t: f64) -> Option<f64> {
         None
     }
+    /// Our orbit load at `body`: (ships counted against the cap, cap). Parked + inbound + queued.
+    fn orbit_load(&self, _body: BodyId) -> Option<(usize, usize)> {
+        None
+    }
     /// Server address shown on the login screen.
     fn default_server(&self) -> String {
         String::new()

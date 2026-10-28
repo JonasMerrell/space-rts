@@ -1383,6 +1383,11 @@ impl Backend for ClientBackend {
         }
     }
 
+    fn orbit_load(&self, body: BodyId) -> Option<(usize, usize)> {
+        let g = self.game.as_ref()?;
+        Some((g.orbit_load(self.me, SimBody(body)), g.orbit_cap(SimBody(body))))
+    }
+
     fn dark_until(&self, ship: ShipId, t: f64) -> Option<f64> {
         let g = self.game.as_ref()?;
         // a fleet is dark while all of its ships are

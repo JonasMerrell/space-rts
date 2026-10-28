@@ -275,17 +275,22 @@ impl GameScreen {
 
             let cam = self.cam.unwrap();
             map::draw_orbits(be_ref, view, &cam, t);
-            map::draw_trajectories(be_ref, view, &cam, t, self.selected_ship());
+            map::set_open_body(match self.selected {
+                Some(Focus::Body(b)) => Some(b),
+                Some(Focus::Ship(sid)) => view.ship(sid).filter(|sh| !map::is_flying(sh, t)).and_then(|sh| sh.parked_at),
+                None => None,
+            });
+            prof("trajectories", || map::draw_trajectories(be_ref, view, &cam, t, self.selected_ship()));
             self.draw_mode_world(be_ref, view, &cam, t);
-            map::draw_bodies(be_ref, view, &cam, t, self.selected);
-            map::draw_ships(be_ref, view, &cam, t, self.selected);
+            prof("bodies", || map::draw_bodies(be_ref, view, &cam, t, self.selected));
+            prof("ships", || map::draw_ships(be_ref, view, &cam, t, self.selected));
             // Mouse hover (computer mode): outline what a click would select.
             if let Some(hp) = inp.hover.filter(|p| !inp.over_ui(*p) && inp.held.is_none()) {
                 if let Some(f) = map::hit_test(be_ref, view, &cam, t, hp, self.selected).filter(|f| Some(*f) != self.selected) {
                     map::draw_hover(be_ref, view, &cam, t, f);
                 }
             }
-            map::draw_labels(be_ref, view, &cam, t);
+            prof("labels", || map::draw_labels(be_ref, view, &cam, t));
             self.draw_mode_overlay(be_ref, view, &cam, t);
             if self.scrub > 1.0 {
                 panels::prediction_banner(self.scrub, simulating);
@@ -307,12 +312,12 @@ impl GameScreen {
                 }
             } else {
                 self.handle_back(inp);
-                panels::hud(self, inp, be_ref, view);
+                prof("hud", || panels::hud(self, inp, be_ref, view));
                 // phone: the chat covers the sheet area, so don't run (or hit-test) what's under it
                 if !(self.chat_open && !wide()) {
-                    panels::sheet(self, inp, be_ref, view);
+                    prof("sheet", || panels::sheet(self, inp, be_ref, view));
                 }
-                panels::scrubber(self, inp, be_ref, view);
+                prof("scrubber", || panels::scrubber(self, inp, be_ref, view));
                 if !self.chat_open {
                     panels::camera_buttons(self, inp, be_ref, view);
                 }
@@ -745,4 +750,35 @@ fn follow_point() -> Vec2 {
     } else {
         vec2(screen_width() / 2.0, screen_height() * 0.33)
     }
+}
+
+/// HR_PROF=1: average time per map layer, printed every 300 frames (profiling big games).
+fn prof<R>(name: &'static str, f: impl FnOnce() -> R) -> R {
+    thread_local! {
+        static ON: bool = std::env::var("HR_PROF").is_ok();
+        static ACC: std::cell::RefCell<(u32, Vec<(&'static str, f64)>)> = const { std::cell::RefCell::new((0, vec![])) };
+    }
+    if !ON.with(|o| *o) || cfg!(target_arch = "wasm32") {
+        return f();
+    }
+    let t0 = std::time::Instant::now();
+    let r = f();
+    let dt = t0.elapsed().as_secs_f64();
+    ACC.with(|a| {
+        let mut a = a.borrow_mut();
+        match a.1.iter_mut().find(|e| e.0 == name) {
+            Some(e) => e.1 += dt,
+            None => a.1.push((name, dt)),
+        }
+        if name == "scrubber" {
+            a.0 += 1;
+            if a.0 == 300 {
+                let line: Vec<String> = a.1.iter().map(|(k, v)| format!("{k} {:.2}ms", v / 300.0 * 1e3)).collect();
+                eprintln!("HR_PROF {}", line.join(" · "));
+                a.0 = 0;
+                a.1.clear();
+            }
+        }
+    });
+    r
 }

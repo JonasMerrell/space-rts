@@ -75,16 +75,123 @@ pub fn body_radius_px(b: &Body, cam: &Camera) -> f32 {
 }
 
 /// Where a ship token is drawn. Parked ships sit on a little ring around their body.
+// ---------------------------------------------------------------- per-frame caches
+// Big orbit stacks (Jonas: lag with tons of ships at planets) made several things O(ships²) or
+// O(bodies × ships) per frame. These caches make it one pass per frame / a few lookups per second.
+
+/// Where each parked token sits in its body's ring: (slot, slots, is the stack's drawn token, stack count).
+#[derive(Clone, Copy)]
+struct Slot {
+    i: usize,
+    n: usize,
+    rep: bool,
+    count: u32,
+}
+
+#[derive(Default)]
+struct ParkCache {
+    key: (u64, u64, usize, Option<BodyId>),
+    slots: std::collections::HashMap<ShipId, Slot>,
+}
+
+#[derive(Default)]
+struct SlowCache {
+    stamp: f64,
+    orbit: std::collections::HashMap<BodyId, Option<String>>,
+    queue: std::collections::HashMap<BodyId, usize>,
+}
+
+thread_local! {
+    static PARK: std::cell::RefCell<ParkCache> = std::cell::RefCell::new(ParkCache::default());
+    static SLOW: std::cell::RefCell<SlowCache> = std::cell::RefCell::new(SlowCache::default());
+    /// The body whose ring is "open" (it or one of its ships is selected): its ships draw one by one;
+    /// everywhere else each player's parked ships draw as one stacked token with a count.
+    static OPEN: std::cell::Cell<Option<BodyId>> = const { std::cell::Cell::new(None) };
+}
+
+/// Set once per frame by the game screen (see `OPEN`).
+pub fn set_open_body(b: Option<BodyId>) {
+    OPEN.with(|o| o.set(b));
+}
+
+fn slot_of(view: &GameView, ship: &Ship, t: f64) -> Option<Slot> {
+    let open = OPEN.with(|o| o.get());
+    let key = (get_time().to_bits(), t.to_bits(), view.ships.len(), open);
+    PARK.with(|pc| {
+        let mut pc = pc.borrow_mut();
+        if pc.key != key {
+            pc.key = key;
+            pc.slots.clear();
+            // body -> ordered stacks (owner, or ship id when the body is open) -> members
+            let mut per_body: std::collections::HashMap<BodyId, Vec<(u64, Vec<(ShipId, u32)>)>> = Default::default();
+            for s in &view.ships {
+                let Some(b) = s.parked_at else { continue };
+                if is_flying(s, t) {
+                    continue;
+                }
+                // own ships always stack per owner too unless the ring is open; ghosts never stack
+                let k = if open == Some(b) || s.seen_at.is_some() { (1u64 << 40) | s.id as u64 } else { s.owner as u64 };
+                let stacks = per_body.entry(b).or_default();
+                match stacks.iter_mut().find(|st| st.0 == k) {
+                    Some(st) => st.1.push((s.id, s.count)),
+                    None => stacks.push((k, vec![(s.id, s.count)])),
+                }
+            }
+            for stacks in per_body.values() {
+                let n = stacks.len();
+                for (i, (_, members)) in stacks.iter().enumerate() {
+                    let count: u32 = members.iter().map(|m| m.1).sum();
+                    for (j, (id, _)) in members.iter().enumerate() {
+                        pc.slots.insert(*id, Slot { i, n, rep: j == 0, count });
+                    }
+                }
+            }
+        }
+        pc.slots.get(&ship.id).copied()
+    })
+}
+
+/// Parked ship hidden inside another token's stack (not drawn / not tappable on its own).
+pub fn stacked_away(view: &GameView, ship: &Ship, t: f64) -> bool {
+    slot_of(view, ship, t).is_some_and(|sl| !sl.rep)
+}
+
+/// Ships in the stack this token heads (1 for a lone ship; fleets count their members).
+pub fn stack_count(view: &GameView, ship: &Ship, t: f64) -> u32 {
+    slot_of(view, ship, t).map(|sl| sl.count).unwrap_or(ship.count)
+}
+
+fn slow_cache<R>(f: impl FnOnce(&mut SlowCache) -> R) -> R {
+    SLOW.with(|c| {
+        let mut c = c.borrow_mut();
+        let now = get_time();
+        if now - c.stamp > 0.5 {
+            c.stamp = now;
+            c.orbit.clear();
+            c.queue.clear();
+        }
+        f(&mut c)
+    })
+}
+
+/// `Backend::orbit_status`, refreshed twice a second (the client scans every ship for it).
+pub fn orbit_status_cached(be: &dyn Backend, body: BodyId) -> Option<String> {
+    slow_cache(|c| c.orbit.entry(body).or_insert_with(|| be.orbit_status(body)).clone())
+}
+
+/// Items in a body's build queue + waiting list, refreshed twice a second (body_info is heavy).
+pub fn queue_len_cached(be: &dyn Backend, body: BodyId) -> usize {
+    slow_cache(|c| *c.queue.entry(body).or_insert_with(|| be.body_info(body).map(|i| i.queue.len() + i.waiting.len()).unwrap_or(0)))
+}
+
 pub fn ship_screen(be: &dyn Backend, view: &GameView, cam: &Camera, ship: &Ship, t: f64) -> Option<(Vec2, Vec2)> {
     let flying = ship.trajectory.as_ref().is_some_and(|tr| tr.start().is_some_and(|s0| t >= s0) && tr.end().is_some_and(|e| t <= e));
     if !flying {
         if let Some(bid) = ship.parked_at {
             let b = view.body(bid)?;
             let c = cam.to_screen(be.body_pos(bid, t));
-            let parked: Vec<&Ship> = view.ships.iter().filter(|s| s.parked_at == Some(bid) && !is_flying(s, t)).collect();
-            let i = parked.iter().position(|s| s.id == ship.id).unwrap_or(0);
-            let n = parked.len().max(1);
-            let a = i as f32 / n as f32 * std::f32::consts::TAU - 0.9 + (t as f32 / 3600.0) * 0.4;
+            let sl = slot_of(view, ship, t).unwrap_or(Slot { i: 0, n: 1, rep: true, count: ship.count });
+            let a = sl.i as f32 / sl.n.max(1) as f32 * std::f32::consts::TAU - 0.9 + (t as f32 / 3600.0) * 0.4;
             let rr = body_radius_px(b, cam) + 18.0 * s();
             let dir = Vec2::from_angle(a + std::f32::consts::FRAC_PI_2);
             return Some((c + Vec2::from_angle(a) * rr, dir));
@@ -155,7 +262,7 @@ pub fn draw_labels(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64) {
         let r = body_radius_px(b, cam);
         // Battle / standoff in orbit: small badge at the lower left of the body.
         if b.kind != BodyKind::Star {
-            if let Some(st) = be.orbit_status(b.id) {
+            if let Some(st) = orbit_status_cached(be, b.id) {
                 let lower = st.to_lowercase();
                 let (col, glyph) = if lower.starts_with("battle") { (DANGER, "!") } else if lower.starts_with("standoff") { (ACCENT, "=") } else { (MUTED, "·") };
                 let bc = c + vec2(-r * 0.8 - 6.0 * s(), r * 0.8 + 6.0 * s());
@@ -167,7 +274,7 @@ pub fn draw_labels(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64) {
         }
         // Something in the build queue: grey "+" badge with the count at the body's upper right.
         if b.owner == Some(view.me) && b.kind != BodyKind::Star {
-            if let Some(n) = be.body_info(b.id).map(|i| i.queue.len() + i.waiting.len()).filter(|&n| n > 0) {
+            if let Some(n) = Some(queue_len_cached(be, b.id)).filter(|&n| n > 0) {
                 let bc = c + vec2(r * 0.8 + 6.0 * s(), -r * 0.8 - 6.0 * s());
                 status_badge(bc, ShipStatus::Queued);
                 text(&n.to_string(), bc.x + 11.0 * s(), bc.y, 12.0, PAPER, FontKind::Title, Align::Left);
@@ -282,6 +389,9 @@ pub fn draw_flybys(tr: &Trajectory, view: &GameView, cam: &Camera, t: f64, color
 pub fn draw_ships(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64, selected: Option<Focus>) {
     let time = get_time() as f32;
     for sh in &view.ships {
+        if stacked_away(view, sh, t) {
+            continue;
+        }
         let Some((p, dir)) = ship_screen(be, view, cam, sh, t) else { continue };
         let (l, _) = team(view.color_of(Some(sh.owner)));
         // Manifest `size` per class, so the RPS classes read differently at a glance.
@@ -330,11 +440,14 @@ pub fn draw_ships(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64, selec
             let fill = if sh.owner == view.me { PAPER } else { l };
             cel::ship(p, dir, size, fill);
         }
-        if sh.count > 1 {
+        let count = stack_count(view, sh, t);
+        if count > 1 {
             let b = p + vec2(size, -size);
-            draw_circle(b.x, b.y, 8.5 * s(), INK);
-            draw_circle(b.x, b.y, 7.0 * s(), ACCENT);
-            text(&sh.count.to_string(), b.x, b.y, 11.0, INK, FontKind::Title, Align::Center);
+            let label = count.to_string();
+            let rr = (8.5 + 3.0 * (label.len() as f32 - 1.0)) * s();
+            draw_circle(b.x, b.y, rr, INK);
+            draw_circle(b.x, b.y, rr - 1.5 * s(), ACCENT);
+            text(&label, b.x, b.y, 11.0, INK, FontKind::Title, Align::Center);
         }
         if sh.owner == view.me {
             if let Some(st) = ship_status(sh, view.now) {
@@ -434,6 +547,10 @@ pub fn hit_test(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64, p: Vec2
     };
     let mut ship: Option<(f32, ShipId)> = None;
     for sh in &view.ships {
+        // parked ships only count on the open ring (cheap test first: no position lookups)
+        if sh.parked_at.is_some_and(|b| Some(b) != open_body) && !is_flying(sh, t) {
+            continue;
+        }
         let Some((sp, _)) = ship_screen(be, view, cam, sh, t) else { continue };
         let d = sp.distance(p);
         if d >= 22.0 * s() || ship.is_some_and(|(bd, _)| d >= bd) {

@@ -792,7 +792,7 @@ fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view:
         art::sfx("menu_open");
         g.detail = Some(Detail::Queue { body: b.id });
     }
-    ships_here_button(g, inp, view, b, Rect::new(r.x + r.w - 150.0 * s(), qy - 10.0 * s(), 138.0 * s(), 22.0 * s()));
+    ships_here_button(g, inp, be, view, b, Rect::new(r.x + r.w - 150.0 * s(), qy - 10.0 * s(), 138.0 * s(), 22.0 * s()));
 }
 
 /// Who can fight / take this body right now ("Standoff…", "Battle…") as a strip attached to its sheet:
@@ -856,7 +856,7 @@ fn body_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
             text("Contents unknown. Build a telescope to see inside.", body_r.x, body_r.y + 12.0 * s(), 15.0, MUTED, FontKind::Body, Align::Left);
         }
     }
-    ships_here_button(g, inp, view, b, Rect::new(r.x + r.w - 150.0 * s(), r.y + r.h - 40.0 * s(), 138.0 * s(), 30.0 * s()));
+    ships_here_button(g, inp, be, view, b, Rect::new(r.x + r.w - 150.0 * s(), r.y + r.h - 40.0 * s(), 138.0 * s(), 30.0 * s()));
     if can_build_station {
         let br = Rect::new(r.x + r.w - 128.0 * s(), r.y + 36.0 * s(), 112.0 * s(), 30.0 * s());
         if widgets::button(inp, br, "STATIONS", Style::Secondary) {
@@ -960,11 +960,16 @@ fn open_fleet(g: &mut GameScreen, anchor: ShipId, on: Option<Focus>) {
 }
 
 /// "Ships here (n)" entry on a body sheet; opens the fleet sheet on the first of our ships there.
-fn ships_here_button(g: &mut GameScreen, inp: &mut Input, view: &GameView, b: &Body, r: Rect) {
+fn ships_here_button(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView, b: &Body, r: Rect) {
     let here = super::fleet::ships_here(view, b.id);
     let Some(first) = here.first().map(|s| s.id) else { return };
     let n: u32 = here.iter().map(|s| s.count).sum();
-    if widgets::button(inp, r, &format!("SHIPS HERE ({n})"), Style::Secondary) {
+    // orbit cap: "SHIPS 7/12" (parked + inbound + queued count against it)
+    let label = match be.orbit_load(b.id) {
+        Some((used, cap)) => format!("SHIPS HERE {used}/{cap}"),
+        None => format!("SHIPS HERE ({n})"),
+    };
+    if widgets::button(inp, r, &label, if be.orbit_load(b.id).is_some_and(|(u, c)| u >= c) { Style::Danger } else { Style::Secondary }) {
         open_fleet(g, first, Some(Focus::Body(b.id)));
     }
 }
