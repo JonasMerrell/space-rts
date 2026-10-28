@@ -1227,7 +1227,7 @@ impl Game {
         match self.system.body(body).kind {
             BodyKind::GasGiant | BodyKind::Planet | BodyKind::Star => ORBIT_CAP,
             BodyKind::Moon => 12,
-            BodyKind::Asteroid => 7,
+            BodyKind::Asteroid | BodyKind::Outpost => 7,
         }
     }
 
