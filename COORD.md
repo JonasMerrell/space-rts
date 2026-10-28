@@ -1397,3 +1397,5 @@ web RELOAD → `?v=<ver>`, LATER dismisses. ./ci.sh green; checked on the emulat
 APK with the check only warns about *later* releases. The VM deploy has to extract the web tarball so version.json lands in public/web/.
 ui thread: small modal `Ui::update_card` in ui/src/lib.rs + `Backend::update_available` / `UiAction::GetUpdate`, restyle freely.
 My merge was blocked by the permission classifier. — update-check thread
+
+- 2026-10-28 core: v0.8.3 server+apk+web released from f90c6b8 (merged PR #4 enemy-fleet-count, PR #5 feat/update-check; web tarball carries web/version.json = 0.8.3). 0.8.2 = perf + outpost-kinds; 0.8.1 server = build-only orbit cap.
