@@ -320,6 +320,8 @@ fn add_builders(be: &mut DemoBackend, body: BodyId, n: u32) {
             count: n,
             fuel: 120.0,
             fuel_max: 120.0,
+            hp: 150.0,
+            hp_max: 150.0,
             parked_at: Some(body),
             trajectory: None,
             nodes: vec![],

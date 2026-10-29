@@ -1007,6 +1007,8 @@ pub(crate) fn ship_model(s: &g::Ship, trajectory: Option<m::Trajectory>) -> m::S
         count: 1,
         fuel: s.fuel as f32,
         fuel_max: st.fuel_cap as f32,
+        hp: s.hp.max(0.0) as f32,
+        hp_max: s.stats().hp as f32,
         parked_at,
         trajectory,
         nodes,
@@ -1045,7 +1047,9 @@ fn group_fleets(game: &Game, me: g::PlayerId, ships: Vec<m::Ship>) -> Vec<m::Shi
             count: ms.len() as u32,
             fuel: weakest.fuel,
             fuel_max: weakest.fuel_max,
-            members: ms.iter().map(|s| m::FleetMember { id: s.id, name: s.name.clone(), class: s.class, fuel: s.fuel, fuel_max: s.fuel_max }).collect(),
+            hp: ms.iter().map(|s| s.hp).sum(),
+            hp_max: ms.iter().map(|s| s.hp_max).sum(),
+            members: ms.iter().map(|s| m::FleetMember { id: s.id, name: s.name.clone(), class: s.class, fuel: s.fuel, fuel_max: s.fuel_max, hp: s.hp, hp_max: s.hp_max }).collect(),
             ..ms[0].clone()
         });
     }
@@ -1083,7 +1087,9 @@ fn group_contacts(me: g::PlayerId, ships: Vec<m::Ship>) -> Vec<m::Ship> {
             name: if mixed { "Ship group".into() } else { ms[0].name.clone() },
             class,
             count: ms.len() as u32,
-            members: ms.iter().map(|s| m::FleetMember { id: s.id, name: s.name.clone(), class: s.class, fuel: s.fuel, fuel_max: s.fuel_max }).collect(),
+            hp: ms.iter().map(|s| s.hp).sum(),
+            hp_max: ms.iter().map(|s| s.hp_max).sum(),
+            members: ms.iter().map(|s| m::FleetMember { id: s.id, name: s.name.clone(), class: s.class, fuel: s.fuel, fuel_max: s.fuel_max, hp: s.hp, hp_max: s.hp_max }).collect(),
             ..ms[0].clone()
         });
     }
@@ -1155,6 +1161,9 @@ fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Tr
                 count: 1,
                 fuel: 0.0,
                 fuel_max: s.class.stats().fuel_cap as f32,
+                // hull as of the last sighting
+                hp: s.hp.max(0.0) as f32,
+                hp_max: s.stats().hp as f32,
                 parked_at: s.parked_at().map(|b| b.0),
                 trajectory: paths.get(&s.id.0).cloned(),
                 nodes: vec![],
