@@ -257,8 +257,16 @@ impl Tech {
             _ => 3,
         }
     }
-    /// (matter, energy, seconds at a level-1 lab).
+    /// (matter, energy, seconds at a level-1 lab). Base research costs energy only (Jonas 2026-10-29): the old
+    /// matter price is folded into the energy price. The advanced tier still needs matter.
     pub fn cost(self) -> (f64, f64, f64) {
+        let (m, e, secs) = self.old_cost();
+        if self.advanced() {
+            return (m, e, secs);
+        }
+        (0.0, m + e, secs)
+    }
+    fn old_cost(self) -> (f64, f64, f64) {
         let k = self.tier() as f64;
         if self.advanced() {
             // a full week of bot wars showed hard bots finishing the tier at half this: it should force choices

@@ -1225,7 +1225,7 @@ fn demo_tech_cost(i: usize) -> Cost {
     if adv {
         return Cost { matter: 500.0 + 500.0 * k, energy: 600.0 + 600.0 * k, seconds: [20.0, 32.0, 48.0][tier as usize - 1] * 3600.0 };
     }
-    Cost { matter: 150.0 * k, energy: 200.0 * k, seconds: [2.0, 4.0, 8.0, 12.0][tier as usize - 1] * 3600.0 }
+    Cost { matter: 0.0, energy: 350.0 * k, seconds: [2.0, 4.0, 8.0, 12.0][tier as usize - 1] * 3600.0 }
 }
 
 const DEMO_STATIONS: [(&str, &str); 6] = [

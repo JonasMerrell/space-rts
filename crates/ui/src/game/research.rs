@@ -34,6 +34,10 @@ fn affordable(view: &GameView, c: &Cost) -> bool {
 }
 
 fn cost_line(c: &Cost) -> String {
+    // research is energy-only now; older servers still quote matter
+    if c.matter <= 0.0 {
+        return format!("{}E  {}", fmt_amount(c.energy), fmt_dur(c.seconds));
+    }
     format!("{}M  {}E  {}", fmt_amount(c.matter), fmt_amount(c.energy), fmt_dur(c.seconds))
 }
 

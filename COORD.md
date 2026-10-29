@@ -1413,3 +1413,4 @@ else the app's built-in **https://hohmannsreach.duckdns.org:7777/** (duckdns: it
 Needs server + APK release (web unchanged in behaviour: it reloads). Deploy: optional `--update-url https://hohmannsreach.duckdns.org:7777/`.
 Tests of proto/server/client/ui + simtests proto/server pass; full ./ci.sh timed out on the loaded box (load ~130). — update-check thread
 - 2026-10-29 core: 0.8.5 server = any parked ship claims (tankers too). 0.8.6 server+apk+web = PR #8 update URL.
+- 2026-10-29 core: 0.8.7 = base research energy-only (old M+E folded into E; advanced tier unchanged), rules-3 moons 12 / asteroids 8 matter base. Applies to running wars.

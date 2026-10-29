@@ -1600,7 +1600,8 @@ impl Game {
     /// Base (matter, energy) per hour a body yields to its owner before upgrades.
     /// Rules 1: planets 90 matter scaled by size (radius / 1100 km, 0.6–1.8×), gas giants 60 matter +
     /// 40 energy, moons 30, asteroids 15; every body also gives 20 energy.
-    /// Rules 3: about a quarter of that (planets 24 × size, gas giants 15 + 30 energy, moons 8, asteroids 5).
+    /// Rules 3: about a quarter of that (planets 24 × size, gas giants 15 + 30 energy); moons 12 and asteroids 8
+    /// matter (Jonas 2026-10-29, was 8 and 5).
     pub fn base_yield(&self, body: BodyId) -> (f64, f64) {
         let b = self.system.body(body);
         if self.rules == 0 {
@@ -1611,8 +1612,8 @@ impl Game {
                 BodyKind::Star => (0.0, 10.0),
                 BodyKind::Planet => (24.0 * (b.radius / 1100.0).clamp(0.6, 1.8), 15.0),
                 BodyKind::GasGiant => (15.0, 30.0),
-                BodyKind::Moon => (8.0, 8.0),
-                BodyKind::Asteroid => (5.0, 5.0),
+                BodyKind::Moon => (12.0, 8.0),
+                BodyKind::Asteroid => (8.0, 5.0),
                 BodyKind::Outpost => (0.0, 0.0),
             };
         }
