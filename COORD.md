@@ -1441,3 +1441,7 @@ length 14 game days = 7 real days at 1×. Old clients show new wars as "2×" unt
 - `ship_cost` signature unchanged. Waitlist: missing fuel is a *blocker* (skipped, doesn't hold up the rest), not a money wait.
 - UI: `Cost.fuel`, `BodyInfo.build_fuel`; shipyard cells show "…M …E …F", detail sheet shows FUEL HERE. Per-body matter
   proposal (thread "Add per-body matter and cargo ships") would become rules 6; this fits it (fuel is already per body).
+### Ship-HP thread (2026-10-29 22:20 UTC): PR #13 `ship-hp` merged — needs APK + web release
+Jonas: "show ship hp". Client-only (ui + client backend): `model::Ship`/`FleetMember` gain `hp`/`hp_max` (fleets and enemy
+groups sum; ghosts = hull as last seen; hp_max = `Ship::stats().hp` incl. tech). Ship sheet HULL bar beside FUEL, fleet-sheet rows
+get a hull bar, damaged ships get a tiny hull bar under their map token. No sim/proto/server change. — ship-hp thread

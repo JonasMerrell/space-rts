@@ -284,6 +284,10 @@ pub struct Ship {
     pub count: u32,
     pub fuel: f32,
     pub fuel_max: f32,
+    /// Hull points left / full hull (a fleet or group: summed over its ships; an enemy: as last
+    /// detected).
+    pub hp: f32,
+    pub hp_max: f32,
     /// Parked in orbit of a body until `trajectory` (if any) departs.
     pub parked_at: Option<BodyId>,
     pub trajectory: Option<Trajectory>,
@@ -306,6 +310,11 @@ impl Ship {
     pub fn is_fleet(&self) -> bool {
         !self.members.is_empty()
     }
+
+    /// Hull left as a fraction of full (1 when unknown).
+    pub fn hp_frac(&self) -> f32 {
+        if self.hp_max > 0.0 { (self.hp / self.hp_max).clamp(0.0, 1.0) } else { 1.0 }
+    }
 }
 
 /// One ship inside a fleet token.
@@ -316,6 +325,8 @@ pub struct FleetMember {
     pub class: ShipClass,
     pub fuel: f32,
     pub fuel_max: f32,
+    pub hp: f32,
+    pub hp_max: f32,
 }
 
 #[derive(Clone, Debug)]

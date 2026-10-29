@@ -63,9 +63,9 @@ fn toggle(list: &mut Vec<ShipId>, id: ShipId) {
     }
 }
 
-/// One checkable row: icon, name, class and a fuel bar. Returns true when tapped.
+/// One checkable row: icon, name, class, a hull bar and a fuel bar. Returns true when tapped.
 #[allow(clippy::too_many_arguments)]
-fn row(inp: &mut Input, view: &GameView, r: Rect, on: bool, class: ShipClass, name: &str, sub: &str, fuel: f32, fuel_max: f32) -> bool {
+fn row(inp: &mut Input, view: &GameView, r: Rect, on: bool, class: ShipClass, name: &str, sub: &str, (fuel, fuel_max): (f32, f32), (hp, hp_max): (f32, f32)) -> bool {
     cel::round_rect(r, 6.0 * s(), if on { alpha(ACCENT, 0.10) } else { Color::new(1.0, 1.0, 1.0, 0.04) });
     // checkbox
     let cb = Rect::new(r.x + 8.0 * s(), r.center().y - 9.0 * s(), 18.0 * s(), 18.0 * s());
@@ -87,9 +87,13 @@ fn row(inp: &mut Input, view: &GameView, r: Rect, on: bool, class: ShipClass, na
     }
     text(&name.to_uppercase(), r.x + 70.0 * s(), r.y + 14.0 * s(), 14.0, PAPER, FontKind::Title, Align::Left);
     text(sub, r.x + 70.0 * s(), r.y + 29.0 * s(), 12.0, MUTED, FontKind::Body, Align::Left);
-    let fr = Rect::new(r.x + r.w - 118.0 * s(), r.center().y - 3.0 * s(), 70.0 * s(), 6.0 * s());
+    let hf = if hp_max > 0.0 { hp / hp_max } else { 1.0 };
+    let hr = Rect::new(r.x + r.w - 128.0 * s(), r.center().y - 9.0 * s(), 70.0 * s(), 6.0 * s());
+    widgets::bar(hr, hf, widgets::hp_color(hf));
+    text(&format!("{} HP", widgets::hp_num(hp)), r.x + r.w - 10.0 * s(), hr.center().y, 11.0, PAPER, FontKind::Title, Align::Right);
+    let fr = Rect::new(hr.x, r.center().y + 3.0 * s(), hr.w, 6.0 * s());
     widgets::bar(fr, fuel / fuel_max.max(1.0), SUN_SHADE);
-    text(&format!("{:.0}", fuel), r.x + r.w - 10.0 * s(), r.center().y, 12.0, PAPER, FontKind::Title, Align::Right);
+    text(&format!("{:.0} t", fuel), r.x + r.w - 10.0 * s(), fr.center().y, 11.0, MUTED, FontKind::Title, Align::Right);
     let hit = inp.tapped(r);
     if hit {
         inp.consume_tap();
@@ -173,7 +177,7 @@ pub fn fleet_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
         y += HEAD_H * s();
         for m in anchor.members.iter() {
             let rr = Rect::new(r.x + pad, y, rw, ROW_H * s());
-            if visible(rr.y, rr.h) && row(inp, view, rr, fs.members.contains(&m.id), m.class, &m.name, m.class.label(), m.fuel, m.fuel_max) && tap_in_list {
+            if visible(rr.y, rr.h) && row(inp, view, rr, fs.members.contains(&m.id), m.class, &m.name, m.class.label(), (m.fuel, m.fuel_max), (m.hp, m.hp_max)) && tap_in_list {
                 toggle(&mut fs.members, m.id);
             }
             y += row_px;
@@ -189,7 +193,7 @@ pub fn fleet_sheet(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
         for o in here.iter() {
             let rr = Rect::new(r.x + pad, y, rw, ROW_H * s());
             let sub = if o.is_fleet() { format!("Fleet of {}", o.count) } else { o.class.label().to_string() };
-            if visible(rr.y, rr.h) && row(inp, view, rr, fs.others.contains(&o.id), o.class, &o.name, &sub, o.fuel, o.fuel_max) && tap_in_list {
+            if visible(rr.y, rr.h) && row(inp, view, rr, fs.others.contains(&o.id), o.class, &o.name, &sub, (o.fuel, o.fuel_max), (o.hp, o.hp_max)) && tap_in_list {
                 toggle(&mut fs.others, o.id);
             }
             y += row_px;

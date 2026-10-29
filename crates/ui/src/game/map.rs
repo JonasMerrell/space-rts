@@ -457,12 +457,24 @@ pub fn draw_ships(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64, selec
             draw_circle(b.x, b.y, rr - 1.5 * s(), ACCENT);
             text(&label, b.x, b.y, 11.0, INK, FontKind::Title, Align::Center);
         }
+        if sh.planned.is_none() && sh.hp < sh.hp_max {
+            hull_bar(p + vec2(0.0, size + 7.0 * s()), sh.hp_frac());
+        }
         if sh.owner == view.me {
             if let Some(st) = ship_status(sh, view.now) {
                 status_badge(p + vec2(-size, size), st);
             }
         }
     }
+}
+
+/// Tiny hull bar under a damaged ship's token (fixed size, zoom-independent).
+fn hull_bar(c: Vec2, frac: f32) {
+    let (w, h) = (22.0 * s(), 4.0 * s());
+    let r = Rect::new(c.x - w / 2.0, c.y - h / 2.0, w, h);
+    draw_rectangle(r.x - s(), r.y - s(), r.w + 2.0 * s(), r.h + 2.0 * s(), INK);
+    draw_rectangle(r.x, r.y, r.w, r.h, Color::new(1.0, 1.0, 1.0, 0.15));
+    draw_rectangle(r.x, r.y, r.w * frac.clamp(0.0, 1.0), r.h, crate::widgets::hp_color(frac));
 }
 
 /// What a ship is busy with, for the little badge on its token.
