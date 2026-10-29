@@ -229,6 +229,8 @@ impl DemoBackend {
             count,
             fuel: 340.0,
             fuel_max: 400.0,
+            hp: 0.0,
+            hp_max: 0.0,
             parked_at: at,
             trajectory: None,
             nodes: vec![],
@@ -249,17 +251,21 @@ impl DemoBackend {
         ];
         // our multi-ship tokens are fleets; a few loose ships at Borealis to group
         for sh in ships.iter_mut().filter(|s| s.owner == 1 && s.count > 1) {
-            sh.members = (0..sh.count).map(|k| FleetMember { id: 100 * sh.id + k, name: format!("{} {}", sh.class.label(), k + 1), class: sh.class, fuel: 300.0 + 20.0 * k as f32, fuel_max: 400.0 }).collect();
+            sh.members = (0..sh.count).map(|k| FleetMember { id: 100 * sh.id + k, name: format!("{} {}", sh.class.label(), k + 1), class: sh.class, fuel: 300.0 + 20.0 * k as f32, fuel_max: 400.0, hp: 250.0 - 60.0 * (k % 3) as f32, hp_max: 250.0 }).collect();
         }
         // enemy multi-ship tokens: the detected ships flying/parked together, as sensors report them
         for sh in ships.iter_mut().filter(|s| s.owner != 1 && s.count > 1) {
             sh.members = (0..sh.count).map(|k| {
                 let class = if sh.id == 10 && k == 3 { ShipClass::Scout } else { sh.class };
-                FleetMember { id: 100 * sh.id + k, name: class.label().into(), class, fuel: 0.0, fuel_max: 400.0 }
+                FleetMember { id: 100 * sh.id + k, name: class.label().into(), class, fuel: 0.0, fuel_max: 400.0, hp: 180.0, hp_max: 250.0 }
             }).collect();
         }
         ships.push(ship(5, "Wasp", ShipClass::Interceptor, 1, 1, Some(2)));
         ships.push(ship(6, "Sparrow", ShipClass::Scout, 1, 1, Some(2)));
+        // hull: fleets and groups sum their ships; loose ships show some battle damage
+        for sh in ships.iter_mut() {
+            (sh.hp, sh.hp_max) = if sh.members.is_empty() { (if sh.id == 5 { 70.0 } else { 160.0 }, 200.0) } else { (sh.members.iter().map(|m| m.hp).sum(), sh.members.iter().map(|m| m.hp_max).sum()) };
+        }
         // fog of war: an enemy dreadnought last seen 5 h ago (drawn as a fading ghost)
         ships.push(Ship { seen_at: Some(now - 5.0 * 3600.0), ..ship(13, "Dreadnought", ShipClass::Dreadnought, 2, 1, Some(2)) });
         self.view = Some(GameView {
@@ -478,7 +484,7 @@ impl Backend for DemoBackend {
         if let Some(v) = self.view.as_mut() {
             for (body, label, _, class) in done {
                 let id = v.ships.iter().map(|s| s.id).max().unwrap_or(0) + 1;
-                v.ships.push(Ship { id, name: format!("New {label}"), class, owner: v.me, count: 1, fuel: 200.0, fuel_max: 400.0, parked_at: Some(body), trajectory: None, nodes: vec![], destination: None, retreat: false, seen_at: None, members: vec![], planned: None });
+                v.ships.push(Ship { id, name: format!("New {label}"), class, owner: v.me, count: 1, fuel: 200.0, fuel_max: 400.0, hp: 200.0, hp_max: 200.0, parked_at: Some(body), trajectory: None, nodes: vec![], destination: None, retreat: false, seen_at: None, members: vec![], planned: None });
                 self.events.push(BackendEvent::Notice(Notice { kind: NoticeKind::Good, title: format!("{label} ready"), body: "Fresh from the shipyard".into(), focus: Some(Focus::Ship(id)) }));
             }
         }
@@ -968,6 +974,8 @@ impl Backend for DemoBackend {
             count: 1,
             fuel: 0.0,
             fuel_max: 0.0,
+            hp: 0.0,
+            hp_max: 0.0,
             parked_at: Some(asteroid),
             trajectory: None,
             nodes: vec![],
@@ -1185,7 +1193,7 @@ fn demo_regroup(view: Option<&mut GameView>, tokens: &[ShipId], leavers: &[ShipI
         sh.members = keep;
         sh.count = sh.members.len() as u32;
         let base = sh.clone();
-        loose.extend(out.into_iter().map(|m| Ship { id: m.id, name: m.name, class: m.class, count: 1, fuel: m.fuel, fuel_max: m.fuel_max, members: vec![], ..base.clone() }));
+        loose.extend(out.into_iter().map(|m| Ship { id: m.id, name: m.name, class: m.class, count: 1, fuel: m.fuel, fuel_max: m.fuel_max, hp: m.hp, hp_max: m.hp_max, members: vec![], ..base.clone() }));
     }
     // a one-ship fleet dissolves
     let mut ones = vec![];
@@ -1204,10 +1212,10 @@ fn demo_regroup(view: Option<&mut GameView>, tokens: &[ShipId], leavers: &[ShipI
         Some(n) if loose.len() >= 2 => {
             let id = 0x4000_0000 + v.ships.iter().chain(&loose).map(|s| s.id & 0xffff).max().unwrap_or(0) + 1;
             let members: Vec<FleetMember> =
-                loose.iter().map(|s| FleetMember { id: s.id, name: s.name.clone(), class: s.class, fuel: s.fuel, fuel_max: s.fuel_max }).collect();
+                loose.iter().map(|s| FleetMember { id: s.id, name: s.name.clone(), class: s.class, fuel: s.fuel, fuel_max: s.fuel_max, hp: s.hp, hp_max: s.hp_max }).collect();
             let weakest = members.iter().min_by(|a, b| (a.fuel / a.fuel_max).total_cmp(&(b.fuel / b.fuel_max))).unwrap();
             let name = if n.trim().is_empty() { format!("Fleet {}", id & 0xffff) } else { n.trim().to_string() };
-            v.ships.push(Ship { id, name, count: members.len() as u32, fuel: weakest.fuel, fuel_max: weakest.fuel_max, members, ..loose[0].clone() });
+            v.ships.push(Ship { id, name, count: members.len() as u32, fuel: weakest.fuel, fuel_max: weakest.fuel_max, hp: members.iter().map(|m| m.hp).sum(), hp_max: members.iter().map(|m| m.hp_max).sum(), members, ..loose[0].clone() });
         }
         _ => v.ships.extend(loose),
     }
@@ -1218,7 +1226,7 @@ fn demo_split(f: &Ship) -> Vec<Ship> {
     if !f.is_fleet() {
         return vec![f.clone()];
     }
-    f.members.iter().map(|m| Ship { id: m.id, name: m.name.clone(), class: m.class, count: 1, fuel: m.fuel, fuel_max: m.fuel_max, members: vec![], ..f.clone() }).collect()
+    f.members.iter().map(|m| Ship { id: m.id, name: m.name.clone(), class: m.class, count: 1, fuel: m.fuel, fuel_max: m.fuel_max, hp: m.hp, hp_max: m.hp_max, members: vec![], ..f.clone() }).collect()
 }
 
 fn demo_tech_cost(i: usize) -> Cost {

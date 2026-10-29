@@ -1018,6 +1018,17 @@ fn ship_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
         what.to_string()
     };
     text(&status, r.x + 64.0 * s(), r.y + 48.0 * s(), 14.0, MUTED, FontKind::Body, Align::Left);
+    // hull (and our fuel) side by side under the status line; not for ships still being built
+    let half = (r.w - 80.0 * s()) / 2.0;
+    let stat_bar = |i: f32, frac: f32, col: Color, label: &str| {
+        let fr = Rect::new(r.x + 64.0 * s() + i * half, r.y + 64.0 * s(), half - 96.0 * s(), 10.0 * s());
+        widgets::bar(fr, frac, col);
+        text(label, fr.x + fr.w + 8.0 * s(), fr.center().y, 13.0, PAPER, FontKind::Title, Align::Left);
+    };
+    if building.is_none() && sh.hp_max > 0.0 {
+        let hp = format!("HP {}/{}", widgets::hp_num(sh.hp), widgets::hp_num(sh.hp_max));
+        stat_bar(0.0, sh.hp_frac(), widgets::hp_color(sh.hp_frac()), &hp);
+    }
     if !tally.is_empty() {
         let mut y = r.y + 92.0 * s();
         text(&format!("DETECTED SHIPS ({})", sh.count), r.x + 16.0 * s(), y, 13.0, MUTED, FontKind::Title, Align::Left);
@@ -1042,9 +1053,7 @@ fn ship_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
             g.selected = None;
         }
     } else if mine {
-        let fr = Rect::new(r.x + 64.0 * s(), r.y + 64.0 * s(), r.w - 150.0 * s(), 10.0 * s());
-        widgets::bar(fr, sh.fuel / sh.fuel_max.max(1.0), SUN_SHADE);
-        text(&format!("FUEL {:.0}/{:.0}", sh.fuel, sh.fuel_max), fr.x + fr.w + 10.0 * s(), fr.center().y, 13.0, PAPER, FontKind::Title, Align::Left);
+        stat_bar(1.0, sh.fuel / sh.fuel_max.max(1.0), SUN_SHADE, &format!("FUEL {:.0}/{:.0}", sh.fuel, sh.fuel_max));
         // Standing order while we're offline.
         let oy = r.y + 86.0 * s();
         text("IF ATTACKED", r.x + 16.0 * s(), oy + 15.0 * s(), 13.0, MUTED, FontKind::Title, Align::Left);
