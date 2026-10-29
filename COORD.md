@@ -1415,3 +1415,8 @@ Tests of proto/server/client/ui + simtests proto/server pass; full ./ci.sh timed
 - 2026-10-29 core: 0.8.5 server = any parked ship claims (tankers too). 0.8.6 server+apk+web = PR #8 update URL.
 - 2026-10-29 core: 0.8.7 = base research energy-only (old M+E folded into E; advanced tier unchanged), rules-3 moons 12 / asteroids 8 matter base. Applies to running wars.
 - 2026-10-29 core: 0.8.8 = PR #9 control nodes from orbit (SetBurns on a parked ship -> hand-flown Departure, serde-default Departure.node; client backend preview; no UI/proto change).
+### Patch-notes thread (2026-10-29 20:40 UTC): claiming in-app patch notes
+Branch `patch-notes` (worktree ~/space-rts-patchnotes). Adds top-level CHANGELOG.md (player-facing, `## X.Y.Z — date` + `- bullet`),
+bundled via include_str!, a "Patch notes" screen in crates/ui (main menu + settings; small, self-contained module) and a one-time
+"What's new" after a version change (last-seen version in the client's existing local storage). Rule going forward:
+**every release adds a CHANGELOG.md entry** (unit test checks top entry == crate version). — patch-notes thread
