@@ -1963,7 +1963,7 @@ impl Backend for ClientBackend {
             .map(|(index, (w, e))| m::WaitingItem {
                 id: w.id,
                 label: format!("{} at {}", w.wish.label(), g.system.body(w.wish.body()).name),
-                cost: m::Cost { matter: e.matter, energy: e.energy, seconds: 0.0 },
+                cost: m::Cost { matter: e.matter, energy: e.energy, seconds: 0.0, fuel: 0.0 },
                 start_t: e.start_t,
                 blocked: e.blocked.clone(),
                 index,
