@@ -14,7 +14,9 @@ const USAGE: &str = "usage: server [--port 7777] [--data DIR] [--tls-cert PEM --
                         from DIR/public/web/ (scripts/build-web.sh)
   --web-host NAME       public name of the browser page (allowed WebSocket origin; repeatable)
   --latest-client VER   newest released app version, told to apps at login so older ones ask to update;
-                        default: the version in DIR/public/web/version.json (from the web release)";
+                        default: the version in DIR/public/web/version.json (from the web release)
+  --update-url URL      page the app's UPDATE button opens, e.g. this server's download page
+                        https://hohmannsreach.duckdns.org:7777/ (default: that page, built into the app)";
 
 fn main() {
     let mut port = proto::DEFAULT_PORT;
@@ -37,6 +39,14 @@ fn main() {
             "--web-cert" => cfg.web_cert = Some(path()),
             "--web-key" => cfg.web_key = Some(path()),
             "--latest-client" => cfg.latest_client = Some(path().to_string_lossy().to_string()),
+            "--update-url" => {
+                let u = path().to_string_lossy().to_string();
+                if !proto::ok_update_url(&u) {
+                    eprintln!("--update-url must be an http(s) URL");
+                    usage();
+                }
+                cfg.update_url = Some(u);
+            }
             "--web-host" => cfg.web_hosts.push(path().to_string_lossy().to_string()),
             "--make-invites" => make = Some(path().to_str().and_then(|n| n.parse::<usize>().ok()).unwrap_or_else(|| usage())),
             _ => usage(),

@@ -27,6 +27,11 @@ fn start(cfg: Config) -> String {
 
 /// Register `user` over a plaintext (loopback) connection and return the Welcome's latest_client.
 fn latest(addr: &str, user: &str) -> Option<String> {
+    welcome(addr, user).0
+}
+
+/// The Welcome's (latest_client, update_url).
+fn welcome(addr: &str, user: &str) -> (Option<String>, Option<String>) {
     let mut s = TcpStream::connect(addr).unwrap();
     s.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
     let h = ClientMsg::Hello { user: user.into(), pass: "pw-123456".into(), register: true, invite: None, token: None, stay: false };
@@ -37,7 +42,7 @@ fn latest(addr: &str, user: &str) -> Option<String> {
         line.clear();
         assert!(r.read_line(&mut line).unwrap() > 0, "closed before Welcome");
         match decode::<ServerMsg>(&line) {
-            Ok(ServerMsg::Welcome { latest_client, .. }) => return latest_client,
+            Ok(ServerMsg::Welcome { latest_client, update_url, .. }) => return (latest_client, update_url),
             Ok(ServerMsg::Error { msg }) => panic!("{msg}"),
             _ => {}
         }
@@ -73,9 +78,25 @@ fn latest_client_flag_wins_over_the_web_build() {
     let addr = start(cfg);
     let v = latest(&addr, "dee").unwrap();
     assert_eq!(v, "1.0.0");
+    // no --update-url: nothing sent, the app opens its built-in download page
+    assert_eq!(welcome(&addr, "eve").1, None);
+    assert_eq!(space_rts::update::download_url(None), "https://hohmannsreach.duckdns.org:7777/");
     // and the app's own comparison
     let u = space_rts::update::update_for(Some(&v), Some("0.8.2")).unwrap();
     assert_eq!((u.latest.as_str(), u.current.as_str()), ("1.0.0", "0.8.2"));
     assert!(space_rts::update::update_for(Some(&v), Some("1.0.0")).is_none());
+    let _ = std::fs::remove_dir_all(&data);
+}
+
+#[test]
+fn update_url_flag_is_sent_to_apps() {
+    let data = temp_dir("url");
+    let mut cfg = Config::new(data.clone());
+    cfg.latest_client = Some("0.9.0".into());
+    cfg.update_url = Some("https://game.example:7777/".into());
+    let addr = start(cfg);
+    let (v, url) = welcome(&addr, "fay");
+    assert_eq!(v.as_deref(), Some("0.9.0"));
+    assert_eq!(space_rts::update::download_url(url.as_deref()), "https://game.example:7777/");
     let _ = std::fs::remove_dir_all(&data);
 }

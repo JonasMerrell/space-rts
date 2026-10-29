@@ -117,6 +117,9 @@ pub struct Config {
     /// Newest released client version told to apps at login (`--latest-client`); without it the
     /// version in the deployed browser build's `version.json` (see `Server::latest_client`).
     pub latest_client: Option<String>,
+    /// Page the update card's UPDATE button opens (`--update-url`, e.g. this server's own
+    /// download page https://host:7777/); None = the app's built-in default.
+    pub update_url: Option<String>,
 }
 
 /// Who may connect without TLS (old app builds, LAN tools, tests).
@@ -142,6 +145,7 @@ impl Config {
             port: proto::DEFAULT_PORT,
             site: Arc::default(),
             latest_client: None,
+            update_url: None,
         }
     }
 
@@ -183,6 +187,8 @@ pub struct Server {
     feedback: HashMap<String, (u64, u32)>,
     /// `Config::latest_client`
     pub latest_client: Option<String>,
+    /// `Config::update_url`
+    pub update_url: Option<String>,
 }
 
 fn legacy_hash(salt: &str, pass: &str) -> String {
@@ -290,7 +296,7 @@ impl Server {
             }
         }
         eprintln!("loaded {} accounts, {} games from {}", accounts_len(&accounts), games.len(), data.display());
-        Server { data, invites: None, guard: None, accounts, games, conns: HashMap::new(), next_conn: 1, dirty: HashSet::new(), changed: HashSet::new(), feedback: HashMap::new(), latest_client: None }
+        Server { data, invites: None, guard: None, accounts, games, conns: HashMap::new(), next_conn: 1, dirty: HashSet::new(), changed: HashSet::new(), feedback: HashMap::new(), latest_client: None, update_url: None }
     }
 
     /// The newest client version to announce in the Welcome: `--latest-client`, else the
@@ -856,7 +862,8 @@ fn welcome(s: &mut Server, id: u64, user: String, token: Option<String>) {
         c.user = Some(user.clone());
     }
     let latest_client = s.latest_client();
-    s.send(id, &ServerMsg::Welcome { user, token, latest_client });
+    let update_url = s.update_url.clone().filter(|u| proto::ok_update_url(u));
+    s.send(id, &ServerMsg::Welcome { user, token, latest_client, update_url });
     s.handle(id, ClientMsg::ListGames);
 }
 
@@ -1026,6 +1033,7 @@ pub fn serve_with(listener: TcpListener, mut cfg: Config) -> Result<(), String> 
     let mut srv = Server::load(cfg.data.clone());
     srv.invites = cfg.invites.clone();
     srv.latest_client = cfg.latest_client.clone();
+    srv.update_url = cfg.update_url.clone();
     srv.guard = Some(guard.clone());
     let server = Arc::new(Mutex::new(srv));
     let cfg = Arc::new(cfg);

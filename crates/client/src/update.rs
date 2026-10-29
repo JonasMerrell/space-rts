@@ -1,9 +1,15 @@
 //! "A new version is out": this build's version, the comparison with what the server announces,
-//! and getting the new build (download page on phones/desktop, a page reload in the browser).
+//! and getting the new build (the game site's download page on phones/desktop, a page reload in the browser).
 use ui::model::AppUpdate;
 
-/// Where phones get the newest APK.
-pub const DOWNLOAD_URL: &str = "https://github.com/JonasMerrell/space-rts/releases/tag/apk-latest";
+/// Where phones get the newest APK when the server doesn't say (`Welcome::update_url`): the game
+/// server's own download page ("Download the app"; the server serves `/hohmann-reach.apk`).
+pub const DOWNLOAD_URL: &str = "https://hohmannsreach.duckdns.org:7777/";
+
+/// The page UPDATE opens: the server's `update_url` if it sent a sane one, else `DOWNLOAD_URL`.
+pub fn download_url(from_server: Option<&str>) -> &str {
+    from_server.filter(|u| proto::ok_update_url(u)).unwrap_or(DOWNLOAD_URL)
+}
 
 /// The release version, baked in by scripts/release-apk.sh and scripts/release-web.sh
 /// (`HOHMANN_VERSION=0.8.3`). Dev builds have none and never ask to update.
@@ -19,14 +25,17 @@ pub fn update_for(latest: Option<&str>, mine: Option<&str>) -> Option<AppUpdate>
     })
 }
 
-/// The card's UPDATE / RELOAD button.
-pub fn get(latest: &str) {
+/// The card's UPDATE / RELOAD button (`url` = the server's `update_url`).
+pub fn get(latest: &str, url: Option<&str>) {
     #[cfg(target_arch = "wasm32")]
-    crate::web::reload(latest);
+    {
+        let _ = url;
+        crate::web::reload(latest);
+    }
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _ = latest;
-        open_url(DOWNLOAD_URL);
+        open_url(download_url(url));
     }
 }
 
@@ -71,5 +80,12 @@ mod tests {
         assert!(update_for(None, Some("0.8.2")).is_none());
         assert!(update_for(Some("0.9.0"), None).is_none());
         assert!(update_for(Some("junk"), Some("0.8.2")).is_none());
+    }
+
+    #[test]
+    fn update_opens_the_game_site() {
+        assert_eq!(download_url(None), "https://hohmannsreach.duckdns.org:7777/");
+        assert_eq!(download_url(Some("https://example.org:7777/")), "https://example.org:7777/");
+        assert_eq!(download_url(Some("intent://evil")), DOWNLOAD_URL);
     }
 }
