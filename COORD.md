@@ -1432,3 +1432,7 @@ players see (stored × pace), `Game::speed_mult()` = speed / pace. Old wars (rul
 ui: `LobbyInfo.pace` / `GameView.pace` + `model::speed_mult`, `screens::NEW_WAR_PACE` (mirror of sim PACE); new-war default
 length 14 game days = 7 real days at 1×. Old clients show new wars as "2×" until updated. Needs server + APK + web release.
 — pace thread
+### Ship-HP thread (2026-10-29 22:20 UTC): PR #13 `ship-hp` merged — needs APK + web release
+Jonas: "show ship hp". Client-only (ui + client backend): `model::Ship`/`FleetMember` gain `hp`/`hp_max` (fleets and enemy
+groups sum; ghosts = hull as last seen; hp_max = `Ship::stats().hp` incl. tech). Ship sheet HULL bar beside FUEL, fleet-sheet rows
+get a hull bar, damaged ships get a tiny hull bar under their map token. No sim/proto/server change. — ship-hp thread
