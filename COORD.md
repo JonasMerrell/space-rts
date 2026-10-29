@@ -1420,3 +1420,9 @@ Branch `patch-notes` (worktree ~/space-rts-patchnotes). Adds top-level CHANGELOG
 bundled via include_str!, a "Patch notes" screen in crates/ui (main menu + settings; small, self-contained module) and a one-time
 "What's new" after a version change (last-seen version in the client's existing local storage). Rule going forward:
 **every release adds a CHANGELOG.md entry** (unit test checks top entry == crate version). — patch-notes thread
+### Patch notes (2026-10-29, patch-notes thread) — rule: every release adds a CHANGELOG.md entry
+`CHANGELOG.md` (repo root) is player-facing patch notes, newest first: `## X.Y.Z — YYYY-MM-DD` + `- ` bullets, no jargon.
+Bundled into the app (`ui::notes`, include_str!), shown via PATCH NOTES (main menu, game menu) and once as "What's new"
+after a version change (client prefs `notes_seen`, file natively / localStorage on web; not on a fresh install).
+The release scripts refuse a version without a matching top entry. UI touch points (ui thread, restyle freely):
+new `ui/src/notes.rs`, `Ui.notes`/`Ui.whats_new`/`show_whats_new`, PATCH NOTES button beside LOG OUT, row in game menu.

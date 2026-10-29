@@ -245,7 +245,12 @@ impl Menu {
             text(e, r.center().x, r.center().y, 17.0, DANGER, FontKind::Body, Align::Center);
         }
         let r = Rect::new(col.x, screen_height() - 70.0 * s() - safe_bottom(), col.w, 50.0 * s());
-        if widgets::button(inp, r, "LOG OUT", Style::Ghost) {
+        let half = (r.w - 12.0 * s()) / 2.0;
+        if widgets::button(inp, Rect::new(r.x, r.y, half, r.h), "PATCH NOTES", Style::Secondary) {
+            art::sfx("menu_open");
+            crate::notes::request_open();
+        }
+        if widgets::button(inp, Rect::new(r.x + r.w - half, r.y, half, r.h), "LOG OUT", Style::Ghost) {
             be.act(UiAction::Logout);
         }
         let _ = self.scroll;

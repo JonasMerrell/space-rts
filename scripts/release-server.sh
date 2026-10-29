@@ -11,6 +11,9 @@ cd "$(dirname "$0")/.."
 VER="${1:?usage: release-server.sh <version>}"
 export PATH="$HOME/.cargo/bin:$PATH"
 REPO=JonasMerrell/space-rts
+# every release adds a CHANGELOG.md entry on top (the app shows it under PATCH NOTES)
+TOP="$(grep -m1 '^## ' CHANGELOG.md | cut -d' ' -f2)"
+[ "$TOP" = "$VER" ] || { echo "CHANGELOG.md starts with $TOP: add a '## $VER — $(date +%F)' entry first" >&2; exit 1; }
 TARGET=x86_64-unknown-linux-musl
 # ring (TLS) has C code; the host gcc builds it fine for musl
 export CC_x86_64_unknown_linux_musl="${CC_x86_64_unknown_linux_musl:-gcc}"

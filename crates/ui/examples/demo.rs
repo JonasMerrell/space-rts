@@ -33,6 +33,15 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
             }
         }
         "menu" => ui.screen = Screen::Menu(Menu::new("Jonas".into())),
+        "notes" => {
+            ui.screen = Screen::Menu(Menu::new("Jonas".into()));
+            ui.notes = Some(ui::notes::PatchNotes::new());
+        }
+        "whatsnew" => {
+            ui.screen = Screen::Menu(Menu::new("Jonas".into()));
+            let rs = ui::notes::releases();
+            ui.show_whats_new(&rs[0].version, Some(&rs[2].version));
+        }
         "create" => {
             let mut m = Menu::new("Jonas".into());
             m.creating = true;

@@ -11,6 +11,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 VER="${1:?usage: release-web.sh <version>}"
 REPO=JonasMerrell/space-rts
+# every release adds a CHANGELOG.md entry on top (the app shows it under PATCH NOTES)
+TOP="$(grep -m1 '^## ' CHANGELOG.md | cut -d' ' -f2)"
+[ "$TOP" = "$VER" ] || { echo "CHANGELOG.md starts with $TOP: add a '## $VER — $(date +%F)' entry first" >&2; exit 1; }
 DIST="$(mktemp -d)"
 # baked into the wasm and written to web/version.json: once deployed, the server announces it at
 # login and older apps / open browser tabs ask to update (server::Server::latest_client)

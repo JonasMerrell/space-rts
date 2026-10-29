@@ -21,3 +21,9 @@ Matches last about a week; you check in for a few minutes a day.
 - Server: `cargo run --release -p server -- --port 7777 --data data`
 - Desktop client: `SPACE_RTS_SERVER=host:7777 cargo run --release -p client`
 - Android APK: `./build-apk.sh` (needs Android SDK + NDK 25, cargo-ndk, JDK 17) → `HohmannsReach.apk`
+
+## Releases
+- **Every release adds a `CHANGELOG.md` entry** on top (`## X.Y.Z — YYYY-MM-DD`, then `- ` bullets in plain
+  player language). The app bundles it as PATCH NOTES (main menu, game menu) and shows "What's new" once after
+  an update. `scripts/release-{apk,web,server}.sh X.Y.Z` refuse to run unless the top entry is X.Y.Z, and
+  `cargo test -p ui notes` checks the file parses.
