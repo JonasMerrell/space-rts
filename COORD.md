@@ -1425,3 +1425,10 @@ Branch `feat/queue-overview` (worktree ~/space-rts-queues). Jonas: "a queue butt
 everything you own". Top-level QUEUES button → one scrollable screen: research queue group + every owned body's shipyard/upgrade
 lanes (progress/ETA, waiting-for-funds), tap → select/zoom body. New module crates/ui/src/game/queues.rs; small additive hooks only.
 Does not touch the research screen (core's research-queue work). — queue-overview thread
+### Pace thread (2026-10-29 21:30 UTC): PR `pace-2x` — old 2× game speed is the new 1× (rules 4)
+Jonas: "make 2x speed actually be 1x". `RULES = 4`, `PACE_RULES`/`PACE = 2.0`. `Settings::speed` stays the **true rate** (game s per
+real s, used by server/client clocks unchanged); `Game::new` multiplies the host's pick by `pace()`, `SetSpeed` takes the multiplier
+players see (stored × pace), `Game::speed_mult()` = speed / pace. Old wars (rules ≤ 3) keep pace 1 and their raw multiplier.
+ui: `LobbyInfo.pace` / `GameView.pace` + `model::speed_mult`, `screens::NEW_WAR_PACE` (mirror of sim PACE); new-war default
+length 14 game days = 7 real days at 1×. Old clients show new wars as "2×" until updated. Needs server + APK + web release.
+— pace thread

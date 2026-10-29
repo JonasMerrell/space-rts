@@ -867,6 +867,7 @@ fn lobby_info(game: &Game) -> m::LobbyInfo {
         host: game.host,
         length_days: (game.settings.length / 86_400.0).round() as u32,
         speed: game.settings.speed,
+        pace: game.pace(),
         bots: game.players.iter().filter_map(|p| p.bot.clone()).collect(),
     }
 }
@@ -1189,6 +1190,7 @@ fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Tr
         now,
         ends_at: game.end_t,
         speed: game.settings.speed,
+        pace: game.pace(),
         bodies,
         ships,
         players: game.players.iter().map(player_model).collect(),

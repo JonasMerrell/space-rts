@@ -97,13 +97,13 @@ fn forecast_a_week_is_fast_enough() {
 fn host_can_change_speed_without_a_time_jump() {
     let mut g = game(false);
     g.started_real = 1_000_000.0;
-    let real = g.started_real + 3600.0; // one real hour in at 1×
+    let real = g.started_real + 3600.0; // one real hour in at 1× (two game hours since rules 4)
     g.advance_to(g.time_at(real));
     let t = g.t;
     assert!(g.apply(1, Command::SetSpeed { speed: 4.0 }).is_err(), "only the host");
     g.apply(0, Command::SetSpeed { speed: 4.0 }).unwrap();
     assert!((g.time_at(real) - t).abs() < 1e-6, "game time continuous");
-    assert!((g.time_at(real + 60.0) - (t + 240.0)).abs() < 1e-6, "4× from now on");
+    assert!((g.time_at(real + 60.0) - (t + 60.0 * 4.0 * g.pace())).abs() < 1e-6, "4× from now on");
 }
 
 /// CPU seconds used by the calling thread (Linux `/proc/thread-self/stat`), None elsewhere.
