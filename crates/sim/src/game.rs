@@ -751,15 +751,22 @@ const NEVER: f64 = 1e300;
 /// Power any parked unarmed ship adds in orbit (Jonas: any ship, even a tanker, can claim a body).
 pub const CONSTRUCTOR_POWER: f64 = 1.0;
 /// Current rules revision for new matches. 1: matter yield by body kind and planet size. 2: advanced tech tier.
-/// 3: slower economy (see `ECONOMY_RULES`).
-pub const RULES: u32 = 3;
+/// 3: slower economy (see `ECONOMY_RULES`). 4: faster base pace (see `PACE_RULES`).
+pub const RULES: u32 = 4;
 /// Rules 3 (Jonas 2026-10-28): production starts low and grows slowly, early game affords a few interceptors,
 /// and dreadnoughts are a long-term goal. (A cap tying matter output to shipyard capacity was dropped: Jonas 2026-10-29.)
 pub const ECONOMY_RULES: u32 = 3;
+/// Rules 4 (Jonas 2026-10-29): the old 2× game speed is the new 1×. Game time runs `PACE` times faster than
+/// real time at the slowest setting; `Settings::speed` stays the true rate (game s per real s) and the
+/// multiplier players see is `speed / pace()`.
+pub const PACE_RULES: u32 = 4;
+pub const PACE: f64 = 2.0;
 const FACTIONS: [&str; 4] = ["vanguard", "hive", "prism", "junker"];
 
 impl Game {
-    pub fn new(code: String, settings: Settings, seed: u64, host_name: &str) -> Game {
+    /// `settings.speed` is the multiplier the host picked (1 = normal pace); it is stored as the true rate.
+    pub fn new(code: String, mut settings: Settings, seed: u64, host_name: &str) -> Game {
+        settings.speed *= if RULES >= PACE_RULES { PACE } else { 1.0 };
         let system = generate(seed, settings.size);
         let bodies = vec![BodyState::default(); system.bodies.len()];
         let end_t = settings.length;
@@ -905,6 +912,16 @@ impl Game {
         self.status = Status::Running;
         self.update_intel();
         self.event(None, EventKind::Info, "Game started", "Fleets are fuelled. Good hunting.", None, None);
+    }
+
+    /// Game seconds per real second at the 1× setting (rules 4 doubled it; older wars keep 1).
+    pub fn pace(&self) -> f64 {
+        if self.rules >= PACE_RULES { PACE } else { 1.0 }
+    }
+
+    /// The speed multiplier players see and set (1 = normal pace for this war's rules).
+    pub fn speed_mult(&self) -> f64 {
+        self.settings.speed / self.pace()
     }
 
     /// Game time corresponding to a unix time.
@@ -1141,13 +1158,14 @@ impl Game {
                 if player != self.host {
                     return Err("only the host can change the game speed".into());
                 }
-                let speed = speed.clamp(1.0, 1000.0);
+                let mult = speed.clamp(1.0, 1000.0);
+                let speed = mult * self.pace();
                 // keep game time continuous: real_now = started_real + t / speed for old and new speed
                 if self.started_real > 0.0 {
                     self.started_real += self.t / self.settings.speed - self.t / speed;
                 }
                 self.settings.speed = speed;
-                self.event(None, EventKind::Info, "Game speed", &format!("{speed}× from now on"), None, None);
+                self.event(None, EventKind::Info, "Game speed", &format!("{mult}× from now on"), None, None);
                 Ok(())
             }
             Command::Extend { seconds } => {
@@ -2001,6 +2019,26 @@ mod tests {
         // a fresh home makes about one interceptor's matter every two hours, not three an hour
         let home = g.players[0].home.unwrap();
         assert!(g.production(home).0 < im);
+    }
+
+    #[test]
+    fn new_wars_run_at_the_old_double_speed() {
+        let mut g = game();
+        assert_eq!((g.pace(), g.settings.speed, g.speed_mult()), (2.0, 2.0, 1.0));
+        g.started_real = 1_000.0;
+        assert_eq!(g.time_at(1_000.0 + 3600.0), 7200.0);
+        // the host's multiplier is relative to the new 1×
+        g.t = 3600.0;
+        g.apply(0, Command::SetSpeed { speed: 4.0 }).unwrap();
+        assert_eq!((g.settings.speed, g.speed_mult()), (8.0, 4.0));
+        assert!((g.time_at(g.started_real + g.t / g.settings.speed) - g.t).abs() < 1e-6);
+        // a war from before rules 4 keeps its rate and its raw multiplier
+        let mut old = game();
+        old.rules = 3;
+        old.settings.speed = 2.0;
+        assert_eq!((old.pace(), old.speed_mult()), (1.0, 2.0));
+        old.apply(0, Command::SetSpeed { speed: 3.0 }).unwrap();
+        assert_eq!(old.settings.speed, 3.0);
     }
 
     #[test]

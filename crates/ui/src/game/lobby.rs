@@ -55,8 +55,9 @@ pub fn overlay(g: &mut GameScreen, inp: &mut Input, view: &GameView, info: &Lobb
     text("JOIN CODE", banner.x + 14.0 * s(), banner.y + 66.0 * s(), 12.0, MUTED, FontKind::Title, Align::Left);
     let spaced: String = info.code.chars().map(|c| format!("{c} ")).collect();
     text(spaced.trim_end(), banner.x + 14.0 * s(), banner.y + 92.0 * s(), 30.0, PAPER, FontKind::Title, Align::Left);
+    let mult = crate::model::speed_mult(info.speed, info.pace);
     let len = if info.speed > 1.0 {
-        format!("{} DAYS · {}× ({} REAL)", info.length_days, info.speed, crate::screens::real_len(info.length_days as f64 * 24.0 / info.speed).to_uppercase())
+        format!("{} DAYS · {}× ({} REAL)", info.length_days, mult, crate::screens::real_len(info.length_days as f64 * 24.0 / info.speed).to_uppercase())
     } else {
         format!("{} DAYS", info.length_days)
     };
