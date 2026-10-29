@@ -112,6 +112,8 @@ pub struct ClientBackend {
     last_error: Option<String>,
     /// Newest released client version, from the server's Welcome.
     latest_client: Option<String>,
+    /// Download page for UPDATE, from the server's Welcome.
+    update_url: Option<String>,
     forecast: Forecaster,
     /// input signature and wall time of the running forecast, and whether a newer snapshot
     /// changed something it depends on (restarted from `poll` once `FORECAST_GAP` has passed)
@@ -177,6 +179,7 @@ impl ClientBackend {
             last_ping: 0.0,
             last_error: None,
             latest_client: None,
+            update_url: None,
             forecast: Forecaster::default(),
             forecast_sig: 0,
             forecast_at: 0.0,
@@ -255,8 +258,9 @@ impl ClientBackend {
 
     fn on_msg(&mut self, msg: ServerMsg) {
         match msg {
-            ServerMsg::Welcome { user, token, latest_client } => {
+            ServerMsg::Welcome { user, token, latest_client, update_url } => {
                 self.latest_client = latest_client;
+                self.update_url = update_url;
                 // a reconnect after a dropped connection: keep the player where they were
                 let reconnect = self.logged_in;
                 self.logged_in = true;
@@ -1283,7 +1287,7 @@ impl Backend for ClientBackend {
             }
             UiAction::GetUpdate => {
                 if let Some(v) = &self.latest_client {
-                    crate::update::get(v);
+                    crate::update::get(v, self.update_url.as_deref());
                 }
             }
             UiAction::Reconnect => {

@@ -51,7 +51,7 @@ fn server_messages_round_trip() {
     let g = running_game();
     let events: Vec<_> = g.events.iter().cloned().map(|e| ("WXYZ".to_string(), 1.7e9 + e.t, e)).collect();
     let msgs = vec![
-        ServerMsg::Welcome { user: "jonas".into(), token: None, latest_client: None },
+        ServerMsg::Welcome { user: "jonas".into(), token: None, latest_client: None, update_url: None },
         ServerMsg::Error { msg: "bad password".into() },
         ServerMsg::Games(vec![GameSummary {
             code: "WXYZ".into(), name: "wire".into(), status: Status::Running, t: g.t, length: 7.0 * 86_400.0,

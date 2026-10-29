@@ -108,6 +108,10 @@ pub enum ServerMsg {
         /// than this tell the player to update (old servers don't send it, old clients ignore it).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         latest_client: Option<String>,
+        /// Where the update card's UPDATE button takes phones: the server's own download page
+        /// (`server --update-url`). Clients fall back to their built-in page without it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        update_url: Option<String>,
     },
     Error { msg: String },
     Games(Vec<GameSummary>),
@@ -138,6 +142,14 @@ pub fn parse_version(v: &str) -> Option<(u32, u32, u32)> {
     };
     let ver = (num(true)?, num(false)?, num(false)?);
     parts.next().is_none().then_some(ver)
+}
+
+/// A web page a client may open for updating: http(s), short, nothing that could break out of a URL.
+pub fn ok_update_url(u: &str) -> bool {
+    (u.starts_with("https://") || u.starts_with("http://"))
+        && u.len() <= 256
+        && u.len() > "https://".len()
+        && u.chars().all(|c| c.is_ascii_graphic() && !"\"'<>\\`{}|^".contains(c))
 }
 
 /// True when `latest` is a newer version than `mine` (false if either doesn't parse).
@@ -182,11 +194,24 @@ mod tests {
     }
 
     #[test]
+    fn update_urls_are_plain_web_links() {
+        assert!(ok_update_url("https://hohmannsreach.duckdns.org:7777/"));
+        assert!(ok_update_url("http://192.168.0.105:7777/hohmann-reach.apk"));
+        assert!(!ok_update_url("https://"));
+        assert!(!ok_update_url("intent://x#Intent;end"));
+        assert!(!ok_update_url("javascript:alert(1)"));
+        assert!(!ok_update_url("https://a b"));
+        assert!(!ok_update_url("https://a\"><script>"));
+        assert!(!ok_update_url(&format!("https://{}", "a".repeat(300))));
+    }
+
+    #[test]
     fn welcome_without_latest_client_still_decodes() {
         // an old server's Welcome
         let m: ServerMsg = decode(r#"{"Welcome":{"user":"jonas"}}"#).unwrap();
         assert!(matches!(m, ServerMsg::Welcome { latest_client: None, .. }));
-        let line = encode(&ServerMsg::Welcome { user: "j".into(), token: None, latest_client: Some("0.9.0".into()) });
+        assert!(matches!(m, ServerMsg::Welcome { update_url: None, .. }));
+        let line = encode(&ServerMsg::Welcome { user: "j".into(), token: None, latest_client: Some("0.9.0".into()), update_url: Some("https://h/".into()) });
         assert!(line.contains(r#""latest_client":"0.9.0""#));
         // an old client's view of it: unknown fields are ignored
         #[derive(Deserialize)]
