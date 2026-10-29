@@ -100,8 +100,12 @@ fn rows(be: &dyn Backend, view: &GameView) -> (Vec<Row>, Vec<BodyId>) {
         if jobs.len() > building {
             sub.push(format!("{} queued", jobs.len() - building));
         }
-        if !rest.is_empty() {
-            sub.push(format!("{} waiting for funds", rest.len()));
+        let blocked = rest.iter().filter(|w| w.blocked.is_some()).count();
+        if rest.len() > blocked {
+            sub.push(format!("{} waiting for funds", rest.len() - blocked));
+        }
+        if blocked > 0 {
+            sub.push(format!("{blocked} queued behind other work"));
         }
         bodies.push(Row::Head { body: Some(b.id), title: format!("{} · {}", b.name.to_uppercase(), kind_name(b.kind)), sub: sub.join(" · ") });
         // the two lanes build side by side: shipyard first, then upgrades, each in its own order
@@ -120,7 +124,7 @@ fn rows(be: &dyn Backend, view: &GameView) -> (Vec<Row>, Vec<BodyId>) {
             sub.push(format!("{} researching", research.len()));
         }
         if !research_waits.is_empty() {
-            sub.push(format!("{} waiting", research_waits.len()));
+            sub.push(format!("{} queued", research_waits.len()));
         }
         out.push(Row::Head { body: None, title: "RESEARCH".into(), sub: sub.join(" · ") });
         out.extend(research);
@@ -157,14 +161,15 @@ pub fn queues_screen(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view
     text("QUEUES", r.x + 18.0 * s(), r.y + 26.0 * s(), 22.0, PAPER, FontKind::Title, Align::Left);
     let (rows, idle) = rows(be, view);
     let jobs = rows.iter().filter(|r| matches!(r, Row::Job { .. })).count();
-    let waits = rows.iter().filter(|r| matches!(r, Row::Waiting { .. })).count();
+    let waits = rows.iter().filter(|r| matches!(r, Row::Waiting { item, .. } if item.blocked.is_none())).count();
+    let jobs = jobs + rows.iter().filter(|r| matches!(r, Row::Waiting { item, .. } if item.blocked.is_some())).count();
     let last = rows.iter().filter_map(|r| if let Row::Job { done_t, .. } = r { Some(*done_t) } else { None }).fold(view.now, f64::max);
     let sub = if jobs + waits == 0 {
         "Nothing queued anywhere".to_string()
     } else {
         let mut v = vec![format!("{jobs} building or lined up")];
         if waits > 0 {
-            v.push(format!("{waits} waiting"));
+            v.push(format!("{waits} waiting for funds"));
         }
         if last > view.now {
             v.push(format!("done in {}", fmt_dur(last - view.now)));
@@ -258,16 +263,19 @@ pub fn queues_screen(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view
             Row::Waiting { item, .. } => {
                 let jr = Rect::new(rr.x + 14.0 * s(), rr.y, rr.w - 14.0 * s(), rr.h);
                 cel::round_rect(jr, 6.0 * s(), Color::new(1.0, 1.0, 1.0, 0.03));
-                let edge = if item.blocked.is_some() || item.start_t.is_none() { alpha(DANGER, 0.6) } else { alpha(ACCENT, 0.45) };
+                // blocked = lined up behind something else (busy lab, no constructor...), not money
+                let broke = item.blocked.is_none() && item.start_t.is_none();
+                let edge = if broke { alpha(DANGER, 0.6) } else if item.blocked.is_some() { BORDER } else { alpha(ACCENT, 0.45) };
                 cel::round_rect_lines(jr, 6.0 * s(), (1.0 * s()).max(1.0), edge);
                 if let Some(t) = art::tex("sprites/icons/time.png") {
                     art::draw_centered(&t, vec2(jr.x + 22.0 * s(), jr.center().y), vec2(22.0, 22.0) * s(), 0.0, Color::new(1.0, 1.0, 1.0, 0.7));
                 }
                 let tx = jr.x + 44.0 * s();
                 text(&item.label.to_uppercase(), tx, jr.y + 15.0 * s(), 13.0, PAPER, FontKind::Title, Align::Left);
-                text("WAITING FOR FUNDS", jr.x + jr.w - 10.0 * s(), jr.y + 15.0 * s(), 11.0, ACCENT, FontKind::Title, Align::Right);
+                let (tag, tag_col) = if item.blocked.is_some() { ("QUEUED", MUTED) } else { ("WAITING FOR FUNDS", ACCENT) };
+                text(tag, jr.x + jr.w - 10.0 * s(), jr.y + 15.0 * s(), 11.0, tag_col, FontKind::Title, Align::Right);
                 let (sub, col) = match (&item.blocked, item.start_t) {
-                    (Some(why), _) => (why.clone(), DANGER),
+                    (Some(why), _) => (format!("starts when free: {why}"), MUTED),
                     (None, Some(t)) if t <= view.now + 1.0 => ("starting".to_string(), GOOD),
                     (None, Some(t)) => (format!("needs {}M {}E · starts in ~{}", fmt_amount(item.cost.matter), fmt_amount(item.cost.energy), fmt_dur(t - view.now)), MUTED),
                     (None, None) => (format!("needs {}M {}E · no income for it yet", fmt_amount(item.cost.matter), fmt_amount(item.cost.energy)), DANGER),
