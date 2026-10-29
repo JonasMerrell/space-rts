@@ -724,10 +724,8 @@ pub const CONSTRUCTOR_POWER: f64 = 1.0;
 /// 3: slower economy (see `ECONOMY_RULES`).
 pub const RULES: u32 = 3;
 /// Rules 3 (Jonas 2026-10-28): production starts low and grows slowly, early game affords a few interceptors,
-/// dreadnoughts are a long-term goal, and a player's matter output is capped at what their shipyards can spend.
+/// and dreadnoughts are a long-term goal. (A cap tying matter output to shipyard capacity was dropped: Jonas 2026-10-29.)
 pub const ECONOMY_RULES: u32 = 3;
-/// Rules 3: matter one shipyard turns into ships per hour at build speed 1 (an Interceptor costs 80 and takes 1 h).
-pub const YARD_MATTER_PER_HOUR: f64 = 80.0;
 const FACTIONS: [&str; 4] = ["vanguard", "hive", "prism", "junker"];
 
 impl Game {
@@ -1628,15 +1626,8 @@ impl Game {
         }
     }
 
-    /// Production per hour for a body (matter, energy, fuel) given its upgrades, after the shipyard cap.
+    /// Production per hour for a body (matter, energy, fuel) given its upgrades.
     pub fn production(&self, body: BodyId) -> (f64, f64, f64) {
-        let (m, e, f) = self.raw_production(body);
-        let k = self.bodies[body.0 as usize].owner.map_or(1.0, |o| self.matter_scale(o));
-        (m * k, e, f)
-    }
-
-    /// Production before the rules-3 cap that ties matter output to shipyard capacity.
-    fn raw_production(&self, body: BodyId) -> (f64, f64, f64) {
         let b = &self.bodies[body.0 as usize];
         if b.owner.is_none() || b.shattered || b.gone {
             return (0.0, 0.0, 0.0);
@@ -1649,32 +1640,6 @@ impl Game {
         let fuel = 120.0 * b.level(Upgrade::Refinery) as f64;
         let m = self.mods(b.owner.unwrap());
         (matter * m.matter, energy * m.energy, fuel * m.fuel)
-    }
-
-    /// Matter per hour `p`'s shipyards (own bodies and shipyard stations) can spend; None before rules 3.
-    pub fn yard_capacity(&self, p: PlayerId) -> Option<f64> {
-        if self.rules < ECONOMY_RULES {
-            return None;
-        }
-        let k = self.mods(p).build_speed;
-        let speed: f64 = (0..self.bodies.len() as u32)
-            .map(|i| self.yard_level(p, BodyId(i)))
-            .filter(|&l| l > 0)
-            .map(|l| 1.0 + 0.5 * (l as f64 - 1.0))
-            .sum();
-        Some(YARD_MATTER_PER_HOUR * speed * k)
-    }
-
-    /// Factor (≤ 1) on `p`'s matter output so it never exceeds what their shipyards can spend
-    /// (Jonas: "a planet shouldn't be able to produce more resources than it can spend").
-    pub fn matter_scale(&self, p: PlayerId) -> f64 {
-        let Some(cap) = self.yard_capacity(p) else { return 1.0 };
-        let total: f64 = (0..self.bodies.len() as u32).filter(|&i| self.bodies[i as usize].owner == Some(p)).map(|i| self.raw_production(BodyId(i)).0).sum();
-        if total > cap {
-            cap / total
-        } else {
-            1.0
-        }
     }
 
     /// (matter, energy, build seconds at build speed 1) of `class` in this match.
@@ -1707,21 +1672,18 @@ impl Game {
         }
         let l = level as f64;
         match upgrade {
-            Upgrade::Mining => format!("Matter output ×{:.1} of the body's base. Total matter is capped at what your shipyards can spend.", 1.0 + 0.5 * l),
+            Upgrade::Mining => format!("Matter output ×{:.1} of the body's base.", 1.0 + 0.5 * l),
             Upgrade::Solar => format!("+{:.0} energy/h at 1 AU-equivalent; falls off with distance² from the star.", 30.0 * l),
             Upgrade::Reactor => format!("+{:.0} energy/h anywhere. Costs the same as solar.", 30.0 * l),
-            Upgrade::Shipyard => format!("{} Spends up to {:.0} matter/h: your total matter output is capped at what your yards can spend.", upgrade.describe(level), YARD_MATTER_PER_HOUR * (1.0 + 0.5 * (l - 1.0).max(0.0))),
             _ => upgrade.describe(level),
         }
     }
 
     fn economy(&mut self, dt: f64) {
         let h = dt / 3600.0;
-        let scale: Vec<f64> = (0..self.players.len() as PlayerId).map(|p| self.matter_scale(p)).collect();
         for i in 0..self.bodies.len() {
             let Some(o) = self.bodies[i].owner else { continue };
-            let (m, e, f) = self.raw_production(BodyId(i as u32));
-            let m = m * scale.get(o as usize).copied().unwrap_or(1.0);
+            let (m, e, f) = self.production(BodyId(i as u32));
             let def_k = self.mods(o).def_hp;
             let p = &mut self.players[o as usize];
             p.matter += m * h;
@@ -1977,33 +1939,17 @@ mod tests {
     }
 
     #[test]
-    fn rules3_economy_is_slow_and_capped_by_shipyards() {
-        let mut g = game();
+    fn rules3_economy_is_slow() {
+        let g = game();
         assert!(g.rules >= ECONOMY_RULES);
         let (im, ie, _) = g.ship_cost(ShipClass::Interceptor);
         let (pm, pe) = (g.players[0].matter, g.players[0].energy);
         // a few interceptors at the start, not a fleet
         assert!((2.0..=4.0).contains(&(pm / im).min(pe / ie).floor()));
         assert!(g.ship_cost(ShipClass::Dreadnought).0 >= 20.0 * im);
-        // a fresh home makes well under its yard's capacity
+        // a fresh home makes about one interceptor's matter every two hours, not three an hour
         let home = g.players[0].home.unwrap();
-        let cap = g.yard_capacity(0).unwrap();
-        assert!(g.production(home).0 < cap / 2.0);
-        // grab a pile of extra bodies: output stops at what the one yard can spend
-        for i in 0..g.bodies.len() {
-            if g.bodies[i].owner.is_none() && !g.system.bodies[i].is_star() {
-                g.bodies[i].owner = Some(0);
-                g.bodies[i].levels[Upgrade::Mining.index()] = 3;
-            }
-        }
-        let total: f64 = (0..g.bodies.len() as u32).filter(|&i| g.bodies[i as usize].owner == Some(0)).map(|i| g.production(BodyId(i)).0).sum();
-        assert!((total - cap).abs() < 1e-6, "{total} vs {cap}");
-        let m0 = g.players[0].matter;
-        g.advance_to(g.t + 3600.0);
-        assert!(g.players[0].matter - m0 <= cap + 1e-6);
-        // a second yard raises the cap
-        g.bodies[home.0 as usize].levels[Upgrade::Shipyard.index()] = 2;
-        assert!(g.yard_capacity(0).unwrap() > cap);
+        assert!(g.production(home).0 < im);
     }
 
     #[test]
@@ -2012,7 +1958,6 @@ mod tests {
         let home = g.players[0].home.unwrap();
         g.rules = 2;
         assert_eq!(g.ship_cost(ShipClass::Dreadnought).0, ShipClass::Dreadnought.stats().matter);
-        assert_eq!(g.yard_capacity(0), None);
         let (base, _) = g.base_yield(home);
         assert!((g.production(home).0 - base * 2.0 * g.mods(0).matter).abs() < 1e-9);
     }
