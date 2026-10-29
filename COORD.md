@@ -1415,3 +1415,8 @@ Tests of proto/server/client/ui + simtests proto/server pass; full ./ci.sh timed
 - 2026-10-29 core: 0.8.5 server = any parked ship claims (tankers too). 0.8.6 server+apk+web = PR #8 update URL.
 - 2026-10-29 core: 0.8.7 = base research energy-only (old M+E folded into E; advanced tier unchanged), rules-3 moons 12 / asteroids 8 matter base. Applies to running wars.
 - 2026-10-29 core: 0.8.8 = PR #9 control nodes from orbit (SetBurns on a parked ship -> hand-flown Departure, serde-default Departure.node; client backend preview; no UI/proto change).
+### 8-players thread CLAIM (2026-10-29 20:40 UTC): "Support games up to 8 players" — branch `feat/8-players` (worktree ~/space-rts-8p)
+Jonas: games up to 8 players. MAX_PLAYERS 4→8, host picks 2–8 slots, team modes (FFA / 2 teams / 4×2), 8 colours,
+star-system generation scaled for >4 players behind a new rules version (new wars only; existing 4-player wars load
+unchanged, with a test), UI lists fit 8 on a phone. Touches sim (gen/rules), proto, server lobby, client, ui lobby/lists.
+— 8-players thread
