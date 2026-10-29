@@ -1415,11 +1415,37 @@ Tests of proto/server/client/ui + simtests proto/server pass; full ./ci.sh timed
 - 2026-10-29 core: 0.8.5 server = any parked ship claims (tankers too). 0.8.6 server+apk+web = PR #8 update URL.
 - 2026-10-29 core: 0.8.7 = base research energy-only (old M+E folded into E; advanced tier unchanged), rules-3 moons 12 / asteroids 8 matter base. Applies to running wars.
 - 2026-10-29 core: 0.8.8 = PR #9 control nodes from orbit (SetBurns on a parked ship -> hand-flown Departure, serde-default Departure.node; client backend preview; no UI/proto change).
+- 2026-10-29 core: 0.8.9 = research queue visible: TechState::Queued (card shows QUEUED + CANCEL), ResearchView.queue list under the labs; demo scene research_queue.
 ### Patch-notes thread (2026-10-29 20:40 UTC): claiming in-app patch notes
 Branch `patch-notes` (worktree ~/space-rts-patchnotes). Adds top-level CHANGELOG.md (player-facing, `## X.Y.Z — date` + `- bullet`),
 bundled via include_str!, a "Patch notes" screen in crates/ui (main menu + settings; small, self-contained module) and a one-time
 "What's new" after a version change (last-seen version in the client's existing local storage). Rule going forward:
 **every release adds a CHANGELOG.md entry** (unit test checks top entry == crate version). — patch-notes thread
+### Queue-overview thread (2026-10-29 20:45 UTC): claiming QUEUES overview screen
+Branch `feat/queue-overview` (worktree ~/space-rts-queues). Jonas: "a queue button that shows the upgrades and ship queues from
+everything you own". Top-level QUEUES button → one scrollable screen: research queue group + every owned body's shipyard/upgrade
+lanes (progress/ETA, waiting-for-funds), tap → select/zoom body. New module crates/ui/src/game/queues.rs; small additive hooks only.
+Does not touch the research screen (core's research-queue work). — queue-overview thread
+### Pace thread (2026-10-29 21:30 UTC): PR `pace-2x` — old 2× game speed is the new 1× (rules 4)
+Jonas: "make 2x speed actually be 1x". `RULES = 4`, `PACE_RULES`/`PACE = 2.0`. `Settings::speed` stays the **true rate** (game s per
+real s, used by server/client clocks unchanged); `Game::new` multiplies the host's pick by `pace()`, `SetSpeed` takes the multiplier
+players see (stored × pace), `Game::speed_mult()` = speed / pace. Old wars (rules ≤ 3) keep pace 1 and their raw multiplier.
+ui: `LobbyInfo.pace` / `GameView.pace` + `model::speed_mult`, `screens::NEW_WAR_PACE` (mirror of sim PACE); new-war default
+length 14 game days = 7 real days at 1×. Old clients show new wars as "2×" until updated. Needs server + APK + web release.
+— pace thread
+
+### Ship-fuel thread (2026-10-29 22:10 UTC): rules 5 — ships cost fuel to build, branch `ship-fuel` — core please release (server + APK + web)
+- New wars only (`SHIP_FUEL_RULES = 5`, `RULES = 5` on top of rules 4 pace). `Game::ship_fuel_cost(class)` (Scout 20, Interceptor 40,
+  Gunship/Bomber 120, Dreadnought 1000, Tanker 60, Constructor 80, Decoy 20, Torpedo 80 t), taken at queue time from
+  `Game::build_fuel(p, body)` = the body's tanks if yours, then your fuel depots there; refunded on cancel. Ships still launch full.
+- `ship_cost` signature unchanged. Waitlist: missing fuel is a *blocker* (skipped, doesn't hold up the rest), not a money wait.
+- UI: `Cost.fuel`, `BodyInfo.build_fuel`; shipyard cells show "…M …E …F", detail sheet shows FUEL HERE. Per-body matter
+  proposal (thread "Add per-body matter and cargo ships") would become rules 6; this fits it (fuel is already per body).
+### Ship-HP thread (2026-10-29 22:20 UTC): PR #13 `ship-hp` merged — needs APK + web release
+Jonas: "show ship hp". Client-only (ui + client backend): `model::Ship`/`FleetMember` gain `hp`/`hp_max` (fleets and enemy
+groups sum; ghosts = hull as last seen; hp_max = `Ship::stats().hp` incl. tech). Ship sheet HULL bar beside FUEL, fleet-sheet rows
+get a hull bar, damaged ships get a tiny hull bar under their map token. No sim/proto/server change. — ship-hp thread
+- 2026-10-29 core: 0.9.0 server+apk+web = research-queue UI (0.8.9 never published), PR #10 pace-2x (rules 4), PR #12 ship fuel build cost (rules 5), PR #13 ship HP. Per-body matter proposal = rules 6.
 ### Patch notes (2026-10-29, patch-notes thread) — rule: every release adds a CHANGELOG.md entry
 `CHANGELOG.md` (repo root) is player-facing patch notes, newest first: `## X.Y.Z — YYYY-MM-DD` + `- ` bullets, no jargon.
 Bundled into the app (`ui::notes`, include_str!), shown via PATCH NOTES (main menu, game menu) and once as "What's new"

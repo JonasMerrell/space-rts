@@ -573,9 +573,9 @@ fn compute_impact(g: &Game, me: g::PlayerId, now: f64, ast: BodyId, target: Body
         fuel: p.fuel,
         fuel_available: sim::asteroid::fuel_available(g, me, a),
         drive_cost: if busy {
-            m::Cost { matter: 0.0, energy: 0.0, seconds: 0.0 }
+            m::Cost { matter: 0.0, energy: 0.0, seconds: 0.0, fuel: 0.0 }
         } else {
-            m::Cost { matter: sim::asteroid::DRIVE_MATTER, energy: sim::asteroid::DRIVE_ENERGY, seconds: sim::asteroid::INSTALL_S }
+            m::Cost { matter: sim::asteroid::DRIVE_MATTER, energy: sim::asteroid::DRIVE_ENERGY, seconds: sim::asteroid::INSTALL_S, fuel: 0.0 }
         },
         impact_t: Some(imp.t),
         impact_speed: imp.v,
@@ -867,6 +867,7 @@ fn lobby_info(game: &Game) -> m::LobbyInfo {
         host: game.host,
         length_days: (game.settings.length / 86_400.0).round() as u32,
         speed: game.settings.speed,
+        pace: game.pace(),
         bots: game.players.iter().filter_map(|p| p.bot.clone()).collect(),
     }
 }
@@ -1006,6 +1007,8 @@ pub(crate) fn ship_model(s: &g::Ship, trajectory: Option<m::Trajectory>) -> m::S
         count: 1,
         fuel: s.fuel as f32,
         fuel_max: st.fuel_cap as f32,
+        hp: s.hp.max(0.0) as f32,
+        hp_max: s.stats().hp as f32,
         parked_at,
         trajectory,
         nodes,
@@ -1044,7 +1047,9 @@ fn group_fleets(game: &Game, me: g::PlayerId, ships: Vec<m::Ship>) -> Vec<m::Shi
             count: ms.len() as u32,
             fuel: weakest.fuel,
             fuel_max: weakest.fuel_max,
-            members: ms.iter().map(|s| m::FleetMember { id: s.id, name: s.name.clone(), class: s.class, fuel: s.fuel, fuel_max: s.fuel_max }).collect(),
+            hp: ms.iter().map(|s| s.hp).sum(),
+            hp_max: ms.iter().map(|s| s.hp_max).sum(),
+            members: ms.iter().map(|s| m::FleetMember { id: s.id, name: s.name.clone(), class: s.class, fuel: s.fuel, fuel_max: s.fuel_max, hp: s.hp, hp_max: s.hp_max }).collect(),
             ..ms[0].clone()
         });
     }
@@ -1082,7 +1087,9 @@ fn group_contacts(me: g::PlayerId, ships: Vec<m::Ship>) -> Vec<m::Ship> {
             name: if mixed { "Ship group".into() } else { ms[0].name.clone() },
             class,
             count: ms.len() as u32,
-            members: ms.iter().map(|s| m::FleetMember { id: s.id, name: s.name.clone(), class: s.class, fuel: s.fuel, fuel_max: s.fuel_max }).collect(),
+            hp: ms.iter().map(|s| s.hp).sum(),
+            hp_max: ms.iter().map(|s| s.hp_max).sum(),
+            members: ms.iter().map(|s| m::FleetMember { id: s.id, name: s.name.clone(), class: s.class, fuel: s.fuel, fuel_max: s.fuel_max, hp: s.hp, hp_max: s.hp_max }).collect(),
             ..ms[0].clone()
         });
     }
@@ -1154,6 +1161,9 @@ fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Tr
                 count: 1,
                 fuel: 0.0,
                 fuel_max: s.class.stats().fuel_cap as f32,
+                // hull as of the last sighting
+                hp: s.hp.max(0.0) as f32,
+                hp_max: s.stats().hp as f32,
                 parked_at: s.parked_at().map(|b| b.0),
                 trajectory: paths.get(&s.id.0).cloned(),
                 nodes: vec![],
@@ -1189,6 +1199,7 @@ fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Tr
         now,
         ends_at: game.end_t,
         speed: game.settings.speed,
+        pace: game.pace(),
         bodies,
         ships,
         players: game.players.iter().map(player_model).collect(),
@@ -1826,7 +1837,7 @@ impl Backend for ClientBackend {
                     max: g::Upgrade::MAX_LEVEL,
                     next: (mine && next_level <= g::Upgrade::MAX_LEVEL).then(|| {
                         let (matter, energy, seconds) = u.cost(next_level);
-                        m::Cost { matter, energy, seconds }
+                        m::Cost { matter, energy, seconds, fuel: 0.0 }
                     }),
                 }
             })
@@ -1839,7 +1850,7 @@ impl Backend for ClientBackend {
                 .filter(|c| **c != g::ShipClass::Slug && c.needs().is_none_or(|t| g.has_tech(self.me, t)))
                 .map(|&c| {
                     let (matter, energy, seconds) = g.ship_cost(c);
-                    (ship_class(c), m::Cost { matter, energy, seconds })
+                    (ship_class(c), m::Cost { matter, energy, seconds, fuel: g.ship_fuel_cost(c) })
                 })
                 .collect()
         } else {
@@ -1878,20 +1889,21 @@ impl Backend for ClientBackend {
             .map(|(index, (w, e))| m::WaitingItem {
                 id: w.id,
                 label: w.wish.label(),
-                cost: m::Cost { matter: e.matter, energy: e.energy, seconds: 0.0 },
+                cost: m::Cost { matter: e.matter, energy: e.energy, seconds: 0.0, fuel: 0.0 },
                 start_t: e.start_t,
                 blocked: e.blocked.clone(),
                 index,
                 of: etas.len(),
             })
             .collect();
-        Some(m::BodyInfo { upgrades, buildable, queue, waiting, fuel: st.fuel, power: g.power_at(b), matter_rate, energy_rate, fuel_rate })
+        Some(m::BodyInfo { upgrades, buildable, queue, waiting, fuel: st.fuel, build_fuel: g.build_fuel(self.me, b), power: g.power_at(b), matter_rate, energy_rate, fuel_rate })
     }
 
     fn research(&self) -> Option<m::ResearchView> {
         let g = self.game.as_ref()?;
         let me = self.me;
         let p = g.players.get(me as usize)?;
+        let etas = g.waiting_eta(me);
         let labs: Vec<m::LabInfo> = (0..g.bodies.len())
             .filter(|&i| g.bodies[i].owner == Some(me) && g.bodies[i].level(g::Upgrade::Research) > 0)
             .map(|i| {
@@ -1904,10 +1916,13 @@ impl Backend for ClientBackend {
         let techs = Tech::every()
             .filter(|t| !t.advanced() || g.rules >= sim::tech::ADVANCED_RULES)
             .map(|t| {
+                let queued = p.waiting.iter().zip(&etas).find(|(w, _)| matches!(w.wish, Wish::Research { tech, .. } if tech == t));
                 let state = if p.techs.contains(&t) {
                     m::TechState::Done
                 } else if let Some(r) = p.research.iter().find(|r| r.tech == t) {
                     m::TechState::Running { lab: r.body.0, done_t: r.done_t }
+                } else if let Some((w, e)) = queued {
+                    m::TechState::Queued { lab: w.wish.body().0, wait: w.id, start_t: e.start_t }
                 } else {
                     // the best lab with a free slot; if they're all full, the best busy one (it waits
                     // there for a slot); else the reason the first lab gives
@@ -1939,7 +1954,7 @@ impl Backend for ClientBackend {
                     branch: t.branch().label().to_string(),
                     tier: t.tier(),
                     desc: t.describe().to_string(),
-                    cost: m::Cost { matter, energy, seconds },
+                    cost: m::Cost { matter, energy, seconds, fuel: 0.0 },
                     min_lab: t.min_lab(),
                     advanced: t.advanced(),
                     state,
@@ -1948,7 +1963,23 @@ impl Backend for ClientBackend {
             .collect();
         debug_assert!(Branch::ALL.iter().zip(m::TECH_BRANCHES).all(|(b, n)| b.label() == n));
         debug_assert!(Branch::ADVANCED.iter().zip(m::ADV_BRANCHES).all(|(b, n)| b.label() == n));
-        Some(m::ResearchView { techs, labs })
+        let queue = p
+            .waiting
+            .iter()
+            .zip(&etas)
+            .enumerate()
+            .filter(|(_, (w, _))| matches!(w.wish, Wish::Research { .. }))
+            .map(|(index, (w, e))| m::WaitingItem {
+                id: w.id,
+                label: format!("{} at {}", w.wish.label(), g.system.body(w.wish.body()).name),
+                cost: m::Cost { matter: e.matter, energy: e.energy, seconds: 0.0, fuel: 0.0 },
+                start_t: e.start_t,
+                blocked: e.blocked.clone(),
+                index,
+                of: etas.len(),
+            })
+            .collect();
+        Some(m::ResearchView { techs, labs, queue })
     }
 
     fn sensors(&self) -> Option<&m::SensorsReport> {
@@ -2045,7 +2076,7 @@ impl Backend for ClientBackend {
                     kind: format!("{k:?}"),
                     name: k.label().to_string(),
                     desc: k.describe().to_string(),
-                    cost: m::Cost { matter, energy, seconds },
+                    cost: m::Cost { matter, energy, seconds, fuel: 0.0 },
                     blocker: g.station_blocker(me, b, k),
                     queueable: g.wish_obsolete(me, Wish::Station { body: b, kind: k }, 0).is_none(),
                 }

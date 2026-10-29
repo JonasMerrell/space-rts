@@ -4,6 +4,12 @@ Newest first. The app shows these under PATCH NOTES and once after each update.
 Format: a `## <version> — <YYYY-MM-DD>` line, then `- ` bullets in plain player language.
 Every release adds an entry here (a unit test checks the newest one matches the release version).
 
+## 0.9.0 — 2026-10-29
+- New wars run at a calmer pace: the old 2× speed is the new 1×.
+- New wars: building a ship costs fuel, taken from the tanks and fuel depots where it's built.
+- See each ship's hull points on the ship sheet, in fleet lists, and as a small bar on damaged ships.
+- Queued research shows as QUEUED on its card, with a queue list on the research screen.
+
 ## 0.8.8 — 2026-10-29
 - Plan your own maneuver nodes for a ship still in orbit: it leaves on the burns you set.
 

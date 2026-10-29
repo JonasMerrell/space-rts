@@ -229,6 +229,8 @@ impl DemoBackend {
             count,
             fuel: 340.0,
             fuel_max: 400.0,
+            hp: 0.0,
+            hp_max: 0.0,
             parked_at: at,
             trajectory: None,
             nodes: vec![],
@@ -249,17 +251,21 @@ impl DemoBackend {
         ];
         // our multi-ship tokens are fleets; a few loose ships at Borealis to group
         for sh in ships.iter_mut().filter(|s| s.owner == 1 && s.count > 1) {
-            sh.members = (0..sh.count).map(|k| FleetMember { id: 100 * sh.id + k, name: format!("{} {}", sh.class.label(), k + 1), class: sh.class, fuel: 300.0 + 20.0 * k as f32, fuel_max: 400.0 }).collect();
+            sh.members = (0..sh.count).map(|k| FleetMember { id: 100 * sh.id + k, name: format!("{} {}", sh.class.label(), k + 1), class: sh.class, fuel: 300.0 + 20.0 * k as f32, fuel_max: 400.0, hp: 250.0 - 60.0 * (k % 3) as f32, hp_max: 250.0 }).collect();
         }
         // enemy multi-ship tokens: the detected ships flying/parked together, as sensors report them
         for sh in ships.iter_mut().filter(|s| s.owner != 1 && s.count > 1) {
             sh.members = (0..sh.count).map(|k| {
                 let class = if sh.id == 10 && k == 3 { ShipClass::Scout } else { sh.class };
-                FleetMember { id: 100 * sh.id + k, name: class.label().into(), class, fuel: 0.0, fuel_max: 400.0 }
+                FleetMember { id: 100 * sh.id + k, name: class.label().into(), class, fuel: 0.0, fuel_max: 400.0, hp: 180.0, hp_max: 250.0 }
             }).collect();
         }
         ships.push(ship(5, "Wasp", ShipClass::Interceptor, 1, 1, Some(2)));
         ships.push(ship(6, "Sparrow", ShipClass::Scout, 1, 1, Some(2)));
+        // hull: fleets and groups sum their ships; loose ships show some battle damage
+        for sh in ships.iter_mut() {
+            (sh.hp, sh.hp_max) = if sh.members.is_empty() { (if sh.id == 5 { 70.0 } else { 160.0 }, 200.0) } else { (sh.members.iter().map(|m| m.hp).sum(), sh.members.iter().map(|m| m.hp_max).sum()) };
+        }
         // fog of war: an enemy dreadnought last seen 5 h ago (drawn as a fading ghost)
         ships.push(Ship { seen_at: Some(now - 5.0 * 3600.0), ..ship(13, "Dreadnought", ShipClass::Dreadnought, 2, 1, Some(2)) });
         self.view = Some(GameView {
@@ -269,6 +275,7 @@ impl DemoBackend {
             now,
             ends_at: 7.0 * 86400.0,
             speed: 1.0,
+            pace: 1.0,
             bodies,
             ships: vec![],
             players,
@@ -441,12 +448,12 @@ fn ship_cost(c: ShipClass) -> Cost {
         ShipClass::Torpedo => (120.0, 80.0, 20.0),
         ShipClass::Slug => (150.0, 300.0, 0.0),
     };
-    Cost { matter: m, energy: e, seconds: min * 60.0 }
+    Cost { matter: m, energy: e, seconds: min * 60.0, fuel: (m * 0.5_f64).round() }
 }
 
 fn upgrade_cost(level: u8) -> Cost {
     let k = level as f64;
-    Cost { matter: 120.0 * k, energy: 50.0 * k, seconds: 1800.0 * k }
+    Cost { matter: 120.0 * k, energy: 50.0 * k, seconds: 1800.0 * k, fuel: 0.0 }
 }
 
 impl Backend for DemoBackend {
@@ -477,7 +484,7 @@ impl Backend for DemoBackend {
         if let Some(v) = self.view.as_mut() {
             for (body, label, _, class) in done {
                 let id = v.ships.iter().map(|s| s.id).max().unwrap_or(0) + 1;
-                v.ships.push(Ship { id, name: format!("New {label}"), class, owner: v.me, count: 1, fuel: 200.0, fuel_max: 400.0, parked_at: Some(body), trajectory: None, nodes: vec![], destination: None, retreat: false, seen_at: None, members: vec![], planned: None });
+                v.ships.push(Ship { id, name: format!("New {label}"), class, owner: v.me, count: 1, fuel: 200.0, fuel_max: 400.0, hp: 200.0, hp_max: 200.0, parked_at: Some(body), trajectory: None, nodes: vec![], destination: None, retreat: false, seen_at: None, members: vec![], planned: None });
                 self.events.push(BackendEvent::Notice(Notice { kind: NoticeKind::Good, title: format!("{label} ready"), body: "Fresh from the shipyard".into(), focus: Some(Focus::Ship(id)) }));
             }
         }
@@ -537,7 +544,7 @@ impl Backend for DemoBackend {
                 for (i, b) in bots.iter().enumerate() {
                     players.push(Player { id: 10 + i as u32, name: format!("Bot ({b})"), color: i + 1, faction: "JUNKER CLANS".into(), online: false });
                 }
-                let info = LobbyInfo { code: "K7QX".into(), name, players, max_players: 4, host: 1, length_days, speed, bots };
+                let info = LobbyInfo { code: "K7QX".into(), name, players, max_players: 4, host: 1, length_days, speed: speed * crate::screens::NEW_WAR_PACE, pace: crate::screens::NEW_WAR_PACE, bots };
                 self.enter_lobby(info);
             }
             UiAction::JoinGame { code } => {
@@ -556,6 +563,7 @@ impl Backend for DemoBackend {
                         host: 2,
                         length_days: 7,
                         speed: 1.0,
+                        pace: 1.0,
                         bots: vec![],
                     };
                     self.enter_lobby(info);
@@ -782,7 +790,7 @@ impl Backend for DemoBackend {
             }
             UiAction::SetSpeed { speed } => {
                 if let Some(v) = self.view.as_mut() {
-                    v.speed = speed;
+                    v.speed = speed * if v.pace > 0.0 { v.pace } else { 1.0 };
                 }
             }
         }
@@ -837,6 +845,7 @@ impl Backend for DemoBackend {
                 })
                 .collect(),
             fuel: 420.0,
+            build_fuel: 420.0,
             power,
             matter_rate: 60.0 * (1.0 + lv[0] as f64),
             energy_rate: 20.0 + 60.0 * (lv[1] + lv[2]) as f64,
@@ -868,6 +877,8 @@ impl Backend for DemoBackend {
                     TechState::Done
                 } else if let Some(r) = self.research_run.iter().find(|r| r.0 == i) {
                     TechState::Running { lab: r.1, done_t: r.2 }
+                } else if let Some(w) = self.waiting.iter().find(|w| w.2 == *id) {
+                    TechState::Queued { lab: w.1, wait: w.0, start_t: None }
                 } else if advanced && base_done < DEMO_ADV_UNLOCK {
                     TechState::Locked(format!("needs {DEMO_ADV_UNLOCK} base techs ({base_done} so far)"))
                 } else if has_pre && !done(i - 1) {
@@ -882,7 +893,17 @@ impl Backend for DemoBackend {
                 TechInfo { id: id.to_string(), name: name.to_string(), branch: branch.to_string(), tier, desc: desc.to_string(), cost: demo_tech_cost(i), min_lab, advanced, state }
             })
             .collect();
-        Some(ResearchView { techs, labs })
+        let queue = self
+            .waiting
+            .iter()
+            .enumerate()
+            .filter_map(|(index, w)| {
+                let (_, name, _) = DEMO_TECHS.iter().find(|t| t.0 == w.2)?;
+                let at = self.view.as_ref().and_then(|v| v.body(w.1)).map(|b| b.name.clone()).unwrap_or_default();
+                Some(WaitingItem { id: w.0, label: format!("{name} at {at}"), cost: w.3.clone(), start_t: None, blocked: None, index, of: self.waiting.len() })
+            })
+            .collect();
+        Some(ResearchView { techs, labs, queue })
     }
 
     fn sensors(&self) -> Option<&SensorsReport> {
@@ -966,6 +987,8 @@ impl Backend for DemoBackend {
             count: 1,
             fuel: 0.0,
             fuel_max: 0.0,
+            hp: 0.0,
+            hp_max: 0.0,
             parked_at: Some(asteroid),
             trajectory: None,
             nodes: vec![],
@@ -984,7 +1007,7 @@ impl Backend for DemoBackend {
                 dv: p.dv_depart,
                 fuel: p.dv_depart * 40.0,
                 fuel_available: 600.0,
-                drive_cost: Cost { matter: 200.0, energy: 150.0, seconds: 7200.0 },
+                drive_cost: Cost { matter: 200.0, energy: 150.0, seconds: 7200.0, fuel: 0.0 },
                 impact_t: Some(p.arrive_t),
                 impact_speed: speed,
                 impact_energy: 0.5 * mass * (speed * 1000.0).powi(2),
@@ -1183,7 +1206,7 @@ fn demo_regroup(view: Option<&mut GameView>, tokens: &[ShipId], leavers: &[ShipI
         sh.members = keep;
         sh.count = sh.members.len() as u32;
         let base = sh.clone();
-        loose.extend(out.into_iter().map(|m| Ship { id: m.id, name: m.name, class: m.class, count: 1, fuel: m.fuel, fuel_max: m.fuel_max, members: vec![], ..base.clone() }));
+        loose.extend(out.into_iter().map(|m| Ship { id: m.id, name: m.name, class: m.class, count: 1, fuel: m.fuel, fuel_max: m.fuel_max, hp: m.hp, hp_max: m.hp_max, members: vec![], ..base.clone() }));
     }
     // a one-ship fleet dissolves
     let mut ones = vec![];
@@ -1202,10 +1225,10 @@ fn demo_regroup(view: Option<&mut GameView>, tokens: &[ShipId], leavers: &[ShipI
         Some(n) if loose.len() >= 2 => {
             let id = 0x4000_0000 + v.ships.iter().chain(&loose).map(|s| s.id & 0xffff).max().unwrap_or(0) + 1;
             let members: Vec<FleetMember> =
-                loose.iter().map(|s| FleetMember { id: s.id, name: s.name.clone(), class: s.class, fuel: s.fuel, fuel_max: s.fuel_max }).collect();
+                loose.iter().map(|s| FleetMember { id: s.id, name: s.name.clone(), class: s.class, fuel: s.fuel, fuel_max: s.fuel_max, hp: s.hp, hp_max: s.hp_max }).collect();
             let weakest = members.iter().min_by(|a, b| (a.fuel / a.fuel_max).total_cmp(&(b.fuel / b.fuel_max))).unwrap();
             let name = if n.trim().is_empty() { format!("Fleet {}", id & 0xffff) } else { n.trim().to_string() };
-            v.ships.push(Ship { id, name, count: members.len() as u32, fuel: weakest.fuel, fuel_max: weakest.fuel_max, members, ..loose[0].clone() });
+            v.ships.push(Ship { id, name, count: members.len() as u32, fuel: weakest.fuel, fuel_max: weakest.fuel_max, hp: members.iter().map(|m| m.hp).sum(), hp_max: members.iter().map(|m| m.hp_max).sum(), members, ..loose[0].clone() });
         }
         _ => v.ships.extend(loose),
     }
@@ -1216,16 +1239,16 @@ fn demo_split(f: &Ship) -> Vec<Ship> {
     if !f.is_fleet() {
         return vec![f.clone()];
     }
-    f.members.iter().map(|m| Ship { id: m.id, name: m.name.clone(), class: m.class, count: 1, fuel: m.fuel, fuel_max: m.fuel_max, members: vec![], ..f.clone() }).collect()
+    f.members.iter().map(|m| Ship { id: m.id, name: m.name.clone(), class: m.class, count: 1, fuel: m.fuel, fuel_max: m.fuel_max, hp: m.hp, hp_max: m.hp_max, members: vec![], ..f.clone() }).collect()
 }
 
 fn demo_tech_cost(i: usize) -> Cost {
     let (adv, tier, ..) = demo_tech_meta(i);
     let k = tier as f64;
     if adv {
-        return Cost { matter: 500.0 + 500.0 * k, energy: 600.0 + 600.0 * k, seconds: [20.0, 32.0, 48.0][tier as usize - 1] * 3600.0 };
+        return Cost { matter: 500.0 + 500.0 * k, energy: 600.0 + 600.0 * k, seconds: [20.0, 32.0, 48.0][tier as usize - 1] * 3600.0, fuel: 0.0 };
     }
-    Cost { matter: 0.0, energy: 350.0 * k, seconds: [2.0, 4.0, 8.0, 12.0][tier as usize - 1] * 3600.0 }
+    Cost { matter: 0.0, energy: 350.0 * k, seconds: [2.0, 4.0, 8.0, 12.0][tier as usize - 1] * 3600.0, fuel: 0.0 }
 }
 
 const DEMO_STATIONS: [(&str, &str); 6] = [
@@ -1239,7 +1262,7 @@ const DEMO_STATIONS: [(&str, &str); 6] = [
 
 fn demo_station_cost(i: usize) -> Cost {
     let (m, e, h) = [(300.0, 150.0, 4.0), (150.0, 80.0, 2.0), (120.0, 120.0, 2.0), (200.0, 200.0, 3.0), (250.0, 150.0, 3.0), (150.0, 150.0, 2.0)][i];
-    Cost { matter: m, energy: e, seconds: h * 3600.0 }
+    Cost { matter: m, energy: e, seconds: h * 3600.0, fuel: 0.0 }
 }
 
 /// A sample sensors report (back after 14 h away) for the demo scenes `report*`.

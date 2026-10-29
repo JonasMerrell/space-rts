@@ -109,6 +109,30 @@ pub fn research_screen(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, vi
         y += 36.0 * s();
     }
 
+    // Research waiting for energy or a free lab slot, in funding order.
+    if !rv.queue.is_empty() {
+        text(&format!("QUEUE · {}", rv.queue.len()), r.x + pad, y + 8.0 * s(), 12.0, MUTED, FontKind::Title, Align::Left);
+        y += 18.0 * s();
+    }
+    for it in rv.queue.iter().take(3) {
+        let qr = Rect::new(r.x + pad, y, r.w - 2.0 * pad, 30.0 * s());
+        cel::round_rect(qr, 6.0 * s(), alpha(ACCENT, 0.08));
+        cel::round_rect_lines(qr, 6.0 * s(), (1.0 * s()).max(1.0), alpha(ACCENT, 0.35));
+        icon("time", vec2(qr.x + 15.0 * s(), qr.center().y), 18.0 * s(), WHITE);
+        text(&it.label.to_uppercase(), qr.x + 32.0 * s(), qr.center().y, 13.0, PAPER, FontKind::Title, Align::Left);
+        let (sub, col) = wait_status(view, it);
+        text(&sub, qr.x + qr.w - 36.0 * s(), qr.center().y, 12.0, col, FontKind::Body, Align::Right);
+        if widgets::round_button(inp, vec2(qr.x + qr.w - 16.0 * s(), qr.center().y), 10.0 * s(), "X", PAPER, 0) {
+            art::sfx("menu_close");
+            g.emit(UiAction::Unwait { id: it.id });
+        }
+        y += 36.0 * s();
+    }
+    if rv.queue.len() > 3 {
+        text(&format!("+{} more", rv.queue.len() - 3), r.x + pad, y + 4.0 * s(), 12.0, MUTED, FontKind::Body, Align::Left);
+        y += 16.0 * s();
+    }
+
     // Base tree / advanced tier switch (wars with the advanced tier only).
     let has_adv = rv.techs.iter().any(|t| t.advanced);
     let adv = has_adv && g.research_branch >= TECH_BRANCHES.len();
@@ -186,12 +210,22 @@ pub fn research_screen(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, vi
     }
 }
 
+/// "starts in ~2h" / why it's held up, for a queued item.
+fn wait_status(view: &GameView, it: &WaitingItem) -> (String, Color) {
+    match (&it.blocked, it.start_t) {
+        (Some(why), _) => (why.clone(), DANGER),
+        (None, Some(t)) if t <= view.now + 1.0 => ("starting".to_string(), GOOD),
+        (None, Some(t)) => (format!("starts in ~{}", fmt_dur(t - view.now)), ACCENT),
+        (None, None) => ("no energy income".to_string(), DANGER),
+    }
+}
+
 fn tech_card(g: &mut GameScreen, inp: &mut Input, view: &GameView, labs: &[LabInfo], t: &TechInfo, cr: Rect, spine_x: f32) {
     let done = t.state == TechState::Done;
     let locked = matches!(t.state, TechState::Locked(_));
     let inner = Rect::new(cr.x + 34.0 * s(), cr.y, cr.w - 34.0 * s(), cr.h);
     cel::round_rect(inner, 8.0 * s(), if done { alpha(GOOD, 0.12) } else { Color::new(1.0, 1.0, 1.0, if locked { 0.03 } else { 0.06 }) });
-    if matches!(t.state, TechState::Ready { .. }) {
+    if matches!(t.state, TechState::Ready { .. } | TechState::Queued { .. }) {
         cel::round_rect_lines(inner, 8.0 * s(), (1.2 * s()).max(1.0), alpha(ACCENT, 0.6));
     }
     // tier node on the spine
@@ -245,6 +279,22 @@ fn tech_card(g: &mut GameScreen, inp: &mut Input, view: &GameView, labs: &[LabIn
                 if !ok {
                     g.hint = Some(("Queued: starts when you can afford it".into(), get_time()));
                 }
+            }
+            let lab_name = view.body(*lab).map(|b| format!("at {}", b.name)).unwrap_or_default();
+            text(&lab_name, rc.center().x, br.y + br.h + 12.0 * s(), 11.0, MUTED, FontKind::Body, Align::Center);
+        }
+        TechState::Queued { lab, wait, start_t } => {
+            text("QUEUED", rc.center().x, rc.center().y - 22.0 * s(), 15.0, ACCENT, FontKind::Title, Align::Center);
+            let when = match start_t {
+                Some(st) if *st > view.now + 1.0 => format!("in ~{}", fmt_dur(st - view.now)),
+                Some(_) => "starting".into(),
+                None => "waiting".into(),
+            };
+            text(&when, rc.center().x, rc.center().y - 4.0 * s(), 11.0, MUTED, FontKind::Body, Align::Center);
+            let br = Rect::new(rc.x + 8.0 * s(), rc.center().y + 6.0 * s(), rc.w - 16.0 * s(), 28.0 * s());
+            if widgets::button(inp, br, "CANCEL", Style::Secondary) {
+                art::sfx("menu_close");
+                g.emit(UiAction::Unwait { id: *wait });
             }
             let lab_name = view.body(*lab).map(|b| format!("at {}", b.name)).unwrap_or_default();
             text(&lab_name, rc.center().x, br.y + br.h + 12.0 * s(), 11.0, MUTED, FontKind::Body, Align::Center);

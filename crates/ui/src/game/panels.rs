@@ -108,7 +108,8 @@ pub fn hud(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameVie
     }
     // Clock line.
     let y = top + ch + 16.0 * s();
-    let clock = if view.speed > 1.0 { format!("{} · {}×", fmt_clock(view.now), view.speed) } else { fmt_clock(view.now) };
+    let mult = crate::model::speed_mult(view.speed, view.pace);
+    let clock = if mult > 1.0 { format!("{} · {}×", fmt_clock(view.now), mult) } else { fmt_clock(view.now) };
     inked(&clock, margin(), y, 17.0, PAPER, Align::Left);
     let left = view.ends_at - view.now;
     text(&format!("WAR ENDS IN {}", fmt_dur(left)), w - margin(), y, 14.0, MUTED, FontKind::Title, Align::Right);
@@ -140,11 +141,11 @@ fn game_menu(g: &mut GameScreen, inp: &mut Input, view: &GameView, at: Rect) {
     // Host: game speed slider (time multiplier) for a shorter war; sent when the finger lifts.
     if host {
         use crate::screens::{real_len, SPEEDS};
-        let live = if view.speed > 0.0 { view.speed } else { 1.0 };
+        let live = crate::model::speed_mult(view.speed, view.pace);
         let speed = g.speed_drag.unwrap_or(live);
         let lr = row(4);
         text(&format!("GAME SPEED {speed}×"), lr.x + 4.0 * s(), lr.y + 14.0 * s(), 14.0, PAPER, FontKind::Title, Align::Left);
-        let real_h = (view.ends_at - view.now).max(0.0) / 3600.0 / speed;
+        let real_h = (view.ends_at - view.now).max(0.0) / 3600.0 / (speed * if view.pace > 0.0 { view.pace } else { 1.0 });
         text(&format!("ends in {} real", real_len(real_h)), lr.x + 4.0 * s(), lr.y + 34.0 * s(), 12.0, MUTED, FontKind::Body, Align::Left);
         let (v, released) = widgets::log_slider(inp, row(5), speed, SPEEDS[0], SPEEDS[SPEEDS.len() - 1], &SPEEDS, false);
         g.speed_drag = Some(v).filter(|&v| v != live || inp.held.is_some());
@@ -651,6 +652,9 @@ fn affordable(view: &GameView, c: &Cost) -> bool {
 }
 
 fn cost_line(c: &Cost) -> String {
+    if c.fuel > 0.0 {
+        return format!("{}M  {}E  {}F  {}", fmt_amount(c.matter), fmt_amount(c.energy), fmt_amount(c.fuel), fmt_dur(c.seconds));
+    }
     format!("{}M  {}E  {}", fmt_amount(c.matter), fmt_amount(c.energy), fmt_dur(c.seconds))
 }
 
@@ -754,14 +758,18 @@ fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view:
                 Some(t) => art::draw_centered(&t, ic, vec2(34.0, 34.0) * s(), -0.5, WHITE),
                 None => cel::ship(ic, vec2(1.0, -0.5), 10.0 * s(), PAPER),
             }
-            let ok = affordable(view, cost);
+            // ship fuel comes out of the tanks here, not the empire-wide pool
+            let fuel_ok = cost.fuel <= info.build_fuel + 1e-9;
+            let ok = affordable(view, cost) && fuel_ok;
             text(&class.label().to_uppercase(), cr.x + 44.0 * s(), cr.y + cr.h * 0.34, 14.0, PAPER, FontKind::Title, Align::Left);
             text(&cost_line(cost), cr.x + 44.0 * s(), cr.y + cr.h * 0.7, 11.0, if ok { MUTED } else { DANGER }, FontKind::Body, Align::Left);
             let br = Rect::new(cr.x + cr.w - 44.0 * s(), cr.y + (cr.h - 32.0 * s()) / 2.0, 36.0 * s(), 32.0 * s());
             if widgets::button(inp, br, "+", if ok { Style::Primary } else { Style::Secondary }) {
                 art::sfx(if ok { "purchase" } else { "menu_select" });
                 g.emit(UiAction::Build { body: b.id, class: *class });
-                if !ok {
+                if !fuel_ok {
+                    g.hint = Some(("Queued: starts when there's enough fuel here".into(), get_time()));
+                } else if !ok {
                     g.hint = Some(("Queued: starts when you can afford it".into(), get_time()));
                 }
             }
@@ -1022,6 +1030,17 @@ fn ship_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
         what.to_string()
     };
     text(&status, r.x + 64.0 * s(), r.y + 48.0 * s(), 14.0, MUTED, FontKind::Body, Align::Left);
+    // hull (and our fuel) side by side under the status line; not for ships still being built
+    let half = (r.w - 80.0 * s()) / 2.0;
+    let stat_bar = |i: f32, frac: f32, col: Color, label: &str| {
+        let fr = Rect::new(r.x + 64.0 * s() + i * half, r.y + 64.0 * s(), half - 96.0 * s(), 10.0 * s());
+        widgets::bar(fr, frac, col);
+        text(label, fr.x + fr.w + 8.0 * s(), fr.center().y, 13.0, PAPER, FontKind::Title, Align::Left);
+    };
+    if building.is_none() && sh.hp_max > 0.0 {
+        let hp = format!("HP {}/{}", widgets::hp_num(sh.hp), widgets::hp_num(sh.hp_max));
+        stat_bar(0.0, sh.hp_frac(), widgets::hp_color(sh.hp_frac()), &hp);
+    }
     if !tally.is_empty() {
         let mut y = r.y + 92.0 * s();
         text(&format!("DETECTED SHIPS ({})", sh.count), r.x + 16.0 * s(), y, 13.0, MUTED, FontKind::Title, Align::Left);
@@ -1046,9 +1065,7 @@ fn ship_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
             g.selected = None;
         }
     } else if mine {
-        let fr = Rect::new(r.x + 64.0 * s(), r.y + 64.0 * s(), r.w - 150.0 * s(), 10.0 * s());
-        widgets::bar(fr, sh.fuel / sh.fuel_max.max(1.0), SUN_SHADE);
-        text(&format!("FUEL {:.0}/{:.0}", sh.fuel, sh.fuel_max), fr.x + fr.w + 10.0 * s(), fr.center().y, 13.0, PAPER, FontKind::Title, Align::Left);
+        stat_bar(1.0, sh.fuel / sh.fuel_max.max(1.0), SUN_SHADE, &format!("FUEL {:.0}/{:.0}", sh.fuel, sh.fuel_max));
         // Standing order while we're offline.
         let oy = r.y + 86.0 * s();
         text("IF ATTACKED", r.x + 16.0 * s(), oy + 15.0 * s(), 13.0, MUTED, FontKind::Title, Align::Left);

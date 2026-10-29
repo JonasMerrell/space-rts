@@ -239,6 +239,29 @@ pub fn chip(inp: &mut Input, r: Rect, label: &str, on: bool, color: Color) -> bo
     hit
 }
 
+/// Hull bar colour: green, amber when half gone, red when nearly lost.
+pub fn hp_color(frac: f32) -> Color {
+    if frac > 0.6 {
+        GOOD
+    } else if frac > 0.3 {
+        SUN
+    } else {
+        DANGER
+    }
+}
+
+/// Short hull number for tight labels: "250", "4.2k", "38k".
+pub fn hp_num(v: f32) -> String {
+    let v = v.max(0.0);
+    if v < 999.5 {
+        format!("{v:.0}")
+    } else if v < 10_000.0 {
+        format!("{:.1}k", v / 1000.0)
+    } else {
+        format!("{:.0}k", v / 1000.0)
+    }
+}
+
 /// Thin rounded progress bar.
 pub fn bar(r: Rect, frac: f32, fill: Color) {
     cel::round_rect(r, r.h / 2.0, Color::new(1.0, 1.0, 1.0, 0.12));
