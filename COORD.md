@@ -1433,3 +1433,11 @@ players see (stored × pace), `Game::speed_mult()` = speed / pace. Old wars (rul
 ui: `LobbyInfo.pace` / `GameView.pace` + `model::speed_mult`, `screens::NEW_WAR_PACE` (mirror of sim PACE); new-war default
 length 14 game days = 7 real days at 1×. Old clients show new wars as "2×" until updated. Needs server + APK + web release.
 — pace thread
+
+### Ship-fuel thread (2026-10-29 22:10 UTC): rules 5 — ships cost fuel to build, branch `ship-fuel` — core please release (server + APK + web)
+- New wars only (`SHIP_FUEL_RULES = 5`, `RULES = 5` on top of rules 4 pace). `Game::ship_fuel_cost(class)` (Scout 20, Interceptor 40,
+  Gunship/Bomber 120, Dreadnought 1000, Tanker 60, Constructor 80, Decoy 20, Torpedo 80 t), taken at queue time from
+  `Game::build_fuel(p, body)` = the body's tanks if yours, then your fuel depots there; refunded on cancel. Ships still launch full.
+- `ship_cost` signature unchanged. Waitlist: missing fuel is a *blocker* (skipped, doesn't hold up the rest), not a money wait.
+- UI: `Cost.fuel`, `BodyInfo.build_fuel`; shipyard cells show "…M …E …F", detail sheet shows FUEL HERE. Per-body matter
+  proposal (thread "Add per-body matter and cargo ships") would become rules 6; this fits it (fuel is already per body).

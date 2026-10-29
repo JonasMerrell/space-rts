@@ -647,6 +647,9 @@ fn affordable(view: &GameView, c: &Cost) -> bool {
 }
 
 fn cost_line(c: &Cost) -> String {
+    if c.fuel > 0.0 {
+        return format!("{}M  {}E  {}F  {}", fmt_amount(c.matter), fmt_amount(c.energy), fmt_amount(c.fuel), fmt_dur(c.seconds));
+    }
     format!("{}M  {}E  {}", fmt_amount(c.matter), fmt_amount(c.energy), fmt_dur(c.seconds))
 }
 
@@ -750,14 +753,18 @@ fn owned_body_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view:
                 Some(t) => art::draw_centered(&t, ic, vec2(34.0, 34.0) * s(), -0.5, WHITE),
                 None => cel::ship(ic, vec2(1.0, -0.5), 10.0 * s(), PAPER),
             }
-            let ok = affordable(view, cost);
+            // ship fuel comes out of the tanks here, not the empire-wide pool
+            let fuel_ok = cost.fuel <= info.build_fuel + 1e-9;
+            let ok = affordable(view, cost) && fuel_ok;
             text(&class.label().to_uppercase(), cr.x + 44.0 * s(), cr.y + cr.h * 0.34, 14.0, PAPER, FontKind::Title, Align::Left);
             text(&cost_line(cost), cr.x + 44.0 * s(), cr.y + cr.h * 0.7, 11.0, if ok { MUTED } else { DANGER }, FontKind::Body, Align::Left);
             let br = Rect::new(cr.x + cr.w - 44.0 * s(), cr.y + (cr.h - 32.0 * s()) / 2.0, 36.0 * s(), 32.0 * s());
             if widgets::button(inp, br, "+", if ok { Style::Primary } else { Style::Secondary }) {
                 art::sfx(if ok { "purchase" } else { "menu_select" });
                 g.emit(UiAction::Build { body: b.id, class: *class });
-                if !ok {
+                if !fuel_ok {
+                    g.hint = Some(("Queued: starts when there's enough fuel here".into(), get_time()));
+                } else if !ok {
                     g.hint = Some(("Queued: starts when you can afford it".into(), get_time()));
                 }
             }

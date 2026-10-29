@@ -98,7 +98,10 @@ pub fn draw(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameVi
     let mut y = r.y + 24.0 * s();
     let res = view.resources;
     let afford = |c: &Cost| res.matter >= c.matter && res.energy >= c.energy;
-    let cost_s = |c: &Cost| format!("{} matter · {} energy · {}", fmt_amount(c.matter), fmt_amount(c.energy), fmt_dur(c.seconds));
+    let cost_s = |c: &Cost| {
+        let fuel = if c.fuel > 0.0 { format!(" · {} fuel", fmt_amount(c.fuel)) } else { String::new() };
+        format!("{} matter · {} energy{fuel} · {}", fmt_amount(c.matter), fmt_amount(c.energy), fmt_dur(c.seconds))
+    };
     let mut action: Option<(String, bool, UiAction)> = None;
     match &d {
         Detail::Queue { body } => {
@@ -279,8 +282,12 @@ pub fn draw(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameVi
                 }
             }
             if let Some((_, c)) = info.buildable.iter().find(|(k, _)| k == class) {
-                row("COST", &cost_s(c), x, w, &mut y, if afford(c) { PAPER } else { DANGER });
-                action = Some((if afford(c) { "BUILD" } else { "QUEUE" }.into(), afford(c), UiAction::Build { body: *body, class: *class }));
+                let ok = afford(c) && c.fuel <= info.build_fuel + 1e-9;
+                row("COST", &cost_s(c), x, w, &mut y, if ok { PAPER } else { DANGER });
+                if c.fuel > 0.0 {
+                    row("FUEL HERE", &format!("{} of {} needed", fmt_amount(info.build_fuel), fmt_amount(c.fuel)), x, w, &mut y, if c.fuel <= info.build_fuel + 1e-9 { MUTED } else { DANGER });
+                }
+                action = Some((if ok { "BUILD" } else { "QUEUE" }.into(), ok, UiAction::Build { body: *body, class: *class }));
             } else {
                 row("", "this shipyard can't build it yet", x, w, &mut y, MUTED);
             }

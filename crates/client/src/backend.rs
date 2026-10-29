@@ -573,9 +573,9 @@ fn compute_impact(g: &Game, me: g::PlayerId, now: f64, ast: BodyId, target: Body
         fuel: p.fuel,
         fuel_available: sim::asteroid::fuel_available(g, me, a),
         drive_cost: if busy {
-            m::Cost { matter: 0.0, energy: 0.0, seconds: 0.0 }
+            m::Cost { matter: 0.0, energy: 0.0, seconds: 0.0, fuel: 0.0 }
         } else {
-            m::Cost { matter: sim::asteroid::DRIVE_MATTER, energy: sim::asteroid::DRIVE_ENERGY, seconds: sim::asteroid::INSTALL_S }
+            m::Cost { matter: sim::asteroid::DRIVE_MATTER, energy: sim::asteroid::DRIVE_ENERGY, seconds: sim::asteroid::INSTALL_S, fuel: 0.0 }
         },
         impact_t: Some(imp.t),
         impact_speed: imp.v,
@@ -1828,7 +1828,7 @@ impl Backend for ClientBackend {
                     max: g::Upgrade::MAX_LEVEL,
                     next: (mine && next_level <= g::Upgrade::MAX_LEVEL).then(|| {
                         let (matter, energy, seconds) = u.cost(next_level);
-                        m::Cost { matter, energy, seconds }
+                        m::Cost { matter, energy, seconds, fuel: 0.0 }
                     }),
                 }
             })
@@ -1841,7 +1841,7 @@ impl Backend for ClientBackend {
                 .filter(|c| **c != g::ShipClass::Slug && c.needs().is_none_or(|t| g.has_tech(self.me, t)))
                 .map(|&c| {
                     let (matter, energy, seconds) = g.ship_cost(c);
-                    (ship_class(c), m::Cost { matter, energy, seconds })
+                    (ship_class(c), m::Cost { matter, energy, seconds, fuel: g.ship_fuel_cost(c) })
                 })
                 .collect()
         } else {
@@ -1880,14 +1880,14 @@ impl Backend for ClientBackend {
             .map(|(index, (w, e))| m::WaitingItem {
                 id: w.id,
                 label: w.wish.label(),
-                cost: m::Cost { matter: e.matter, energy: e.energy, seconds: 0.0 },
+                cost: m::Cost { matter: e.matter, energy: e.energy, seconds: 0.0, fuel: 0.0 },
                 start_t: e.start_t,
                 blocked: e.blocked.clone(),
                 index,
                 of: etas.len(),
             })
             .collect();
-        Some(m::BodyInfo { upgrades, buildable, queue, waiting, fuel: st.fuel, power: g.power_at(b), matter_rate, energy_rate, fuel_rate })
+        Some(m::BodyInfo { upgrades, buildable, queue, waiting, fuel: st.fuel, build_fuel: g.build_fuel(self.me, b), power: g.power_at(b), matter_rate, energy_rate, fuel_rate })
     }
 
     fn research(&self) -> Option<m::ResearchView> {
@@ -1945,7 +1945,7 @@ impl Backend for ClientBackend {
                     branch: t.branch().label().to_string(),
                     tier: t.tier(),
                     desc: t.describe().to_string(),
-                    cost: m::Cost { matter, energy, seconds },
+                    cost: m::Cost { matter, energy, seconds, fuel: 0.0 },
                     min_lab: t.min_lab(),
                     advanced: t.advanced(),
                     state,
@@ -2067,7 +2067,7 @@ impl Backend for ClientBackend {
                     kind: format!("{k:?}"),
                     name: k.label().to_string(),
                     desc: k.describe().to_string(),
-                    cost: m::Cost { matter, energy, seconds },
+                    cost: m::Cost { matter, energy, seconds, fuel: 0.0 },
                     blocker: g.station_blocker(me, b, k),
                     queueable: g.wish_obsolete(me, Wish::Station { body: b, kind: k }, 0).is_none(),
                 }

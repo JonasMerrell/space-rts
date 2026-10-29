@@ -101,6 +101,8 @@ pub struct Cost {
     pub energy: f64,
     /// Build time in seconds.
     pub seconds: f64,
+    /// Fuel taken from the stock where it's built (ships, in newer wars; 0 otherwise).
+    pub fuel: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -125,6 +127,8 @@ pub struct BodyInfo {
     /// Ours waiting for funds at this body (they start by themselves once income covers them).
     pub waiting: Vec<WaitingItem>,
     pub fuel: f64,
+    /// Fuel our ship builds here can draw on (the body's stock if ours + our fuel depots here).
+    pub build_fuel: f64,
     /// Military power in orbit per player.
     pub power: Vec<(PlayerId, f64)>,
     /// Per hour.
