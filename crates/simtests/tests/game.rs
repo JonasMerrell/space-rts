@@ -409,13 +409,13 @@ fn sole_power_in_orbit_takes_the_body() {
     g.advance_to(g.t + 2.0 * TICK);
     assert_eq!(g.bodies[x.0 as usize].owner, Some(2));
     assert!(g.events_for(2).any(|e| e.title == "Territory gained" && e.body_ref == Some(x)));
-    // tankers carry no power and claim nothing; scouts count 1 power, so a lone scout claims an empty body
+    // any ship claims an empty body, even an unarmed tanker (Jonas); a lone scout too
     let mut empty = g.system.bodies.iter().filter(|b| b.kind == BodyKind::Moon && g.bodies[b.id.0 as usize].owner.is_none()).map(|b| b.id);
     let (y, z) = (empty.next().unwrap(), empty.next().unwrap());
     put_ship(&mut g, 3, ShipClass::Tanker, y);
     put_ship(&mut g, 3, ShipClass::Scout, z);
     g.advance_to(g.t + 2.0 * TICK);
-    assert_eq!(g.bodies[y.0 as usize].owner, None, "a tanker claimed a body");
+    assert_eq!(g.bodies[y.0 as usize].owner, Some(3), "a lone tanker should claim an empty body");
     assert_eq!(g.bodies[z.0 as usize].owner, Some(3), "a lone scout should claim an empty body");
 }
 

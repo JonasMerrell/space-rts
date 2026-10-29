@@ -134,20 +134,23 @@ fn intel_remembers_what_was_last_seen() {
         .map(BodyId)
         .find(|&b| !g.system.body(b).is_star() && g.bodies[b.0 as usize].owner.is_none() && !g.sees_body(&home_sensors, b))
         .expect("a body outside home sensor range");
-    // player 0 parks a tanker at x (sees it), claims nothing (no power; scouts now do claim), then leaves
+    // player 0 parks a tanker at x (sees it; any ship claims an empty body now), then leaves
     let sc = ship_at(&mut g, 0, ShipClass::Tanker, x);
     g.advance_to(g.t + 2.0 * TICK);
     assert!(g.players[0].intel[x.0 as usize].is_some(), "no intel recorded for a body we orbited");
-    assert_eq!(g.bodies[x.0 as usize].owner, None, "a tanker alone shouldn't claim a body");
-    let seen_t = g.players[0].intel[x.0 as usize].as_ref().unwrap().seen_t;
+    assert_eq!(g.bodies[x.0 as usize].owner, Some(0), "a tanker should claim an empty body");
     g.ships.retain(|s| s.id != sc);
+    // the claim lapses while we're away: nobody is watching any more
+    g.bodies[x.0 as usize].owner = None;
+    g.advance_to(g.t + TICK);
+    let seen_t = g.players[0].intel[x.0 as usize].as_ref().unwrap().seen_t;
     // bob takes it while we're not looking
     ship_at(&mut g, 1, ShipClass::Gunship, x);
     g.advance_to(g.t + 3.0 * TICK);
     assert_eq!(g.bodies[x.0 as usize].owner, Some(1));
     assert!(!g.sees_body(&g.sensors(0), x), "player 0 still has eyes on the body");
     let v = g.view_for(0);
-    assert_eq!(v.bodies[x.0 as usize].owner, None, "player 0 learned about the capture without seeing it");
+    assert_ne!(v.bodies[x.0 as usize].owner, Some(1), "player 0 learned about the capture without seeing it");
     assert_eq!(g.players[0].intel[x.0 as usize].as_ref().unwrap().seen_t, seen_t);
 }
 

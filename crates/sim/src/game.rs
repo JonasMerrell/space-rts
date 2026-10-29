@@ -718,7 +718,7 @@ pub fn de_time<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> 
 }
 
 const NEVER: f64 = 1e300;
-/// Power a parked construction ship or scout adds in orbit (Jonas: they can claim bodies).
+/// Power any parked unarmed ship adds in orbit (Jonas: any ship, even a tanker, can claim a body).
 pub const CONSTRUCTOR_POWER: f64 = 1.0;
 /// Current rules revision for new matches. 1: matter yield by body kind and planet size. 2: advanced tech tier.
 /// 3: slower economy (see `ECONOMY_RULES`).
@@ -1778,8 +1778,8 @@ impl Game {
         for s in self.ships.iter().filter(|s| !s.dark(self.t)) {
             if s.parked_at() == Some(body) && s.class.stats().attack > 0.0 {
                 add(s.owner, s.class.stats().attack * (s.hp / s.stats().hp).max(0.2));
-            } else if s.parked_at() == Some(body) && matches!(s.class, ShipClass::Constructor | ShipClass::Scout) {
-                // unarmed, but enough of a presence to claim an empty body
+            } else if s.parked_at() == Some(body) {
+                // unarmed (scout, constructor, tanker, ...), but enough of a presence to claim an empty body
                 add(s.owner, CONSTRUCTOR_POWER * (s.hp / s.stats().hp).max(0.2));
             }
         }
@@ -2128,6 +2128,15 @@ mod tests {
         let mut g = game();
         let target = g.system.bodies.iter().find(|b| b.kind == BodyKind::Asteroid && g.bodies[b.id.0 as usize].owner.is_none()).unwrap().id;
         g.spawn(0, ShipClass::Scout, target);
+        g.advance_to(g.t + 120.0);
+        assert_eq!(g.bodies[target.0 as usize].owner, Some(0));
+    }
+
+    #[test]
+    fn a_tanker_claims_an_empty_body() {
+        let mut g = game();
+        let target = g.system.bodies.iter().find(|b| b.kind == BodyKind::Asteroid && g.bodies[b.id.0 as usize].owner.is_none()).unwrap().id;
+        g.spawn(0, ShipClass::Tanker, target);
         g.advance_to(g.t + 120.0);
         assert_eq!(g.bodies[target.0 as usize].owner, Some(0));
     }

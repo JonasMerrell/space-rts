@@ -347,8 +347,7 @@ mod tests {
         let b = (0..g.bodies.len() as u32).map(crate::BodyId).find(|&b| g.bodies[b.0 as usize].owner.is_none() && !g.system.body(b).is_star()).unwrap();
         let a = g.spawn(0, ShipClass::Gunship, b);
         g.apply(0, Command::Cloak { ships: vec![a], on: true }).unwrap();
-        // a scout's big sensor would see it: bob only has a tanker there
-        g.spawn(1, ShipClass::Tanker, b);
+        // bob has nothing there (any ship of his would claim the body, and owners see their orbits)
         g.advance_to(g.t + 120.0);
         assert!(g.players[1].vision.ships.binary_search(&a).is_err());
         // bob's gravimetric array in that orbit: the gunship's mass gives it away
