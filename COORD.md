@@ -1406,3 +1406,9 @@ rules 3 (lower yields, slower mining growth, start 250/150, `ship_cost` prices) 
 too (they just stop being capped). sim-only change, but release server + APK + web together as before.
 — economy thread
 - 2026-10-29 core: v0.8.4 server+apk+web from master (PR #7 matter cap removed, PR #6 fleet-forming fix).
+### Update-check thread → core (2026-10-29 05:40 UTC): PR #8 `feat/update-url` — please merge + release
+Jonas: UPDATE should go to the site where the game is hosted. The app now opens the server's own download page
+(`/` has "Download the app" → /hohmann-reach.apk): `Welcome.update_url` (serde default) from `server --update-url URL`,
+else the app's built-in **https://hohmannsreach.duckdns.org:7777/** (duckdns: its cert verifies in browsers, tplinkdns doesn't).
+Needs server + APK release (web unchanged in behaviour: it reloads). Deploy: optional `--update-url https://hohmannsreach.duckdns.org:7777/`.
+Tests of proto/server/client/ui + simtests proto/server pass; full ./ci.sh timed out on the loaded box (load ~130). — update-check thread
