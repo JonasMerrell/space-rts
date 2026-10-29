@@ -154,6 +154,30 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                     g.selected = Some(Focus::Body(2));
                     g.detail = Some(ui::game::details::Detail::Queue { body: 2 });
                 }
+                "queues" | "queues_empty" => {
+                    // everything we own at once: research, two bodies building, some waiting for funds
+                    if scene == "queues" {
+                        if let Some(vw) = be.view.as_mut() {
+                            vw.resources.matter = 5000.0;
+                            vw.resources.energy = 5000.0;
+                        }
+                        be.act(ui::UiAction::Research { body: 2, tech: "ModularYards".into() });
+                        for c in [ShipClass::Gunship, ShipClass::Scout, ShipClass::Bomber] {
+                            be.act(UiAction::Build { body: 2, class: c });
+                        }
+                        be.act(UiAction::Upgrade { body: 2, upgrade: "Mining".into() });
+                        be.act(UiAction::Build { body: 6, class: ShipClass::Interceptor });
+                        be.act(UiAction::Upgrade { body: 6, upgrade: "Solar".into() });
+                        be.act(UiAction::Upgrade { body: 6, upgrade: "Reactor".into() });
+                        if let Some(vw) = be.view.as_mut() {
+                            vw.resources.matter = 40.0;
+                            vw.resources.energy = 25.0;
+                        }
+                        be.act(UiAction::Build { body: 9, class: ShipClass::Tanker });
+                        be.act(ui::UiAction::Research { body: 2, tech: "DeepCoreMining".into() });
+                    }
+                    g.queues_open = true;
+                }
                 "queue_long" => {
                     for c in [ShipClass::Gunship, ShipClass::Scout, ShipClass::Bomber, ShipClass::Interceptor, ShipClass::Tanker, ShipClass::Gunship, ShipClass::Scout, ShipClass::Bomber, ShipClass::Dreadnought, ShipClass::Dreadnought, ShipClass::Dreadnought] {
                         be.act(UiAction::Build { body: 2, class: c });

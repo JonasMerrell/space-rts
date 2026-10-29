@@ -20,7 +20,7 @@ const ASTEROIDS: [&str; 8] = [
     "asteroid_ice2",
 ];
 const STARS: [&str; 5] = ["star_yellow", "star_orange", "star_red", "star_blue", "star_white"];
-pub const ICONS: [&str; 33] = [
+pub const ICONS: [&str; 35] = [
     "matter", "energy", "fuel", "chat", "menu", "power", "telescope", "time", "alert", "fleet", "maneuver_node", "close",
     // research + stations
     "research", "check", "lock", "shield", "weapon_kinetic", "extraction",
@@ -30,6 +30,8 @@ pub const ICONS: [&str; 33] = [
     "station_stargate",
     // advanced research branches
     "target", "eye", "eye_off",
+    // build queues
+    "build", "upgrades",
 ];
 const SFX: &[&str] = &[
     "ui_click", "ui_tap", "ui_confirm", "ui_back", "ui_error", "notification", "chat_message", "transfer_scheduled", "alert_enemy",
