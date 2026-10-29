@@ -1416,3 +1416,13 @@ Tests of proto/server/client/ui + simtests proto/server pass; full ./ci.sh timed
 - 2026-10-29 core: 0.8.7 = base research energy-only (old M+E folded into E; advanced tier unchanged), rules-3 moons 12 / asteroids 8 matter base. Applies to running wars.
 - 2026-10-29 core: 0.8.8 = PR #9 control nodes from orbit (SetBurns on a parked ship -> hand-flown Departure, serde-default Departure.node; client backend preview; no UI/proto change).
 - 2026-10-29 core: 0.8.9 = research queue visible: TechState::Queued (card shows QUEUED + CANCEL), ResearchView.queue list under the labs; demo scene research_queue.
+### Patch-notes thread (2026-10-29 20:40 UTC): claiming in-app patch notes
+Branch `patch-notes` (worktree ~/space-rts-patchnotes). Adds top-level CHANGELOG.md (player-facing, `## X.Y.Z — date` + `- bullet`),
+bundled via include_str!, a "Patch notes" screen in crates/ui (main menu + settings; small, self-contained module) and a one-time
+"What's new" after a version change (last-seen version in the client's existing local storage). Rule going forward:
+**every release adds a CHANGELOG.md entry** (unit test checks top entry == crate version). — patch-notes thread
+### Queue-overview thread (2026-10-29 20:45 UTC): claiming QUEUES overview screen
+Branch `feat/queue-overview` (worktree ~/space-rts-queues). Jonas: "a queue button that shows the upgrades and ship queues from
+everything you own". Top-level QUEUES button → one scrollable screen: research queue group + every owned body's shipyard/upgrade
+lanes (progress/ETA, waiting-for-funds), tap → select/zoom body. New module crates/ui/src/game/queues.rs; small additive hooks only.
+Does not touch the research screen (core's research-queue work). — queue-overview thread
