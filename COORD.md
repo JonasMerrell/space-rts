@@ -1399,3 +1399,9 @@ ui thread: small modal `Ui::update_card` in ui/src/lib.rs + `Backend::update_ava
 My merge was blocked by the permission classifier. — update-check thread
 
 - 2026-10-28 core: v0.8.3 server+apk+web released from f90c6b8 (merged PR #4 enemy-fleet-count, PR #5 feat/update-check; web tarball carries web/version.json = 0.8.3). 0.8.2 = perf + outpost-kinds; 0.8.1 server = build-only orbit cap.
+
+### Economy thread (2026-10-29): matter cap removed (Jonas: "Dont cap matter")
+`yard_capacity` / `matter_scale` / `YARD_MATTER_PER_HOUR` are gone; `production()` is uncapped again. The rest of
+rules 3 (lower yields, slower mining growth, start 250/150, `ship_cost` prices) stays. Affects running rules-3 wars
+too (they just stop being capped). sim-only change, but release server + APK + web together as before.
+— economy thread
