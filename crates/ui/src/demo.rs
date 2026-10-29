@@ -216,10 +216,10 @@ impl DemoBackend {
             };
         }
         let players = vec![
-            Player { id: 1, name: if self.user.is_empty() { "Jonas".into() } else { self.user.clone() }, color: 0, faction: "Vanguard Navy".into(), online: true },
-            Player { id: 2, name: "Mara".into(), color: 1, faction: "Hive Brood".into(), online: false },
-            Player { id: 3, name: "Ozzy".into(), color: 2, faction: "Prism Covenant".into(), online: true },
-            Player { id: 4, name: "Bot (hard)".into(), color: 3, faction: "Junker Clans".into(), online: true },
+            Player { id: 1, name: if self.user.is_empty() { "Jonas".into() } else { self.user.clone() }, color: 0, faction: "Vanguard Navy".into(), online: true, team: None },
+            Player { id: 2, name: "Mara".into(), color: 1, faction: "Hive Brood".into(), online: false, team: None },
+            Player { id: 3, name: "Ozzy".into(), color: 2, faction: "Prism Covenant".into(), online: true, team: None },
+            Player { id: 4, name: "Bot (hard)".into(), color: 3, faction: "Junker Clans".into(), online: true, team: None },
         ];
         let ship = |id, name: &str, class, owner, count, at: Option<BodyId>| Ship {
             id,
@@ -532,12 +532,17 @@ impl Backend for DemoBackend {
                 self.events.push(BackendEvent::LoggedIn { user });
             }
             UiAction::Logout => self.events.push(BackendEvent::LoggedOut),
-            UiAction::CreateGame { name, length_days, speed, bots } => {
-                let mut players = vec![Player { id: 1, name: self.user.clone(), color: 0, faction: "VANGUARD NAVY".into(), online: true }];
+            UiAction::CreateGame { name, length_days, speed, bots, max_players, teams } => {
+                let mut players = vec![Player { id: 1, name: self.user.clone(), color: 0, faction: "VANGUARD NAVY".into(), online: true, team: None }];
                 for (i, b) in bots.iter().enumerate() {
-                    players.push(Player { id: 10 + i as u32, name: format!("Bot ({b})"), color: i + 1, faction: "JUNKER CLANS".into(), online: false });
+                    players.push(Player { id: 10 + i as u32, name: format!("Bot ({b})"), color: i + 1, faction: "JUNKER CLANS".into(), online: false, team: None });
                 }
-                let info = LobbyInfo { code: "K7QX".into(), name, players, max_players: 4, host: 1, length_days, speed, bots };
+                if teams >= 2 {
+                    for (i, p) in players.iter_mut().enumerate() {
+                        p.team = Some((i % teams) as u8);
+                    }
+                }
+                let info = LobbyInfo { code: "K7QX".into(), name, players, max_players, host: 1, length_days, speed, bots, teams };
                 self.enter_lobby(info);
             }
             UiAction::JoinGame { code } => {
@@ -549,14 +554,15 @@ impl Backend for DemoBackend {
                         code,
                         name: "Mara's Brawl".into(),
                         players: vec![
-                            Player { id: 2, name: "Mara".into(), color: 1, faction: "HIVE BROOD".into(), online: true },
-                            Player { id: 1, name: self.user.clone(), color: 0, faction: "VANGUARD NAVY".into(), online: true },
+                            Player { id: 2, name: "Mara".into(), color: 1, faction: "HIVE BROOD".into(), online: true, team: None },
+                            Player { id: 1, name: self.user.clone(), color: 0, faction: "VANGUARD NAVY".into(), online: true, team: None },
                         ],
                         max_players: 4,
                         host: 2,
                         length_days: 7,
                         speed: 1.0,
                         bots: vec![],
+                        teams: 0,
                     };
                     self.enter_lobby(info);
                 }
@@ -572,7 +578,17 @@ impl Backend for DemoBackend {
             UiAction::AddBot { difficulty } => {
                 if let Some(l) = self.lobby.as_mut() {
                     let n = l.players.len();
-                    l.players.push(Player { id: 20 + n as u32, name: format!("Bot ({difficulty})"), color: n, faction: "PRISM COVENANT".into(), online: false });
+                    let team = (l.teams >= 2).then(|| (0..l.teams as u8).min_by_key(|&t| l.players.iter().filter(|p| p.team == Some(t)).count()).unwrap_or(0));
+                    l.players.push(Player { id: 20 + n as u32, name: format!("Bot ({difficulty})"), color: n, faction: "PRISM COVENANT".into(), online: false, team });
+                    let l = l.clone();
+                    self.sync_lobby(l);
+                }
+            }
+            UiAction::SetTeam { player, team } => {
+                if let Some(l) = self.lobby.as_mut() {
+                    if let Some(p) = l.players.iter_mut().find(|p| p.id == player) {
+                        p.team = Some(team);
+                    }
                     let l = l.clone();
                     self.sync_lobby(l);
                 }

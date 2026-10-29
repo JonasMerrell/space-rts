@@ -75,7 +75,8 @@ impl Game {
         let Some(si) = self.ships.iter().position(|s| s.id == ship) else { return };
         let owner = self.ships[si].owner;
         let mut hits = vec![];
-        for m in self.minefields.iter_mut().filter(|m| m.body == body && m.owner != owner && m.charges > 0) {
+        let foes: Vec<bool> = self.minefields.iter().map(|m| !self.allied(m.owner, owner)).collect();
+        for (m, _) in self.minefields.iter_mut().zip(foes).filter(|(m, foe)| *foe && m.body == body && m.charges > 0) {
             m.charges -= 1;
             hits.push(m.owner);
         }
@@ -109,7 +110,7 @@ impl Game {
         let h = dt / 3600.0;
         for i in 0..self.minefields.len() {
             let (o, b) = (self.minefields[i].owner, self.minefields[i].body);
-            let sweepers = self.ships.iter().filter(|s| s.owner != o && s.class == ShipClass::Gunship && s.parked_at() == Some(b)).count();
+            let sweepers = self.ships.iter().filter(|s| !self.allied(s.owner, o) && s.class == ShipClass::Gunship && s.parked_at() == Some(b)).count();
             let m = &mut self.minefields[i];
             m.swept += sweepers as f64 * SWEEP_RATE * h;
             while m.swept >= 1.0 && m.charges > 0 {

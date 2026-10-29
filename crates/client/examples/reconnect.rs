@@ -20,7 +20,7 @@ fn main() {
     let mut be = ClientBackend::new(server.clone());
     be.act(UiAction::Login { server, user: "zz-reconnect".into(), pass: "pw-reconnect".into(), register: true, invite: String::new() });
     pump(&mut be, 1.5);
-    be.act(UiAction::CreateGame { name: "reconnect test".into(), length_days: 1, bots: vec!["easy".into()], speed: 1.0 });
+    be.act(UiAction::CreateGame { name: "reconnect test".into(), length_days: 1, bots: vec!["easy".into()], speed: 1.0, max_players: 4, teams: 0 });
     pump(&mut be, 1.5);
     be.act(UiAction::StartGame);
     let ev = pump(&mut be, 1.5);

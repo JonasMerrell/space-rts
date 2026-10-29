@@ -31,6 +31,22 @@
   "neutral": {
    "light": "#adb5bd",
    "dark": "#6c757d"
+  },
+  "orange": {
+   "light": "#ff9f43",
+   "dark": "#d9480f"
+  },
+  "violet": {
+   "light": "#b388ff",
+   "dark": "#7b2cbf"
+  },
+  "pink": {
+   "light": "#ff70c8",
+   "dark": "#c2185b"
+  },
+  "teal": {
+   "light": "#2ee6c5",
+   "dark": "#0a9396"
   }
  },
  "skins": {
@@ -93,28 +109,44 @@
      "red": "sprites/ships/vanguard/interceptor_red.png",
      "green": "sprites/ships/vanguard/interceptor_green.png",
      "yellow": "sprites/ships/vanguard/interceptor_yellow.png",
-     "neutral": "sprites/ships/vanguard/interceptor_neutral.png"
+     "neutral": "sprites/ships/vanguard/interceptor_neutral.png",
+     "orange": "sprites/ships/vanguard/interceptor_orange.png",
+     "violet": "sprites/ships/vanguard/interceptor_violet.png",
+     "pink": "sprites/ships/vanguard/interceptor_pink.png",
+     "teal": "sprites/ships/vanguard/interceptor_teal.png"
     },
     "hive": {
      "blue": "sprites/ships/hive/interceptor_blue.png",
      "red": "sprites/ships/hive/interceptor_red.png",
      "green": "sprites/ships/hive/interceptor_green.png",
      "yellow": "sprites/ships/hive/interceptor_yellow.png",
-     "neutral": "sprites/ships/hive/interceptor_neutral.png"
+     "neutral": "sprites/ships/hive/interceptor_neutral.png",
+     "orange": "sprites/ships/hive/interceptor_orange.png",
+     "violet": "sprites/ships/hive/interceptor_violet.png",
+     "pink": "sprites/ships/hive/interceptor_pink.png",
+     "teal": "sprites/ships/hive/interceptor_teal.png"
     },
     "prism": {
      "blue": "sprites/ships/prism/interceptor_blue.png",
      "red": "sprites/ships/prism/interceptor_red.png",
      "green": "sprites/ships/prism/interceptor_green.png",
      "yellow": "sprites/ships/prism/interceptor_yellow.png",
-     "neutral": "sprites/ships/prism/interceptor_neutral.png"
+     "neutral": "sprites/ships/prism/interceptor_neutral.png",
+     "orange": "sprites/ships/prism/interceptor_orange.png",
+     "violet": "sprites/ships/prism/interceptor_violet.png",
+     "pink": "sprites/ships/prism/interceptor_pink.png",
+     "teal": "sprites/ships/prism/interceptor_teal.png"
     },
     "junker": {
      "blue": "sprites/ships/junker/interceptor_blue.png",
      "red": "sprites/ships/junker/interceptor_red.png",
      "green": "sprites/ships/junker/interceptor_green.png",
      "yellow": "sprites/ships/junker/interceptor_yellow.png",
-     "neutral": "sprites/ships/junker/interceptor_neutral.png"
+     "neutral": "sprites/ships/junker/interceptor_neutral.png",
+     "orange": "sprites/ships/junker/interceptor_orange.png",
+     "violet": "sprites/ships/junker/interceptor_violet.png",
+     "pink": "sprites/ships/junker/interceptor_pink.png",
+     "teal": "sprites/ships/junker/interceptor_teal.png"
     }
    },
    "icon": "sprites/icons/ship_interceptor.png",
@@ -148,28 +180,44 @@
      "red": "sprites/ships/vanguard/gunship_red.png",
      "green": "sprites/ships/vanguard/gunship_green.png",
      "yellow": "sprites/ships/vanguard/gunship_yellow.png",
-     "neutral": "sprites/ships/vanguard/gunship_neutral.png"
+     "neutral": "sprites/ships/vanguard/gunship_neutral.png",
+     "orange": "sprites/ships/vanguard/gunship_orange.png",
+     "violet": "sprites/ships/vanguard/gunship_violet.png",
+     "pink": "sprites/ships/vanguard/gunship_pink.png",
+     "teal": "sprites/ships/vanguard/gunship_teal.png"
     },
     "hive": {
      "blue": "sprites/ships/hive/gunship_blue.png",
      "red": "sprites/ships/hive/gunship_red.png",
      "green": "sprites/ships/hive/gunship_green.png",
      "yellow": "sprites/ships/hive/gunship_yellow.png",
-     "neutral": "sprites/ships/hive/gunship_neutral.png"
+     "neutral": "sprites/ships/hive/gunship_neutral.png",
+     "orange": "sprites/ships/hive/gunship_orange.png",
+     "violet": "sprites/ships/hive/gunship_violet.png",
+     "pink": "sprites/ships/hive/gunship_pink.png",
+     "teal": "sprites/ships/hive/gunship_teal.png"
     },
     "prism": {
      "blue": "sprites/ships/prism/gunship_blue.png",
      "red": "sprites/ships/prism/gunship_red.png",
      "green": "sprites/ships/prism/gunship_green.png",
      "yellow": "sprites/ships/prism/gunship_yellow.png",
-     "neutral": "sprites/ships/prism/gunship_neutral.png"
+     "neutral": "sprites/ships/prism/gunship_neutral.png",
+     "orange": "sprites/ships/prism/gunship_orange.png",
+     "violet": "sprites/ships/prism/gunship_violet.png",
+     "pink": "sprites/ships/prism/gunship_pink.png",
+     "teal": "sprites/ships/prism/gunship_teal.png"
     },
     "junker": {
      "blue": "sprites/ships/junker/gunship_blue.png",
      "red": "sprites/ships/junker/gunship_red.png",
      "green": "sprites/ships/junker/gunship_green.png",
      "yellow": "sprites/ships/junker/gunship_yellow.png",
-     "neutral": "sprites/ships/junker/gunship_neutral.png"
+     "neutral": "sprites/ships/junker/gunship_neutral.png",
+     "orange": "sprites/ships/junker/gunship_orange.png",
+     "violet": "sprites/ships/junker/gunship_violet.png",
+     "pink": "sprites/ships/junker/gunship_pink.png",
+     "teal": "sprites/ships/junker/gunship_teal.png"
     }
    },
    "icon": "sprites/icons/ship_gunship.png",
@@ -211,28 +259,44 @@
      "red": "sprites/ships/vanguard/bomber_red.png",
      "green": "sprites/ships/vanguard/bomber_green.png",
      "yellow": "sprites/ships/vanguard/bomber_yellow.png",
-     "neutral": "sprites/ships/vanguard/bomber_neutral.png"
+     "neutral": "sprites/ships/vanguard/bomber_neutral.png",
+     "orange": "sprites/ships/vanguard/bomber_orange.png",
+     "violet": "sprites/ships/vanguard/bomber_violet.png",
+     "pink": "sprites/ships/vanguard/bomber_pink.png",
+     "teal": "sprites/ships/vanguard/bomber_teal.png"
     },
     "hive": {
      "blue": "sprites/ships/hive/bomber_blue.png",
      "red": "sprites/ships/hive/bomber_red.png",
      "green": "sprites/ships/hive/bomber_green.png",
      "yellow": "sprites/ships/hive/bomber_yellow.png",
-     "neutral": "sprites/ships/hive/bomber_neutral.png"
+     "neutral": "sprites/ships/hive/bomber_neutral.png",
+     "orange": "sprites/ships/hive/bomber_orange.png",
+     "violet": "sprites/ships/hive/bomber_violet.png",
+     "pink": "sprites/ships/hive/bomber_pink.png",
+     "teal": "sprites/ships/hive/bomber_teal.png"
     },
     "prism": {
      "blue": "sprites/ships/prism/bomber_blue.png",
      "red": "sprites/ships/prism/bomber_red.png",
      "green": "sprites/ships/prism/bomber_green.png",
      "yellow": "sprites/ships/prism/bomber_yellow.png",
-     "neutral": "sprites/ships/prism/bomber_neutral.png"
+     "neutral": "sprites/ships/prism/bomber_neutral.png",
+     "orange": "sprites/ships/prism/bomber_orange.png",
+     "violet": "sprites/ships/prism/bomber_violet.png",
+     "pink": "sprites/ships/prism/bomber_pink.png",
+     "teal": "sprites/ships/prism/bomber_teal.png"
     },
     "junker": {
      "blue": "sprites/ships/junker/bomber_blue.png",
      "red": "sprites/ships/junker/bomber_red.png",
      "green": "sprites/ships/junker/bomber_green.png",
      "yellow": "sprites/ships/junker/bomber_yellow.png",
-     "neutral": "sprites/ships/junker/bomber_neutral.png"
+     "neutral": "sprites/ships/junker/bomber_neutral.png",
+     "orange": "sprites/ships/junker/bomber_orange.png",
+     "violet": "sprites/ships/junker/bomber_violet.png",
+     "pink": "sprites/ships/junker/bomber_pink.png",
+     "teal": "sprites/ships/junker/bomber_teal.png"
     }
    },
    "icon": "sprites/icons/ship_bomber.png",
@@ -282,28 +346,44 @@
      "red": "sprites/ships/vanguard/scout_red.png",
      "green": "sprites/ships/vanguard/scout_green.png",
      "yellow": "sprites/ships/vanguard/scout_yellow.png",
-     "neutral": "sprites/ships/vanguard/scout_neutral.png"
+     "neutral": "sprites/ships/vanguard/scout_neutral.png",
+     "orange": "sprites/ships/vanguard/scout_orange.png",
+     "violet": "sprites/ships/vanguard/scout_violet.png",
+     "pink": "sprites/ships/vanguard/scout_pink.png",
+     "teal": "sprites/ships/vanguard/scout_teal.png"
     },
     "hive": {
      "blue": "sprites/ships/hive/scout_blue.png",
      "red": "sprites/ships/hive/scout_red.png",
      "green": "sprites/ships/hive/scout_green.png",
      "yellow": "sprites/ships/hive/scout_yellow.png",
-     "neutral": "sprites/ships/hive/scout_neutral.png"
+     "neutral": "sprites/ships/hive/scout_neutral.png",
+     "orange": "sprites/ships/hive/scout_orange.png",
+     "violet": "sprites/ships/hive/scout_violet.png",
+     "pink": "sprites/ships/hive/scout_pink.png",
+     "teal": "sprites/ships/hive/scout_teal.png"
     },
     "prism": {
      "blue": "sprites/ships/prism/scout_blue.png",
      "red": "sprites/ships/prism/scout_red.png",
      "green": "sprites/ships/prism/scout_green.png",
      "yellow": "sprites/ships/prism/scout_yellow.png",
-     "neutral": "sprites/ships/prism/scout_neutral.png"
+     "neutral": "sprites/ships/prism/scout_neutral.png",
+     "orange": "sprites/ships/prism/scout_orange.png",
+     "violet": "sprites/ships/prism/scout_violet.png",
+     "pink": "sprites/ships/prism/scout_pink.png",
+     "teal": "sprites/ships/prism/scout_teal.png"
     },
     "junker": {
      "blue": "sprites/ships/junker/scout_blue.png",
      "red": "sprites/ships/junker/scout_red.png",
      "green": "sprites/ships/junker/scout_green.png",
      "yellow": "sprites/ships/junker/scout_yellow.png",
-     "neutral": "sprites/ships/junker/scout_neutral.png"
+     "neutral": "sprites/ships/junker/scout_neutral.png",
+     "orange": "sprites/ships/junker/scout_orange.png",
+     "violet": "sprites/ships/junker/scout_violet.png",
+     "pink": "sprites/ships/junker/scout_pink.png",
+     "teal": "sprites/ships/junker/scout_teal.png"
     }
    },
    "icon": "sprites/icons/ship_scout.png",
@@ -333,28 +413,44 @@
      "red": "sprites/ships/vanguard/tanker_red.png",
      "green": "sprites/ships/vanguard/tanker_green.png",
      "yellow": "sprites/ships/vanguard/tanker_yellow.png",
-     "neutral": "sprites/ships/vanguard/tanker_neutral.png"
+     "neutral": "sprites/ships/vanguard/tanker_neutral.png",
+     "orange": "sprites/ships/vanguard/tanker_orange.png",
+     "violet": "sprites/ships/vanguard/tanker_violet.png",
+     "pink": "sprites/ships/vanguard/tanker_pink.png",
+     "teal": "sprites/ships/vanguard/tanker_teal.png"
     },
     "hive": {
      "blue": "sprites/ships/hive/tanker_blue.png",
      "red": "sprites/ships/hive/tanker_red.png",
      "green": "sprites/ships/hive/tanker_green.png",
      "yellow": "sprites/ships/hive/tanker_yellow.png",
-     "neutral": "sprites/ships/hive/tanker_neutral.png"
+     "neutral": "sprites/ships/hive/tanker_neutral.png",
+     "orange": "sprites/ships/hive/tanker_orange.png",
+     "violet": "sprites/ships/hive/tanker_violet.png",
+     "pink": "sprites/ships/hive/tanker_pink.png",
+     "teal": "sprites/ships/hive/tanker_teal.png"
     },
     "prism": {
      "blue": "sprites/ships/prism/tanker_blue.png",
      "red": "sprites/ships/prism/tanker_red.png",
      "green": "sprites/ships/prism/tanker_green.png",
      "yellow": "sprites/ships/prism/tanker_yellow.png",
-     "neutral": "sprites/ships/prism/tanker_neutral.png"
+     "neutral": "sprites/ships/prism/tanker_neutral.png",
+     "orange": "sprites/ships/prism/tanker_orange.png",
+     "violet": "sprites/ships/prism/tanker_violet.png",
+     "pink": "sprites/ships/prism/tanker_pink.png",
+     "teal": "sprites/ships/prism/tanker_teal.png"
     },
     "junker": {
      "blue": "sprites/ships/junker/tanker_blue.png",
      "red": "sprites/ships/junker/tanker_red.png",
      "green": "sprites/ships/junker/tanker_green.png",
      "yellow": "sprites/ships/junker/tanker_yellow.png",
-     "neutral": "sprites/ships/junker/tanker_neutral.png"
+     "neutral": "sprites/ships/junker/tanker_neutral.png",
+     "orange": "sprites/ships/junker/tanker_orange.png",
+     "violet": "sprites/ships/junker/tanker_violet.png",
+     "pink": "sprites/ships/junker/tanker_pink.png",
+     "teal": "sprites/ships/junker/tanker_teal.png"
     }
    },
    "icon": "sprites/icons/ship_tanker.png",
@@ -383,28 +479,44 @@
      "red": "sprites/ships/vanguard/freighter_red.png",
      "green": "sprites/ships/vanguard/freighter_green.png",
      "yellow": "sprites/ships/vanguard/freighter_yellow.png",
-     "neutral": "sprites/ships/vanguard/freighter_neutral.png"
+     "neutral": "sprites/ships/vanguard/freighter_neutral.png",
+     "orange": "sprites/ships/vanguard/freighter_orange.png",
+     "violet": "sprites/ships/vanguard/freighter_violet.png",
+     "pink": "sprites/ships/vanguard/freighter_pink.png",
+     "teal": "sprites/ships/vanguard/freighter_teal.png"
     },
     "hive": {
      "blue": "sprites/ships/hive/freighter_blue.png",
      "red": "sprites/ships/hive/freighter_red.png",
      "green": "sprites/ships/hive/freighter_green.png",
      "yellow": "sprites/ships/hive/freighter_yellow.png",
-     "neutral": "sprites/ships/hive/freighter_neutral.png"
+     "neutral": "sprites/ships/hive/freighter_neutral.png",
+     "orange": "sprites/ships/hive/freighter_orange.png",
+     "violet": "sprites/ships/hive/freighter_violet.png",
+     "pink": "sprites/ships/hive/freighter_pink.png",
+     "teal": "sprites/ships/hive/freighter_teal.png"
     },
     "prism": {
      "blue": "sprites/ships/prism/freighter_blue.png",
      "red": "sprites/ships/prism/freighter_red.png",
      "green": "sprites/ships/prism/freighter_green.png",
      "yellow": "sprites/ships/prism/freighter_yellow.png",
-     "neutral": "sprites/ships/prism/freighter_neutral.png"
+     "neutral": "sprites/ships/prism/freighter_neutral.png",
+     "orange": "sprites/ships/prism/freighter_orange.png",
+     "violet": "sprites/ships/prism/freighter_violet.png",
+     "pink": "sprites/ships/prism/freighter_pink.png",
+     "teal": "sprites/ships/prism/freighter_teal.png"
     },
     "junker": {
      "blue": "sprites/ships/junker/freighter_blue.png",
      "red": "sprites/ships/junker/freighter_red.png",
      "green": "sprites/ships/junker/freighter_green.png",
      "yellow": "sprites/ships/junker/freighter_yellow.png",
-     "neutral": "sprites/ships/junker/freighter_neutral.png"
+     "neutral": "sprites/ships/junker/freighter_neutral.png",
+     "orange": "sprites/ships/junker/freighter_orange.png",
+     "violet": "sprites/ships/junker/freighter_violet.png",
+     "pink": "sprites/ships/junker/freighter_pink.png",
+     "teal": "sprites/ships/junker/freighter_teal.png"
     }
    },
    "icon": "sprites/icons/ship_freighter.png",
@@ -433,28 +545,44 @@
      "red": "sprites/ships/vanguard/tug_red.png",
      "green": "sprites/ships/vanguard/tug_green.png",
      "yellow": "sprites/ships/vanguard/tug_yellow.png",
-     "neutral": "sprites/ships/vanguard/tug_neutral.png"
+     "neutral": "sprites/ships/vanguard/tug_neutral.png",
+     "orange": "sprites/ships/vanguard/tug_orange.png",
+     "violet": "sprites/ships/vanguard/tug_violet.png",
+     "pink": "sprites/ships/vanguard/tug_pink.png",
+     "teal": "sprites/ships/vanguard/tug_teal.png"
     },
     "hive": {
      "blue": "sprites/ships/hive/tug_blue.png",
      "red": "sprites/ships/hive/tug_red.png",
      "green": "sprites/ships/hive/tug_green.png",
      "yellow": "sprites/ships/hive/tug_yellow.png",
-     "neutral": "sprites/ships/hive/tug_neutral.png"
+     "neutral": "sprites/ships/hive/tug_neutral.png",
+     "orange": "sprites/ships/hive/tug_orange.png",
+     "violet": "sprites/ships/hive/tug_violet.png",
+     "pink": "sprites/ships/hive/tug_pink.png",
+     "teal": "sprites/ships/hive/tug_teal.png"
     },
     "prism": {
      "blue": "sprites/ships/prism/tug_blue.png",
      "red": "sprites/ships/prism/tug_red.png",
      "green": "sprites/ships/prism/tug_green.png",
      "yellow": "sprites/ships/prism/tug_yellow.png",
-     "neutral": "sprites/ships/prism/tug_neutral.png"
+     "neutral": "sprites/ships/prism/tug_neutral.png",
+     "orange": "sprites/ships/prism/tug_orange.png",
+     "violet": "sprites/ships/prism/tug_violet.png",
+     "pink": "sprites/ships/prism/tug_pink.png",
+     "teal": "sprites/ships/prism/tug_teal.png"
     },
     "junker": {
      "blue": "sprites/ships/junker/tug_blue.png",
      "red": "sprites/ships/junker/tug_red.png",
      "green": "sprites/ships/junker/tug_green.png",
      "yellow": "sprites/ships/junker/tug_yellow.png",
-     "neutral": "sprites/ships/junker/tug_neutral.png"
+     "neutral": "sprites/ships/junker/tug_neutral.png",
+     "orange": "sprites/ships/junker/tug_orange.png",
+     "violet": "sprites/ships/junker/tug_violet.png",
+     "pink": "sprites/ships/junker/tug_pink.png",
+     "teal": "sprites/ships/junker/tug_teal.png"
     }
    },
    "icon": "sprites/icons/ship_tug.png",
@@ -479,28 +607,44 @@
      "red": "sprites/ships/vanguard/decoy_red.png",
      "green": "sprites/ships/vanguard/decoy_green.png",
      "yellow": "sprites/ships/vanguard/decoy_yellow.png",
-     "neutral": "sprites/ships/vanguard/decoy_neutral.png"
+     "neutral": "sprites/ships/vanguard/decoy_neutral.png",
+     "orange": "sprites/ships/vanguard/decoy_orange.png",
+     "violet": "sprites/ships/vanguard/decoy_violet.png",
+     "pink": "sprites/ships/vanguard/decoy_pink.png",
+     "teal": "sprites/ships/vanguard/decoy_teal.png"
     },
     "hive": {
      "blue": "sprites/ships/hive/decoy_blue.png",
      "red": "sprites/ships/hive/decoy_red.png",
      "green": "sprites/ships/hive/decoy_green.png",
      "yellow": "sprites/ships/hive/decoy_yellow.png",
-     "neutral": "sprites/ships/hive/decoy_neutral.png"
+     "neutral": "sprites/ships/hive/decoy_neutral.png",
+     "orange": "sprites/ships/hive/decoy_orange.png",
+     "violet": "sprites/ships/hive/decoy_violet.png",
+     "pink": "sprites/ships/hive/decoy_pink.png",
+     "teal": "sprites/ships/hive/decoy_teal.png"
     },
     "prism": {
      "blue": "sprites/ships/prism/decoy_blue.png",
      "red": "sprites/ships/prism/decoy_red.png",
      "green": "sprites/ships/prism/decoy_green.png",
      "yellow": "sprites/ships/prism/decoy_yellow.png",
-     "neutral": "sprites/ships/prism/decoy_neutral.png"
+     "neutral": "sprites/ships/prism/decoy_neutral.png",
+     "orange": "sprites/ships/prism/decoy_orange.png",
+     "violet": "sprites/ships/prism/decoy_violet.png",
+     "pink": "sprites/ships/prism/decoy_pink.png",
+     "teal": "sprites/ships/prism/decoy_teal.png"
     },
     "junker": {
      "blue": "sprites/ships/junker/decoy_blue.png",
      "red": "sprites/ships/junker/decoy_red.png",
      "green": "sprites/ships/junker/decoy_green.png",
      "yellow": "sprites/ships/junker/decoy_yellow.png",
-     "neutral": "sprites/ships/junker/decoy_neutral.png"
+     "neutral": "sprites/ships/junker/decoy_neutral.png",
+     "orange": "sprites/ships/junker/decoy_orange.png",
+     "violet": "sprites/ships/junker/decoy_violet.png",
+     "pink": "sprites/ships/junker/decoy_pink.png",
+     "teal": "sprites/ships/junker/decoy_teal.png"
     }
    },
    "icon": "sprites/icons/ship_decoy.png",
@@ -525,28 +669,44 @@
      "red": "sprites/ships/vanguard/torpedo_red.png",
      "green": "sprites/ships/vanguard/torpedo_green.png",
      "yellow": "sprites/ships/vanguard/torpedo_yellow.png",
-     "neutral": "sprites/ships/vanguard/torpedo_neutral.png"
+     "neutral": "sprites/ships/vanguard/torpedo_neutral.png",
+     "orange": "sprites/ships/vanguard/torpedo_orange.png",
+     "violet": "sprites/ships/vanguard/torpedo_violet.png",
+     "pink": "sprites/ships/vanguard/torpedo_pink.png",
+     "teal": "sprites/ships/vanguard/torpedo_teal.png"
     },
     "hive": {
      "blue": "sprites/ships/hive/torpedo_blue.png",
      "red": "sprites/ships/hive/torpedo_red.png",
      "green": "sprites/ships/hive/torpedo_green.png",
      "yellow": "sprites/ships/hive/torpedo_yellow.png",
-     "neutral": "sprites/ships/hive/torpedo_neutral.png"
+     "neutral": "sprites/ships/hive/torpedo_neutral.png",
+     "orange": "sprites/ships/hive/torpedo_orange.png",
+     "violet": "sprites/ships/hive/torpedo_violet.png",
+     "pink": "sprites/ships/hive/torpedo_pink.png",
+     "teal": "sprites/ships/hive/torpedo_teal.png"
     },
     "prism": {
      "blue": "sprites/ships/prism/torpedo_blue.png",
      "red": "sprites/ships/prism/torpedo_red.png",
      "green": "sprites/ships/prism/torpedo_green.png",
      "yellow": "sprites/ships/prism/torpedo_yellow.png",
-     "neutral": "sprites/ships/prism/torpedo_neutral.png"
+     "neutral": "sprites/ships/prism/torpedo_neutral.png",
+     "orange": "sprites/ships/prism/torpedo_orange.png",
+     "violet": "sprites/ships/prism/torpedo_violet.png",
+     "pink": "sprites/ships/prism/torpedo_pink.png",
+     "teal": "sprites/ships/prism/torpedo_teal.png"
     },
     "junker": {
      "blue": "sprites/ships/junker/torpedo_blue.png",
      "red": "sprites/ships/junker/torpedo_red.png",
      "green": "sprites/ships/junker/torpedo_green.png",
      "yellow": "sprites/ships/junker/torpedo_yellow.png",
-     "neutral": "sprites/ships/junker/torpedo_neutral.png"
+     "neutral": "sprites/ships/junker/torpedo_neutral.png",
+     "orange": "sprites/ships/junker/torpedo_orange.png",
+     "violet": "sprites/ships/junker/torpedo_violet.png",
+     "pink": "sprites/ships/junker/torpedo_pink.png",
+     "teal": "sprites/ships/junker/torpedo_teal.png"
     }
    },
    "icon": "sprites/icons/ship_torpedo.png",
@@ -576,28 +736,44 @@
      "red": "sprites/ships/vanguard/slug_red.png",
      "green": "sprites/ships/vanguard/slug_green.png",
      "yellow": "sprites/ships/vanguard/slug_yellow.png",
-     "neutral": "sprites/ships/vanguard/slug_neutral.png"
+     "neutral": "sprites/ships/vanguard/slug_neutral.png",
+     "orange": "sprites/ships/vanguard/slug_orange.png",
+     "violet": "sprites/ships/vanguard/slug_violet.png",
+     "pink": "sprites/ships/vanguard/slug_pink.png",
+     "teal": "sprites/ships/vanguard/slug_teal.png"
     },
     "hive": {
      "blue": "sprites/ships/hive/slug_blue.png",
      "red": "sprites/ships/hive/slug_red.png",
      "green": "sprites/ships/hive/slug_green.png",
      "yellow": "sprites/ships/hive/slug_yellow.png",
-     "neutral": "sprites/ships/hive/slug_neutral.png"
+     "neutral": "sprites/ships/hive/slug_neutral.png",
+     "orange": "sprites/ships/hive/slug_orange.png",
+     "violet": "sprites/ships/hive/slug_violet.png",
+     "pink": "sprites/ships/hive/slug_pink.png",
+     "teal": "sprites/ships/hive/slug_teal.png"
     },
     "prism": {
      "blue": "sprites/ships/prism/slug_blue.png",
      "red": "sprites/ships/prism/slug_red.png",
      "green": "sprites/ships/prism/slug_green.png",
      "yellow": "sprites/ships/prism/slug_yellow.png",
-     "neutral": "sprites/ships/prism/slug_neutral.png"
+     "neutral": "sprites/ships/prism/slug_neutral.png",
+     "orange": "sprites/ships/prism/slug_orange.png",
+     "violet": "sprites/ships/prism/slug_violet.png",
+     "pink": "sprites/ships/prism/slug_pink.png",
+     "teal": "sprites/ships/prism/slug_teal.png"
     },
     "junker": {
      "blue": "sprites/ships/junker/slug_blue.png",
      "red": "sprites/ships/junker/slug_red.png",
      "green": "sprites/ships/junker/slug_green.png",
      "yellow": "sprites/ships/junker/slug_yellow.png",
-     "neutral": "sprites/ships/junker/slug_neutral.png"
+     "neutral": "sprites/ships/junker/slug_neutral.png",
+     "orange": "sprites/ships/junker/slug_orange.png",
+     "violet": "sprites/ships/junker/slug_violet.png",
+     "pink": "sprites/ships/junker/slug_pink.png",
+     "teal": "sprites/ships/junker/slug_teal.png"
     }
    },
    "icon": "sprites/icons/ship_slug.png",

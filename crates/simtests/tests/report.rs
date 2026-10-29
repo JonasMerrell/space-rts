@@ -10,7 +10,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::time::{Duration, Instant};
 
 fn game4(seed: u64) -> Game {
-    let s = Settings { name: "rep".into(), size: SystemSize::Medium, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0 };
+    let s = Settings { name: "rep".into(), size: SystemSize::Medium, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0, teams: 0 };
     let mut g = Game::new("REP1".into(), s, seed, "ann");
     for n in ["bob", "cat", "dan"] {
         g.add_player(n, None).unwrap();
@@ -206,7 +206,7 @@ fn server_sends_a_report_on_open_covering_the_time_away() {
     c.send(&ClientMsg::Hello { user: "ann".into(), pass: "pw".into(), register: true, invite: None, token: None, stay: false });
     c.wait(5.0, |m| matches!(m, ServerMsg::Welcome { .. }).then_some(()));
     // 600 game seconds per real second
-    c.send(&ClientMsg::CreateGame { name: "away".into(), size: SystemSize::Small, length_days: 7.0, speed: 600.0, max_players: 2, bots: vec!["easy".into()] });
+    c.send(&ClientMsg::CreateGame { name: "away".into(), size: SystemSize::Small, length_days: 7.0, speed: 600.0, max_players: 2, bots: vec!["easy".into()], teams: 0 });
     let code = c.wait(5.0, |m| match m {
         ServerMsg::State { game, .. } => Some(game.code.clone()),
         _ => None,

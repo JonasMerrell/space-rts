@@ -212,7 +212,7 @@ fn conf() -> Conf {
 
 fn busy_game(days: f64, size: sim::system::SystemSize) -> sim::game::Game {
     use sim::game::{Game, Settings};
-    let settings = Settings { name: "bench".into(), size, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0 };
+    let settings = Settings { name: "bench".into(), size, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0, teams: 0 };
     let mut g = Game::new("BENCH".into(), settings, 12345, "me");
     for (i, d) in ["hard", "hard", "normal"].iter().enumerate() {
         g.add_player(&format!("bot{i}"), Some(d.to_string())).unwrap();

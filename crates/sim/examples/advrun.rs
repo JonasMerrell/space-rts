@@ -9,7 +9,7 @@ fn main() {
     let seed: u64 = args.next().and_then(|a| a.parse().ok()).unwrap_or(9);
     let days: f64 = args.next().and_then(|a| a.parse().ok()).unwrap_or(7.0);
     for rules in [1, 2] {
-        let mut g = Game::new("BOTS".into(), Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: days * 86_400.0 + 3600.0, speed: 1.0 }, seed, "host");
+        let mut g = Game::new("BOTS".into(), Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: days * 86_400.0 + 3600.0, speed: 1.0, teams: 0 }, seed, "host");
         g.rules = rules;
         for (n, d) in [("Hard A", "hard"), ("Hard B", "hard"), ("Normal C", "normal")] {
             g.add_player(n, Some(d.into())).unwrap();

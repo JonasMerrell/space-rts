@@ -197,12 +197,22 @@ const GREEK: &[&str] = &["a", "b", "c", "d"];
 /// Generate a random system. Planets are spaced geometrically ("spread out"); planet years range
 /// from a few hours (inner) to about a week (outer), averaging about a day.
 pub fn generate(seed: u64, size: SystemSize) -> System {
+    generate_for(seed, size, 4)
+}
+
+/// `generate` for a war with `slots` pilots. Up to four it is exactly `generate`; each slot past
+/// four adds a planet and stretches the outer orbit by 15%, so there are homes for everyone at
+/// about the same spacing, half rocky inner worlds and half gas giants (rules 4).
+pub fn generate_for(seed: u64, size: SystemSize, slots: usize) -> System {
     let mut rng = Rng::new(seed);
-    let (n_planets, outer) = match size {
+    let (base, outer) = match size {
         SystemSize::Small => (5, 9.0e5),
         SystemSize::Medium => (7, 1.4e6),
         SystemSize::Large => (9, 2.0e6),
     };
+    let extra = slots.saturating_sub(4) as i32;
+    let n_planets = base + extra;
+    let outer = outer * (1.0 + 0.15 * extra as f64);
     let mut bodies = vec![Body {
         id: BodyId(0),
         name: name(&mut rng),
@@ -366,5 +376,49 @@ mod tests {
         let s2 = generate(42, SystemSize::Medium);
         assert_eq!(s.bodies.len(), s2.bodies.len());
         assert_eq!(s.bodies[3].name, s2.bodies[3].name);
+    }
+
+    fn sane(s: &System) {
+        for b in &s.bodies {
+            if let Some(p) = b.parent {
+                let par = s.body(p);
+                assert!(b.orbit.unwrap().a > par.radius * 2.0, "{} too close", b.name);
+                if b.kind != BodyKind::Asteroid {
+                    assert!(b.soi > b.park_radius() * 1.5, "{} soi {} < park {}", b.name, b.soi, b.park_radius());
+                }
+                if b.kind == BodyKind::Moon {
+                    assert!(b.orbit.unwrap().a + b.soi < par.soi, "moon {} soi leaks", b.name);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn four_slots_or_fewer_generate_the_old_system() {
+        for size in [SystemSize::Small, SystemSize::Medium, SystemSize::Large] {
+            for slots in 2..=4 {
+                let (a, b) = (generate(9, size), generate_for(9, size, slots));
+                assert_eq!(a.bodies.len(), b.bodies.len());
+                assert!(a.bodies.iter().zip(&b.bodies).all(|(x, y)| x.name == y.name && x.radius == y.radius));
+            }
+        }
+    }
+
+    #[test]
+    fn eight_slot_systems_have_room_for_everyone() {
+        for size in [SystemSize::Small, SystemSize::Medium, SystemSize::Large] {
+            for seed in 0..40 {
+                let s = generate_for(seed, size, 8);
+                sane(&s);
+                let rocky = s.bodies.iter().filter(|b| b.kind == BodyKind::Planet).count();
+                let giants = s.bodies.iter().filter(|b| b.kind == BodyKind::GasGiant).count();
+                assert!(rocky + giants >= 9, "{size:?} seed {seed}: {rocky} rocky + {giants} giants");
+                assert!(rocky >= giants, "inner/outer balance: {rocky} rocky vs {giants} giants");
+                // the outermost year stays playable (a few days, not weeks)
+                let last = s.bodies.iter().filter(|b| b.parent == Some(BodyId(0)) && b.kind == BodyKind::GasGiant).last().unwrap();
+                let days = last.orbit.unwrap().period() / 86_400.0;
+                assert!(days < 21.0, "{size:?} seed {seed}: outer year {days:.1} d");
+            }
+        }
     }
 }

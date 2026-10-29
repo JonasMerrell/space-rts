@@ -90,7 +90,7 @@ impl Client {
 }
 
 fn create(c: &mut Client, max_players: usize) -> String {
-    c.send(&ClientMsg::CreateGame { name: "Friday Night War".into(), size: SystemSize::Small, length_days: 7.0, speed: 1.0, max_players, bots: vec![] });
+    c.send(&ClientMsg::CreateGame { name: "Friday Night War".into(), size: SystemSize::Small, length_days: 7.0, speed: 1.0, max_players, bots: vec![], teams: 0 });
     let (g, _) = c.state(5.0, |g, _| g.status == Status::Lobby);
     g.code
 }

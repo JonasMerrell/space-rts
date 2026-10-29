@@ -179,7 +179,7 @@ fn world() -> World {
         s.conns.insert(id, Conn { user: Some(user.into()), open: None, tx, sock: None, ip: "203.0.113.9".parse().unwrap() });
     }
     let g = TEMPLATE.get_or_init(|| {
-        s.handle(1, ClientMsg::CreateGame { name: "fuzz".into(), size: SystemSize::Small, length_days: 7.0, speed: 100.0, max_players: 4, bots: vec!["normal".into(), "hard".into()] });
+        s.handle(1, ClientMsg::CreateGame { name: "fuzz".into(), size: SystemSize::Small, length_days: 7.0, speed: 100.0, max_players: 4, bots: vec!["normal".into(), "hard".into()], teams: 0 });
         let code = s.games.keys().next().cloned().unwrap();
         s.handle(2, ClientMsg::JoinGame { code: code.clone() });
         s.handle(1, ClientMsg::StartGame { code: code.clone() });

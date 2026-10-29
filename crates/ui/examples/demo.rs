@@ -39,9 +39,19 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
             m.bots = vec![1, 2];
             ui.screen = Screen::Menu(m);
         }
-        "lobby" => {
+        "create8" => {
+            let mut m = Menu::new("Jonas".into());
+            m.creating = true;
+            m.slots = 8;
+            m.teams = 4;
+            m.bots = vec![0, 1, 1, 2, 2];
+            ui.screen = Screen::Menu(m);
+        }
+        "lobby8" => {
+            // eight slots, four teams of two: six bots and a guest
             be.act(UiAction::Login { server: String::new(), user: "Jonas".into(), pass: "x".into(), register: false, invite: String::new() });
-            be.act(UiAction::CreateGame { name: "Friday Night War".into(), length_days: 7, speed: 1.0, bots: vec!["hard".into()] });
+            let bots: Vec<String> = ["easy", "normal", "hard", "hard", "normal", "easy"].iter().map(|b| b.to_string()).collect();
+            be.act(UiAction::CreateGame { name: "Eight-way War".into(), length_days: 7, speed: 1.0, bots, max_players: 8, teams: 4 });
             let mut info = None;
             for ev in be.poll() {
                 if let ui::BackendEvent::Lobby(i) = ev {
@@ -49,7 +59,25 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                 }
             }
             let mut info = info.unwrap();
-            info.players.insert(1, Player { id: 2, name: "Mara".into(), color: 1, faction: "HIVE BROOD".into(), online: true });
+            info.players.insert(1, Player { id: 2, name: "Mara".into(), color: 1, faction: "HIVE BROOD".into(), online: true, team: Some(3) });
+            for (i, p) in info.players.iter_mut().enumerate() {
+                p.color = i;
+            }
+            be.enter_lobby(info);
+            let _ = be.poll();
+            ui.screen = Screen::Game(GameScreen::new());
+        }
+        "lobby" => {
+            be.act(UiAction::Login { server: String::new(), user: "Jonas".into(), pass: "x".into(), register: false, invite: String::new() });
+            be.act(UiAction::CreateGame { name: "Friday Night War".into(), length_days: 7, speed: 1.0, bots: vec!["hard".into()], max_players: 4, teams: 0 });
+            let mut info = None;
+            for ev in be.poll() {
+                if let ui::BackendEvent::Lobby(i) = ev {
+                    info = Some(i);
+                }
+            }
+            let mut info = info.unwrap();
+            info.players.insert(1, Player { id: 2, name: "Mara".into(), color: 1, faction: "HIVE BROOD".into(), online: true, team: None });
             info.players[2].color = 2;
             info.players[2].online = false;
             be.enter_lobby(info);
@@ -120,7 +148,7 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                 "rock" => g.selected = Some(Focus::Body(9)),
                 "dark" => g.selected = Some(Focus::Body(2)),
                 "results" => {
-                    be.results = Some(GameResults { winner: Some(1), scores: vec![(1, 7), (3, 5), (2, 3), (4, 1)], ended_at: v.now });
+                    be.results = Some(GameResults { winner: Some(1), winning_team: None, scores: vec![(1, 7), (3, 5), (2, 3), (4, 1)], ended_at: v.now });
                 }
                 "feedback" => {
                     let mut f = ui::game::endgame::FeedbackForm::new();

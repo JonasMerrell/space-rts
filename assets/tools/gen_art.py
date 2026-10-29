@@ -20,6 +20,10 @@ TEAMS = {  # light, dark — must match crates/ui/src/theme.rs TEAMS / NEUTRAL
     "red": ("#e63946", "#9d0208"),
     "green": ("#80ed99", "#38a169"),
     "yellow": ("#ffd23f", "#e09f00"),
+    "orange": ("#ff9f43", "#d9480f"),
+    "violet": ("#b388ff", "#7b2cbf"),
+    "pink": ("#ff70c8", "#c2185b"),
+    "teal": ("#2ee6c5", "#0a9396"),
     "neutral": ("#adb5bd", "#6c757d"),
 }
 SKINS = {
@@ -38,7 +42,7 @@ for k, s in SKINS.items():
     MANIFEST["skins"][k] = {"name": s["name"], "blurb": s["blurb"], "metal": list(s["metal"]),
                             "glass": s["glass"], "accent": s["accent"],
                             "emblem": f"sprites/emblems/{k}.png"}
-TEAM_ORDER = ["blue", "red", "green", "yellow", "neutral"]
+TEAM_ORDER = ["blue", "red", "green", "yellow", "orange", "violet", "pink", "teal", "neutral"]
 
 
 def T(h):

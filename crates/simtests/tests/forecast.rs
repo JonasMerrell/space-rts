@@ -8,7 +8,7 @@ const HOUR: f64 = 3600.0;
 const DAY: f64 = 86_400.0;
 
 fn game(bots: bool) -> Game {
-    let s = Settings { name: "test".into(), size: SystemSize::Medium, max_players: 4, length: 14.0 * DAY, speed: 1.0 };
+    let s = Settings { name: "test".into(), size: SystemSize::Medium, max_players: 4, length: 14.0 * DAY, speed: 1.0, teams: 0 };
     let mut g = Game::new("TEST".into(), s, 5, "ann");
     for n in ["bob", "cat", "dan"] {
         g.add_player(n, if bots { Some("hard".into()) } else { None }).unwrap();

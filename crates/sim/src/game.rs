@@ -2,7 +2,7 @@
 //! in orbit. `Game::advance_to` is the authoritative real-time step the server runs.
 use crate::kepler::circular_speed;
 use crate::plan::{self, PlanHint, TransferPlan};
-use crate::system::{generate, BodyId, BodyKind, Rng, System, SystemSize};
+use crate::system::{BodyId, BodyKind, Rng, System, SystemSize};
 use crate::traj::{predict, Burn, End, State, Trajectory};
 use crate::station::{Station, StationKind};
 use crate::tech::{Research, Tech};
@@ -525,6 +525,9 @@ pub struct Player {
     /// aesthetic only: "vanguard" | "hive" | "prism" | "junker"
     pub faction: String,
     pub color: usize,
+    /// team index when `Settings::teams` > 1 (0 in free-for-all and in wars from before teams)
+    #[serde(default)]
+    pub team: u8,
     pub matter: f64,
     pub energy: f64,
     pub bot: Option<String>,
@@ -609,6 +612,20 @@ pub struct Settings {
     pub length: f64,
     /// game seconds per real second (1 = real time)
     pub speed: f64,
+    /// number of teams (0 or 1 = free-for-all); always divides `max_players`, see `team_options`
+    #[serde(default)]
+    pub teams: usize,
+}
+
+/// Most pilots in one war (colours, homes and the lobby are sized for this).
+pub const MAX_PLAYERS: usize = 8;
+
+/// Team splits that fit `slots`: 0 (free-for-all) and every team count that divides the slots
+/// into equal teams of at least two (8 slots: FFA, 2 teams of 4, 4 teams of 2).
+pub fn team_options(slots: usize) -> Vec<usize> {
+    let mut v = vec![0];
+    v.extend((2..slots).filter(|t| slots % t == 0));
+    v
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -634,6 +651,9 @@ pub struct Game {
     /// last whole-minute economy/combat tick
     pub last_tick: f64,
     pub winner: Option<PlayerId>,
+    /// team games: the team that won (`winner` is its best pilot)
+    #[serde(default)]
+    pub winning_team: Option<u8>,
     /// unix time (s) at which game time 0 happened, set when the game starts
     #[serde(default)]
     pub started_real: f64,
@@ -751,16 +771,20 @@ const NEVER: f64 = 1e300;
 /// Power any parked unarmed ship adds in orbit (Jonas: any ship, even a tanker, can claim a body).
 pub const CONSTRUCTOR_POWER: f64 = 1.0;
 /// Current rules revision for new matches. 1: matter yield by body kind and planet size. 2: advanced tech tier.
-/// 3: slower economy (see `ECONOMY_RULES`).
-pub const RULES: u32 = 3;
+/// 3: slower economy (see `ECONOMY_RULES`). 4: system scaled to the number of slots (`SCALED_SYSTEM_RULES`).
+pub const RULES: u32 = 4;
+/// Rules 4: systems for more than four pilots get a planet per extra slot (see `system::generate_for`).
+pub const SCALED_SYSTEM_RULES: u32 = 4;
 /// Rules 3 (Jonas 2026-10-28): production starts low and grows slowly, early game affords a few interceptors,
 /// and dreadnoughts are a long-term goal. (A cap tying matter output to shipyard capacity was dropped: Jonas 2026-10-29.)
 pub const ECONOMY_RULES: u32 = 3;
 const FACTIONS: [&str; 4] = ["vanguard", "hive", "prism", "junker"];
+/// Distinct player colours (the UI palette has one entry per colour).
+pub const COLORS: usize = MAX_PLAYERS;
 
 impl Game {
     pub fn new(code: String, settings: Settings, seed: u64, host_name: &str) -> Game {
-        let system = generate(seed, settings.size);
+        let system = crate::system::generate_for(seed, settings.size, settings.max_players);
         let bodies = vec![BodyState::default(); system.bodies.len()];
         let end_t = settings.length;
         let mut g = Game {
@@ -781,6 +805,7 @@ impl Game {
             next_event: 1,
             last_tick: 0.0,
             winner: None,
+            winning_team: None,
             started_real: 0.0,
             stations: vec![],
             next_station: 0,
@@ -812,11 +837,13 @@ impl Game {
             return Ok(p.id);
         }
         let id = self.players.len() as PlayerId;
+        let team = self.open_team();
         self.players.push(Player {
             id,
             name: name.into(),
             faction: FACTIONS[id as usize % 4].into(),
-            color: id as usize % 4,
+            color: id as usize % COLORS,
+            team,
             matter: 0.0,
             energy: 0.0,
             bot,
@@ -851,7 +878,7 @@ impl Game {
         self.players.remove(id as usize);
         for (i, p) in self.players.iter_mut().enumerate() {
             p.id = i as PlayerId;
-            p.color = i % 4;
+            p.color = i % COLORS;
         }
         self.chat.retain(|c| c.from != id);
         for c in &mut self.chat {
@@ -862,6 +889,73 @@ impl Game {
         if self.host > id {
             self.host -= 1;
         }
+        self.preview_homes();
+        Ok(())
+    }
+
+    /// Team games: the team with the fewest players (lowest index on ties). Free-for-all: 0.
+    fn open_team(&self) -> u8 {
+        let n = self.settings.teams;
+        if n < 2 {
+            return 0;
+        }
+        (0..n as u8).min_by_key(|&t| (self.players.iter().filter(|p| p.team == t).count(), t)).unwrap_or(0)
+    }
+
+    pub fn team_game(&self) -> bool {
+        self.settings.teams >= 2
+    }
+
+    /// Same player, or teammates in a team game. Everything hostile (combat, claims, bots,
+    /// intercepts, mines) checks this instead of comparing owners.
+    pub fn allied(&self, a: PlayerId, b: PlayerId) -> bool {
+        a == b
+            || (self.team_game()
+                && match (self.players.get(a as usize), self.players.get(b as usize)) {
+                    (Some(x), Some(y)) => x.team == y.team,
+                    _ => false,
+                })
+    }
+
+    /// Combat side of `p`: `p` itself, or the lowest id on its team in team games.
+    pub fn side(&self, p: PlayerId) -> PlayerId {
+        if !self.team_game() {
+            return p;
+        }
+        self.players.iter().find(|q| self.allied(p, q.id)).map(|q| q.id).unwrap_or(p)
+    }
+
+    /// How many sides have power in `powers` (from `power_at`).
+    pub fn sides_at(&self, powers: &[(PlayerId, f64)]) -> usize {
+        let mut sides: Vec<PlayerId> = powers.iter().filter(|p| p.1 > 0.0).map(|p| self.side(p.0)).collect();
+        sides.sort_unstable();
+        sides.dedup();
+        sides.len()
+    }
+
+    /// `p` and its teammates (just `p` in free-for-all).
+    pub fn allies(&self, p: PlayerId) -> Vec<PlayerId> {
+        self.players.iter().filter(|q| self.allied(p, q.id)).map(|q| q.id).collect()
+    }
+
+    /// Lobby only: move a player to another team that still has room.
+    pub fn set_team(&mut self, id: PlayerId, team: u8) -> Result<(), String> {
+        if self.status != Status::Lobby {
+            return Err("game already started".into());
+        }
+        let n = self.settings.teams;
+        if n < 2 || team as usize >= n {
+            return Err("no such team".into());
+        }
+        let cap = self.settings.max_players / n;
+        let Some(cur) = self.players.get(id as usize).map(|p| p.team) else { return Err("no such player".into()) };
+        if cur == team {
+            return Ok(());
+        }
+        if self.players.iter().filter(|p| p.team == team).count() >= cap {
+            return Err("that team is full".into());
+        }
+        self.players[id as usize].team = team;
         self.preview_homes();
         Ok(())
     }
@@ -1858,7 +1952,7 @@ impl Game {
             .filter(|s| s.parked_at() == Some(body) && s.order == StandingOrder::Retreat)
             .filter(|s| matches!(s.state, ShipState::Parked { departure: None, .. }))
             .filter(|s| {
-                let mine = powers.iter().find(|p| p.0 == s.owner).map(|p| p.1).unwrap_or(0.0);
+                let mine: f64 = powers.iter().filter(|p| self.allied(p.0, s.owner)).map(|p| p.1).sum();
                 total - mine > 2.0 * mine
             })
             .map(|s| s.id)
@@ -1898,8 +1992,12 @@ impl Game {
                 continue;
             }
             let powers: Vec<(PlayerId, f64)> = self.power_at(body).into_iter().filter(|p| p.1 > 0.0).collect();
-            if powers.len() == 1 {
-                let p = powers[0].0;
+            if !powers.is_empty() && self.sides_at(&powers) == 1 {
+                // one side holds the orbit: a teammate's claim stands, otherwise its strongest pilot takes it
+                if self.bodies[bi].owner.is_some_and(|o| self.allied(o, powers[0].0)) {
+                    continue;
+                }
+                let p = powers.iter().fold(powers[0], |best, x| if x.1 > best.1 { *x } else { best }).0;
                 let b = &mut self.bodies[bi];
                 if b.owner != Some(p) {
                     let prev = b.owner.replace(p);
@@ -1928,8 +2026,27 @@ impl Game {
             .sum()
     }
 
+    /// Team games: the summed territory of a team.
+    pub fn team_score(&self, team: u8) -> u32 {
+        self.players.iter().filter(|p| p.team == team).map(|p| self.score(p.id)).sum()
+    }
+
     fn finish(&mut self) {
         self.status = Status::Ended;
+        if self.team_game() {
+            // the team with the most territory wins; `winner` is its best pilot
+            let best = (0..self.settings.teams as u8).max_by_key(|&t| (self.team_score(t), std::cmp::Reverse(t)));
+            self.winning_team = best;
+            self.winner = best.and_then(|t| {
+                self.players.iter().filter(|p| p.team == t).max_by_key(|p| (self.score(p.id), std::cmp::Reverse(p.id))).map(|p| p.id)
+            });
+            if let Some(t) = best {
+                let names: Vec<&str> = self.players.iter().filter(|p| p.team == t).map(|p| p.name.as_str()).collect();
+                let text = format!("Team {} ({}) wins with {} territory", t + 1, names.join(", "), self.team_score(t));
+                self.event(None, EventKind::Info, "Game over", &text, None, None);
+            }
+            return;
+        }
         let best = self.players.iter().max_by_key(|p| (self.score(p.id), std::cmp::Reverse(p.id))).map(|p| p.id);
         self.winner = best;
         if let Some(w) = best {
@@ -1980,7 +2097,7 @@ mod tests {
     fn game() -> Game {
         let mut g = Game::new(
             "ABCD".into(),
-            Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0 },
+            Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0, teams: 0 },
             5,
             "alice",
         );
@@ -2015,7 +2132,7 @@ mod tests {
 
     #[test]
     fn lobby_previews_homes_and_start_keeps_them() {
-        let settings = Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 86_400.0, speed: 1.0 };
+        let settings = Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 86_400.0, speed: 1.0, teams: 0 };
         let mut g = Game::new("ABCD".into(), settings, 5, "alice");
         assert!(g.players[0].home.is_some());
         g.add_player("bob", None).unwrap();
@@ -2038,7 +2155,7 @@ mod tests {
 
     #[test]
     fn remove_player_renumbers() {
-        let settings = Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 86_400.0, speed: 1.0 };
+        let settings = Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 86_400.0, speed: 1.0, teams: 0 };
         let mut g = Game::new("ABCD".into(), settings, 5, "alice");
         g.add_player("Bot 1 (easy)", Some("easy".into())).unwrap();
         g.add_player("bob", None).unwrap();
@@ -2206,7 +2323,7 @@ mod tests {
     fn bots_expand() {
         let mut g = Game::new(
             "BOTS".into(),
-            Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0 },
+            Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0, teams: 0 },
             9,
             "alice",
         );

@@ -20,12 +20,17 @@ pub const PANEL_HI: Color = Color::new(0.14, 0.12, 0.30, 0.92);
 pub const BORDER: Color = Color::new(1.0, 1.0, 1.0, 0.16);
 pub const FIELD: Color = Color::new(0.03, 0.02, 0.09, 0.9);
 
-/// Light/dark pairs for team colours (blue, red, green, yellow) and neutral grey.
-pub const TEAMS: [(Color, Color); 4] = [
+/// Light/dark pairs for player colours (blue, red, green, yellow, orange, violet, pink, teal) and
+/// neutral grey. One per pilot slot (up to 8); the first four are the original palette.
+pub const TEAMS: [(Color, Color); 8] = [
     (hex(0x4cc9f0), hex(0x3a86ff)),
     (hex(0xe63946), hex(0x9d0208)),
     (hex(0x80ed99), hex(0x38a169)),
     (hex(0xffd23f), hex(0xe09f00)),
+    (hex(0xff9f43), hex(0xd9480f)),
+    (hex(0xb388ff), hex(0x7b2cbf)),
+    (hex(0xff70c8), hex(0xc2185b)),
+    (hex(0x2ee6c5), hex(0x0a9396)),
 ];
 pub const NEUTRAL: (Color, Color) = (hex(0xadb5bd), hex(0x6c757d));
 

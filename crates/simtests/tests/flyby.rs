@@ -97,7 +97,7 @@ fn options_run_from_cheapest_to_fastest() {
 
 #[test]
 fn ship_flies_an_assist_route_in_the_game() {
-    let mut g = Game::new("FLYBY".into(), Settings { name: "t".into(), size: SystemSize::Medium, max_players: 2, length: 14.0 * 86_400.0, speed: 1.0 }, 1, "ann");
+    let mut g = Game::new("FLYBY".into(), Settings { name: "t".into(), size: SystemSize::Medium, max_players: 2, length: 14.0 * 86_400.0, speed: 1.0, teams: 0 }, 1, "ann");
     g.add_player("bob", None).unwrap();
     g.start();
     let (a, b, p) = assisted(&g.system.clone(), g.t);

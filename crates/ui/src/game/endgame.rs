@@ -34,34 +34,63 @@ pub fn results(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Gam
         art::sfx(if res.winner == Some(view.me) { "capture" } else { "notification" });
     }
     let rows = res.scores.len().min(8);
-    let r = centre_sheet(200.0 + rows as f32 * 50.0);
+    // eight pilots: tighter rows so the sheet still fits a phone
+    let step = if rows > 4 { 42.0 } else { 50.0 };
+    let team_of = |id: PlayerId| view.player(id).and_then(|p| p.team);
+    let teams: Vec<(u8, u32)> = {
+        let mut t: Vec<(u8, u32)> = vec![];
+        for &(pid, score) in &res.scores {
+            if let Some(k) = team_of(pid) {
+                match t.iter_mut().find(|e| e.0 == k) {
+                    Some(e) => e.1 += score,
+                    None => t.push((k, score)),
+                }
+            }
+        }
+        t.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        t
+    };
+    let extra = if teams.is_empty() { 0.0 } else { 24.0 };
+    let r = centre_sheet(200.0 + extra + rows as f32 * step);
     inp.block(r);
     cel::panel(r, alpha(PANEL, 0.98));
     let pad = 18.0 * s();
     let name = |id: PlayerId| view.player(id).map(|p| p.name.clone()).unwrap_or_else(|| format!("Pilot {id}"));
-    let (title, col) = match res.winner {
-        Some(w) if w == view.me => ("VICTORY".to_string(), GOOD),
-        Some(w) => (format!("{} WINS", name(w).to_uppercase()), ACCENT),
-        None => ("DRAW".to_string(), MUTED),
+    let (title, col) = match (res.winning_team, res.winner) {
+        (Some(t), _) if team_of(view.me) == Some(t) => ("VICTORY".to_string(), GOOD),
+        (Some(t), _) => (format!("TEAM {} WINS", t + 1), ACCENT),
+        (None, Some(w)) if w == view.me => ("VICTORY".to_string(), GOOD),
+        (None, Some(w)) => (format!("{} WINS", name(w).to_uppercase()), ACCENT),
+        (None, None) => ("DRAW".to_string(), MUTED),
     };
     text("THE WAR IS OVER", r.center().x, r.y + 28.0 * s(), 14.0, MUTED, FontKind::Title, Align::Center);
     inked(&title, r.center().x, r.y + 62.0 * s(), 34.0, col, Align::Center);
-    text("Most territory when time ran out", r.center().x, r.y + 92.0 * s(), 13.0, MUTED, FontKind::Body, Align::Center);
+    let sub = if teams.is_empty() { "Most territory when time ran out" } else { "Most team territory when time ran out" };
+    text(sub, r.center().x, r.y + 92.0 * s(), 13.0, MUTED, FontKind::Body, Align::Center);
     let mut y = r.y + 112.0 * s();
+    if !teams.is_empty() {
+        let line: Vec<String> = teams.iter().map(|(t, sc)| format!("TEAM {} · {sc}", t + 1)).collect();
+        text(&line.join("   "), r.center().x, y + 6.0 * s(), 13.0, PAPER, FontKind::Title, Align::Center);
+        y += extra * s();
+    }
     let top = res.scores.first().map(|s| s.1).unwrap_or(1).max(1);
     for (i, (pid, score)) in res.scores.iter().take(rows).enumerate() {
-        let rr = Rect::new(r.x + pad, y, r.w - 2.0 * pad, 42.0 * s());
+        let rr = Rect::new(r.x + pad, y, r.w - 2.0 * pad, (step - 8.0) * s());
         let me = *pid == view.me;
         cel::round_rect(rr, 8.0 * s(), if me { alpha(ACCENT, 0.12) } else { Color::new(1.0, 1.0, 1.0, 0.04) });
         let (l, _) = team(view.color_of(Some(*pid)));
         text(&format!("{}", i + 1), rr.x + 16.0 * s(), rr.center().y, 18.0, if i == 0 { ACCENT } else { MUTED }, FontKind::Title, Align::Center);
         draw_circle(rr.x + 40.0 * s(), rr.center().y, 7.0 * s(), l);
         let who = if me { format!("{} (you)", name(*pid)) } else { name(*pid) };
+        let who = match team_of(*pid) {
+            Some(t) => format!("{who} · T{}", t + 1),
+            None => who,
+        };
         text(&who, rr.x + 56.0 * s(), rr.center().y, 15.0, PAPER, FontKind::Title, Align::Left);
         let bar = Rect::new(rr.x + rr.w - 150.0 * s(), rr.center().y - 3.0 * s(), 90.0 * s(), 6.0 * s());
         widgets::bar(bar, *score as f32 / top as f32, l);
         text(&score.to_string(), rr.x + rr.w - 12.0 * s(), rr.center().y, 15.0, PAPER, FontKind::Title, Align::Right);
-        y += 50.0 * s();
+        y += step * s();
     }
     let by = r.y + r.h - 60.0 * s();
     let bw = (r.w - 2.0 * pad - 12.0 * s()) / 2.0;

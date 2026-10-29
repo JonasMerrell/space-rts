@@ -2,7 +2,7 @@ use sim::game::*;
 use sim::station::{Station, StationId, StationKind};
 use sim::{BodyKind, SystemSize};
 fn main() {
-    let mut g = Game::new("T".into(), Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0 }, 5, "alice");
+    let mut g = Game::new("T".into(), Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0, teams: 0 }, 5, "alice");
     g.add_player("bob", None).unwrap();
     g.start();
     let ast = g.system.bodies.iter().find(|b| b.kind == BodyKind::Asteroid).unwrap().id;

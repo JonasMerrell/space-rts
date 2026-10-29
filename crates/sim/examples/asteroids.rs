@@ -8,7 +8,7 @@ fn main() {
     let mut found = 0;
     let mut tried = 0;
     for seed in 1..=6u64 {
-        let settings = Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 30.0 * 86_400.0, speed: 1.0 };
+        let settings = Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 30.0 * 86_400.0, speed: 1.0, teams: 0 };
         let mut g = Game::new("T".into(), settings, seed, "a");
         g.add_player("b", None).unwrap();
         g.start();

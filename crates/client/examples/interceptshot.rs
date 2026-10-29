@@ -51,7 +51,7 @@ async fn main() {
     rival.act(UiAction::Login { server: String::new(), user: "Rival".into(), pass: "pw".into(), register: true, invite: String::new() });
     pump(&mut be, 5.0, |_, ev| ev.iter().any(|e| matches!(e, BackendEvent::LoggedIn { .. })));
     pump(&mut rival, 5.0, |_, ev| ev.iter().any(|e| matches!(e, BackendEvent::LoggedIn { .. })));
-    be.act(UiAction::CreateGame { name: "Intercept test".into(), length_days: 7, speed: 168.0, bots: vec![] });
+    be.act(UiAction::CreateGame { name: "Intercept test".into(), length_days: 7, speed: 168.0, bots: vec![], max_players: 4, teams: 0 });
     let mut code = String::new();
     pump(&mut be, 5.0, |_, ev| ev.iter().any(|e| matches!(e, BackendEvent::Lobby(_))));
     if let Some(l) = be.view().and_then(|v| v.lobby.clone()) {

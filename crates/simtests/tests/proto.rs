@@ -5,7 +5,7 @@ use sim::system::SystemSize;
 use sim::BodyId;
 
 fn running_game() -> Game {
-    let s = Settings { name: "wire".into(), size: SystemSize::Small, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0 };
+    let s = Settings { name: "wire".into(), size: SystemSize::Small, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0, teams: 0 };
     let mut g = Game::new("WXYZ".into(), s, 77, "ann");
     for n in ["bob", "cat", "dan"] {
         g.add_player(n, None).unwrap();
@@ -19,7 +19,7 @@ fn client_msgs() -> Vec<ClientMsg> {
     vec![
         ClientMsg::Hello { user: "jonas".into(), pass: "pä$$ \"quoted\"\nnewline".into(), register: true, invite: None, token: None, stay: false },
         ClientMsg::ListGames,
-        ClientMsg::CreateGame { name: "Friday".into(), size: SystemSize::Large, length_days: 7.0, speed: 1.0, max_players: 4, bots: vec!["easy".into(), "hard".into()] },
+        ClientMsg::CreateGame { name: "Friday".into(), size: SystemSize::Large, length_days: 7.0, speed: 1.0, max_players: 4, bots: vec!["easy".into(), "hard".into()], teams: 0 },
         ClientMsg::JoinGame { code: "K7QX".into() },
         ClientMsg::AddBot { code: "K7QX".into(), difficulty: "normal".into() },
         ClientMsg::SetFaction { code: "K7QX".into(), faction: "hive".into() },

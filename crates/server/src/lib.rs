@@ -420,7 +420,7 @@ impl Server {
                 let list = self.list_for(&user);
                 reply(self, ServerMsg::Games(list));
             }
-            ClientMsg::CreateGame { name, size, length_days, speed, max_players, bots } => {
+            ClientMsg::CreateGame { name, size, length_days, speed, max_players, bots, teams } => {
                 let max = self.guard.as_ref().map_or(usize::MAX, |g| g.limits.max_hosted);
                 let hosted = self.games.values().filter(|g| g.status != Status::Ended && g.player_by_name(&user).is_some_and(|p| p.id == g.host)).count();
                 if hosted >= max {
@@ -430,10 +430,12 @@ impl Server {
                 let settings = Settings {
                     name: if name.trim().is_empty() { format!("{user}'s game") } else { name.trim().chars().take(40).collect() },
                     size,
-                    max_players: max_players.clamp(2, 8),
+                    max_players: max_players.clamp(2, sim::game::MAX_PLAYERS),
                     length: length_days.clamp(0.1, 60.0) * 86_400.0,
                     speed: speed.clamp(1.0, 1000.0),
+                    teams: 0,
                 };
+                let settings = Settings { teams: if sim::game::team_options(settings.max_players).contains(&teams) { teams } else { 0 }, ..settings };
                 let mut g = Game::new(code.clone(), settings, random_u64(), &user);
                 for (i, b) in bots.iter().take(7).enumerate() {
                     let b = if ["easy", "normal", "hard"].contains(&b.as_str()) { b.as_str() } else { "normal" };
@@ -467,6 +469,7 @@ impl Server {
             ClientMsg::AddBot { code, .. }
             | ClientMsg::RemoveBot { code, .. }
             | ClientMsg::SetFaction { code, .. }
+            | ClientMsg::SetTeam { code, .. }
             | ClientMsg::StartGame { code }
             | ClientMsg::Open { code }
             | ClientMsg::Cmd { code, .. }
@@ -496,6 +499,20 @@ impl Server {
                     return err(self, "that pilot isn't a bot");
                 }
                 if let Err(e) = g.remove_player(player) {
+                    return err(self, &e);
+                }
+                self.dirty.insert(code.clone());
+                self.changed.insert(code);
+            }
+            ClientMsg::SetTeam { code, player, team } => {
+                let Some(g) = self.games.get_mut(&code) else { return err(self, "no such game") };
+                let me = g.player_by_name(&user).map(|p| p.id);
+                let bot = g.players.get(player as usize).is_some_and(|p| p.bot.is_some());
+                // pilots pick their own team; the host can also move bots
+                if me != Some(player) && !(me == Some(g.host) && bot) {
+                    return err(self, "you can only change your own team");
+                }
+                if let Err(e) = g.set_team(player, team) {
                     return err(self, &e);
                 }
                 self.dirty.insert(code.clone());
@@ -1103,7 +1120,7 @@ mod save_tests {
 
     #[test]
     fn paused_station_round_trips_and_old_null_saves_load() {
-        let mut g = Game::new("ABCDE".into(), Settings { name: "t".into(), size: SystemSize::Small, max_players: 2, length: 86_400.0, speed: 1.0 }, 3, "ann");
+        let mut g = Game::new("ABCDE".into(), Settings { name: "t".into(), size: SystemSize::Small, max_players: 2, length: 86_400.0, speed: 1.0, teams: 0 }, 3, "ann");
         let _ = g.add_player("bob", None);
         g.start();
         let body = g.players[0].home.unwrap();

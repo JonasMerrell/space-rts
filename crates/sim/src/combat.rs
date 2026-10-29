@@ -54,6 +54,8 @@ pub struct Combatant {
     /// stable, unique sort key (ships: id, defenses: 1<<40 | body) so results don't depend on order
     pub key: u64,
     pub owner: PlayerId,
+    /// who is on whose side: the owner in free-for-all, the team's first player in team games
+    pub side: PlayerId,
     /// None for planetary defenses and stations
     pub class: Option<ShipClass>,
     pub weapon: Weapon,
@@ -156,7 +158,7 @@ fn class_mult(a: &Combatant, t: &Combatant) -> f64 {
 
 /// Expected damage `a` deals to `t` in `dt` seconds, if `t` is a valid target.
 pub fn expected_damage(a: &Combatant, t: &Combatant, dt: f64) -> Option<f64> {
-    if a.owner == t.owner || a.attack <= 0.0 {
+    if a.side == t.side || a.attack <= 0.0 {
         return None;
     }
     let s = shot(a.weapon, t.pos - a.pos, t.vel - a.vel, t.size, t.evade)?;
@@ -177,7 +179,7 @@ mod tests {
 
     fn ship(key: u64, owner: PlayerId, class: ShipClass, pos: V2, vel: V2) -> Combatant {
         let st = class.stats();
-        Combatant { key, owner, class: Some(class), weapon: st.weapon, attack: st.attack, hp: st.hp, pos, vel, size: size(class), evade: evasion(class), dmg_mult: 1.0, acc_mult: 1.0 }
+        Combatant { key, owner, side: owner, class: Some(class), weapon: st.weapon, attack: st.attack, hp: st.hp, pos, vel, size: size(class), evade: evasion(class), dmg_mult: 1.0, acc_mult: 1.0 }
     }
 
     #[test]
@@ -232,7 +234,7 @@ mod tests {
         use crate::game::Settings;
         use crate::station::{Station, StationId, StationKind};
         use crate::system::SystemSize;
-        let settings = Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0 };
+        let settings = Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0, teams: 0 };
         let mut g = Game::new("T".into(), settings, 3, "a");
         g.add_player("b", None).unwrap();
         g.start();
@@ -296,7 +298,7 @@ impl Game {
         for bi in 0..self.bodies.len() {
             let body = BodyId(bi as u32);
             let powers = self.power_at(body);
-            if powers.iter().filter(|p| p.1 > 0.0).count() < 2 {
+            if self.sides_at(&powers) < 2 {
                 self.bodies[bi].in_combat = false;
                 continue;
             }
@@ -309,7 +311,8 @@ impl Game {
             if let Some(o) = owner {
                 self.event(Some(o), EventKind::Battle, "Under attack", &format!("Enemy ships are attacking {bname}"), Some(body), None);
             }
-            for (p, _) in powers.iter().filter(|p| p.1 > 0.0 && Some(p.0) != owner) {
+            let fighting: Vec<PlayerId> = powers.iter().filter(|p| p.1 > 0.0 && owner.is_none_or(|o| !self.allied(o, p.0))).map(|p| p.0).collect();
+            for p in &fighting {
                 self.event(Some(*p), EventKind::Battle, "Battle", &format!("Your ships are fighting at {bname}"), Some(body), None);
             }
         }
@@ -339,6 +342,8 @@ impl Game {
         for p in 0..self.players.len() {
             mods.push(self.combat_mods(p as PlayerId));
         }
+        let sides: Vec<PlayerId> = (0..self.players.len() as PlayerId).map(|p| self.side(p)).collect();
+        let side = |p: PlayerId| sides.get(p as usize).copied().unwrap_or(p);
         let modf = |p: PlayerId, w: Weapon| {
             let m = mods.get(p as usize).copied().unwrap_or((1.0, 1.0, 1.0));
             (if w == Weapon::Kinetic { m.0 } else { m.1 }, m.2)
@@ -358,6 +363,7 @@ impl Game {
             let c = |pos, vel| Combatant {
                 key: s.id.0 as u64,
                 owner: s.owner,
+                side: side(s.owner),
                 class: Some(s.class),
                 weapon: st.weapon,
                 attack: st.attack,
@@ -382,6 +388,7 @@ impl Game {
             let c = |t| Combatant {
                 key: 1 << 40 | bi as u64,
                 owner: o,
+                side: side(o),
                 class: None,
                 weapon: Weapon::Energy,
                 attack: self.def_attack(body),
@@ -410,6 +417,7 @@ impl Game {
             let c = |t| Combatant {
                 key: 2 << 40 | st.id.0 as u64,
                 owner: st.owner,
+                side: side(st.owner),
                 class: None,
                 weapon,
                 attack: st.kind.attack(),
@@ -432,7 +440,7 @@ impl Game {
         for i in 0..n {
             for j in i + 1..n {
                 let (a, b) = (&all[i], &all[j]);
-                if a.2.owner == b.2.owner || (a.1.is_some() && b.1.is_some() && a.1 != b.1) {
+                if a.2.side == b.2.side || (a.1.is_some() && b.1.is_some() && a.1 != b.1) {
                     continue;
                 }
                 if dark[i].is_some_and(|id| !seen_by(b.2.owner, id)) || dark[j].is_some_and(|id| !seen_by(a.2.owner, id)) {

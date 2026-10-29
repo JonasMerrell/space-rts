@@ -24,13 +24,16 @@ pub enum UiAction {
     Login { server: String, user: String, pass: String, register: bool, invite: String },
     Logout,
     /// `speed`: game seconds per real second (1 = real time; 4 = a 7-day game takes 42 real hours).
-    CreateGame { name: String, length_days: u32, speed: f64, bots: Vec<String> },
+    /// `max_players`: slots (2-8); `teams`: number of teams, 0 = free-for-all (see `team_options`).
+    CreateGame { name: String, length_days: u32, speed: f64, bots: Vec<String>, max_players: usize, teams: usize },
     JoinGame { code: String },
     OpenGame { code: String },
     AddBot { difficulty: String },
     /// Host only, before the start.
     RemoveBot { player: PlayerId },
     SetFaction(String),
+    /// Lobby: move yourself (or, as host, a bot) to another team.
+    SetTeam { player: PlayerId, team: u8 },
     StartGame,
     LeaveLobby,
     ScheduleTransfer(TransferPlan),

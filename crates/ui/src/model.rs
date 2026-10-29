@@ -318,10 +318,13 @@ pub struct FleetMember {
 pub struct Player {
     pub id: PlayerId,
     pub name: String,
-    /// Index into the team palette (0 blue, 1 red, 2 green, 3 yellow).
+    /// Index into the player palette `theme::TEAMS` (0 blue, 1 red, 2 green, 3 yellow, 4 orange,
+    /// 5 violet, 6 pink, 7 teal).
     pub color: usize,
     pub faction: String,
     pub online: bool,
+    /// team games: which team (0-based); None in free-for-all
+    pub team: Option<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -517,6 +520,8 @@ pub struct LobbyInfo {
     /// Game seconds per real second.
     pub speed: f64,
     pub bots: Vec<String>,
+    /// number of teams (0 = free-for-all)
+    pub teams: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -533,6 +538,8 @@ pub struct GameSummary {
 #[derive(Clone, Debug, Default)]
 pub struct GameResults {
     pub winner: Option<PlayerId>,
+    /// team games: the winning team (scores are still per pilot; the results sheet sums them)
+    pub winning_team: Option<u8>,
     /// (player, territory score), best first
     pub scores: Vec<(PlayerId, u32)>,
     pub ended_at: f64,
