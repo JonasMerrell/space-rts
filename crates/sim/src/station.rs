@@ -526,7 +526,11 @@ mod tests {
         g.stations.push(Station { id: StationId(0), owner: 0, kind: StationKind::Shipyard, body: ast, hp: 300.0, fuel: 0.0, done_t: 0.0, work_left: 0.0 });
         assert_eq!(g.yard_level(0, ast), STATION_YARD_LEVEL);
         let n = g.ships.len();
+        // the build's fuel has to be there: a fuel depot next to the yard
+        assert!(g.apply(0, Command::Build { body: ast, class: ShipClass::Interceptor }).unwrap_err().contains("fuel"));
+        g.stations.push(Station { id: StationId(1), owner: 0, kind: StationKind::FuelDepot, body: ast, hp: 300.0, fuel: 100.0, done_t: 0.0, work_left: 0.0 });
         g.apply(0, Command::Build { body: ast, class: ShipClass::Interceptor }).unwrap();
+        assert!((g.stations[1].fuel - (100.0 - g.ship_fuel_cost(ShipClass::Interceptor))).abs() < 1e-9);
         g.advance_to(2.0 * 3600.0);
         assert_eq!(g.ships.len(), n + 1);
         assert_eq!(g.ships.last().unwrap().parked_at(), Some(ast));
@@ -539,6 +543,7 @@ mod tests {
         let away = g.system.bodies.iter().find(|b| b.kind == crate::BodyKind::Moon && g.bodies[b.id.0 as usize].owner.is_none()).unwrap().id;
         g.stations.push(Station { id: StationId(0), owner: 0, kind: StationKind::Shipyard, body: away, hp: 300.0, fuel: 0.0, done_t: 0.0, work_left: 0.0 });
         assert_eq!(g.yard_level(0, away), STATION_YARD_LEVEL);
+        g.stations.push(Station { id: StationId(1), owner: 0, kind: StationKind::FuelDepot, body: away, hp: 300.0, fuel: DEPOT_CAP, done_t: 0.0, work_left: 0.0 });
         g.apply(0, Command::Build { body: away, class: ShipClass::Dreadnought }).unwrap();
         // can't upgrade a body you don't own through a station
         assert!(g.apply(0, Command::Upgrade { body: away, upgrade: Upgrade::Mining }).is_err());

@@ -442,12 +442,12 @@ fn ship_cost(c: ShipClass) -> Cost {
         ShipClass::Torpedo => (120.0, 80.0, 20.0),
         ShipClass::Slug => (150.0, 300.0, 0.0),
     };
-    Cost { matter: m, energy: e, seconds: min * 60.0 }
+    Cost { matter: m, energy: e, seconds: min * 60.0, fuel: (m * 0.5_f64).round() }
 }
 
 fn upgrade_cost(level: u8) -> Cost {
     let k = level as f64;
-    Cost { matter: 120.0 * k, energy: 50.0 * k, seconds: 1800.0 * k }
+    Cost { matter: 120.0 * k, energy: 50.0 * k, seconds: 1800.0 * k, fuel: 0.0 }
 }
 
 impl Backend for DemoBackend {
@@ -839,6 +839,7 @@ impl Backend for DemoBackend {
                 })
                 .collect(),
             fuel: 420.0,
+            build_fuel: 420.0,
             power,
             matter_rate: 60.0 * (1.0 + lv[0] as f64),
             energy_rate: 20.0 + 60.0 * (lv[1] + lv[2]) as f64,
@@ -986,7 +987,7 @@ impl Backend for DemoBackend {
                 dv: p.dv_depart,
                 fuel: p.dv_depart * 40.0,
                 fuel_available: 600.0,
-                drive_cost: Cost { matter: 200.0, energy: 150.0, seconds: 7200.0 },
+                drive_cost: Cost { matter: 200.0, energy: 150.0, seconds: 7200.0, fuel: 0.0 },
                 impact_t: Some(p.arrive_t),
                 impact_speed: speed,
                 impact_energy: 0.5 * mass * (speed * 1000.0).powi(2),
@@ -1225,9 +1226,9 @@ fn demo_tech_cost(i: usize) -> Cost {
     let (adv, tier, ..) = demo_tech_meta(i);
     let k = tier as f64;
     if adv {
-        return Cost { matter: 500.0 + 500.0 * k, energy: 600.0 + 600.0 * k, seconds: [20.0, 32.0, 48.0][tier as usize - 1] * 3600.0 };
+        return Cost { matter: 500.0 + 500.0 * k, energy: 600.0 + 600.0 * k, seconds: [20.0, 32.0, 48.0][tier as usize - 1] * 3600.0, fuel: 0.0 };
     }
-    Cost { matter: 0.0, energy: 350.0 * k, seconds: [2.0, 4.0, 8.0, 12.0][tier as usize - 1] * 3600.0 }
+    Cost { matter: 0.0, energy: 350.0 * k, seconds: [2.0, 4.0, 8.0, 12.0][tier as usize - 1] * 3600.0, fuel: 0.0 }
 }
 
 const DEMO_STATIONS: [(&str, &str); 6] = [
@@ -1241,7 +1242,7 @@ const DEMO_STATIONS: [(&str, &str); 6] = [
 
 fn demo_station_cost(i: usize) -> Cost {
     let (m, e, h) = [(300.0, 150.0, 4.0), (150.0, 80.0, 2.0), (120.0, 120.0, 2.0), (200.0, 200.0, 3.0), (250.0, 150.0, 3.0), (150.0, 150.0, 2.0)][i];
-    Cost { matter: m, energy: e, seconds: h * 3600.0 }
+    Cost { matter: m, energy: e, seconds: h * 3600.0, fuel: 0.0 }
 }
 
 /// A sample sensors report (back after 14 h away) for the demo scenes `report*`.
