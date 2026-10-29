@@ -605,7 +605,7 @@ impl Game {
             s.intercept = Some(order);
             match &mut s.state {
                 ShipState::Parked { body, departure } => {
-                    *departure = Some(crate::game::Departure { to: *body, state: plan.depart, dv: plan.depart_dv, burns: plan.burns() });
+                    *departure = Some(crate::game::Departure { to: *body, state: plan.depart, dv: plan.depart_dv, burns: plan.burns(), node: None });
                 }
                 ShipState::Flying(f) => {
                     f.burns = plan.depart_burn.into_iter().chain(plan.match_burn).collect();

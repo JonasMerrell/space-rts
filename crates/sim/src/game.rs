@@ -206,6 +206,36 @@ pub struct Departure {
     /// mid-course burns planned with the departure (gravity-assist corrections)
     #[serde(default)]
     pub burns: Vec<Burn>,
+    /// the departure burn of a course flown by hand from orbit (`Departure::manual`)
+    #[serde(default)]
+    pub node: Option<Burn>,
+}
+
+impl Departure {
+    /// Where a parked ship is on its parking orbit at time `t`: a circle at the body's parking
+    /// radius, flown counter-clockwise with phase 0 at t = 0, so a manual node's time picks where
+    /// on the orbit it burns.
+    pub fn parking_state(sys: &System, body: BodyId, t: f64) -> State {
+        let b = sys.body(body);
+        let r = b.park_radius();
+        let n = (b.mu / (r * r * r)).sqrt();
+        let u = V2::from_angle((n * t).rem_euclid(std::f64::consts::TAU));
+        State { parent: body, t, r: u * r, v: u.perp() * (n * r) }
+    }
+
+    /// A course flown by hand from orbit of `body`: the first node is the departure burn, the rest
+    /// are mid-course burns. The ship brakes into orbit of the first body whose SOI it enters after
+    /// its last node, else back around `body`.
+    pub fn manual(sys: &System, body: BodyId, burns: &[Burn]) -> Option<Departure> {
+        let (first, rest) = burns.split_first()?;
+        let st = Self::parking_state(sys, body, first.t);
+        let start = State { v: st.v + first.vector(st.r, st.v), ..st };
+        let last = rest.last().unwrap_or(first).t;
+        let tr = predict(sys, start, rest, None, start.t + Flight::HORIZON);
+        // entering a child's SOI (leaving one into its parent doesn't count as arriving)
+        let to = tr.segs.windows(2).find(|w| w[1].t0 >= last && sys.body(w[1].parent).parent == Some(w[0].parent)).map(|w| w[1].parent).unwrap_or(body);
+        Some(Departure { to, state: start, dv: first.dv(), burns: rest.to_vec(), node: Some(*first) })
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1161,11 +1191,31 @@ impl Game {
             Command::SetBurns { ship, mut burns } => {
                 let now = self.t;
                 let s = self.own_ship(player, ship)?;
-                if !matches!(s.state, ShipState::Flying(_)) {
-                    return Err("ship is not in flight".into());
-                }
                 burns.retain(|b| b.t > now && b.dv().is_finite());
                 burns.sort_by(|a, b| a.t.total_cmp(&b.t));
+                if let ShipState::Parked { body, departure } = &s.state {
+                    // from orbit: the nodes become a departure (no nodes drops a hand-flown one)
+                    let body = *body;
+                    if burns.is_empty() && departure.as_ref().is_none_or(|d| d.node.is_none()) {
+                        return Ok(());
+                    }
+                    let (name, dv_left) = (s.name.clone(), s.dv_left());
+                    let dep = Departure::manual(&self.system, body, &burns);
+                    if let Some(d) = dep.as_ref().filter(|d| d.dv > dv_left) {
+                        return Err(format!("not enough fuel: the first burn needs {:.1} km/s, {name} has {dv_left:.1} km/s", d.dv));
+                    }
+                    for id in self.with_fleetmates(ship) {
+                        let s = self.ship_mut(id).unwrap();
+                        if let ShipState::Parked { body: at, departure } = &mut s.state {
+                            if *at == body {
+                                *departure = dep.clone();
+                                s.route.clear();
+                                s.intercept = None;
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
                 // a fleet flies one course
                 for id in self.with_fleetmates(ship) {
                     let s = self.ship_mut(id).unwrap();
@@ -1362,7 +1412,7 @@ impl Game {
         s.route = rest;
         s.intercept = None;
         if let ShipState::Parked { departure, .. } = &mut s.state {
-            *departure = Some(Departure { to: p.to, state: p.depart, dv: p.depart_dv, burns: p.burns.clone() });
+            *departure = Some(Departure { to: p.to, state: p.depart, dv: p.depart_dv, burns: p.burns.clone(), node: None });
         }
         Ok(())
     }
@@ -1577,7 +1627,7 @@ impl Game {
                     let s = &mut self.ships[i];
                     s.route = rest;
                     if let ShipState::Parked { departure, .. } = &mut s.state {
-                        *departure = Some(Departure { to: p.to, state: p.depart, dv: p.depart_dv, burns: p.burns.clone() });
+                        *departure = Some(Departure { to: p.to, state: p.depart, dv: p.depart_dv, burns: p.burns.clone(), node: None });
                     }
                 }
                 _ => {

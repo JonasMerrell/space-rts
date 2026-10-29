@@ -959,6 +959,26 @@ pub(crate) fn to_model_traj(sys: &sim::System, tr: &SimTraj) -> m::Trajectory {
     m::Trajectory { points, flybys }
 }
 
+/// The course a ship flies with these manual nodes, and when it starts. In flight: its flight with
+/// the nodes. Parked: its parking orbit from one lap before the first node (so dragging that node
+/// slides it around the orbit), then the nodes flown as `Departure::manual` would.
+fn node_course(game: &Game, s: &g::Ship, nodes: &[m::ManeuverNode], now: f64) -> Option<(sim::traj::Trajectory, f64)> {
+    let sys = &game.system;
+    let mut burns: Vec<Burn> = nodes.iter().map(|n| Burn { t: n.t, prograde: n.prograde, radial: n.radial }).collect();
+    burns.sort_by(|a, b| a.t.total_cmp(&b.t));
+    let (start, dest) = match &s.state {
+        ShipState::Flying(f) => (f.start, f.dest),
+        ShipState::Parked { body, .. } => {
+            let first = burns.first()?;
+            let b = sys.body(*body);
+            let lap = std::f64::consts::TAU * (b.park_radius().powi(3) / b.mu).sqrt();
+            let t0 = now.max(first.t - lap).min(first.t);
+            (g::Departure::parking_state(sys, *body, t0), g::Departure::manual(sys, *body, &burns).map(|d| d.to))
+        }
+    };
+    Some((sim::traj::predict(sys, start, &burns, dest, start.t + g::Flight::HORIZON), start.t))
+}
+
 /// Fog of war: last sightings of enemy ships that are out of sensor range now.
 fn ghosts(game: &Game, me: g::PlayerId) -> impl Iterator<Item = &sim::fog::Contact> {
     game.players.get(me as usize).into_iter().flat_map(|p| p.contacts.iter()).filter(move |c| game.ship(c.ship.id).is_none())
@@ -967,7 +987,11 @@ fn ghosts(game: &Game, me: g::PlayerId) -> impl Iterator<Item = &sim::fog::Conta
 pub(crate) fn ship_model(s: &g::Ship, trajectory: Option<m::Trajectory>) -> m::Ship {
     let st = s.class.stats();
     let (parked_at, nodes, destination) = match &s.state {
-        ShipState::Parked { body, departure } => (Some(body.0), vec![], departure.as_ref().map(|d| d.to.0)),
+        ShipState::Parked { body, departure } => {
+            // a course flown by hand from orbit shows its nodes (planned transfers don't)
+            let nodes = departure.iter().filter_map(|d| d.node.map(|n| std::iter::once(n).chain(d.burns.iter().copied()))).flatten();
+            (Some(body.0), nodes.map(|b| m::ManeuverNode { t: b.t, prograde: b.prograde, radial: b.radial }).collect(), departure.as_ref().map(|d| d.to.0))
+        }
         ShipState::Flying(f) => (
             None,
             f.burns.iter().map(|b| m::ManeuverNode { t: b.t, prograde: b.prograde, radial: b.radial }).collect(),
@@ -2050,12 +2074,11 @@ impl Backend for ClientBackend {
 
     fn node_outcome(&self, ship: ShipId, nodes: &[m::ManeuverNode]) -> Option<m::NodeOutcome> {
         let g = self.game.as_ref()?;
-        let s = g.ship(g::ShipId(ship))?;
-        let ShipState::Flying(f) = &s.state else { return None };
+        let s = g.ship(lead(g, ship))?;
         let sys = &g.system;
+        let (tr, start_t) = node_course(g, s, nodes, self.now())?;
         let mut burns: Vec<Burn> = nodes.iter().map(|n| Burn { t: n.t, prograde: n.prograde, radial: n.radial }).collect();
         burns.sort_by(|a, b| a.t.total_cmp(&b.t));
-        let tr = sim::traj::predict(sys, f.start, &burns, f.dest, f.start.t + g::Flight::HORIZON);
         let end_t = tr.end.t();
         let end_pos = tr.abs_pos(sys, end_t).map(arr).unwrap_or([0.0, 0.0]);
         // fuel: every applied burn, then the capture burn if the path ends captured
@@ -2072,7 +2095,7 @@ impl Backend for ClientBackend {
             _ => None,
         };
         // encounter: first SOI entered after the first burn, else the closest pass to any body
-        let after = burns.first().map(|b| b.t).unwrap_or(f.start.t);
+        let after = burns.first().map(|b| b.t).unwrap_or(start_t);
         let start_parent = tr.seg_at(after).map(|seg| seg.parent);
         let entered = tr.segs.iter().find(|seg| seg.t0 >= after && Some(seg.parent) != start_parent && !sys.body(seg.parent).is_star());
         let encounter = match entered {
@@ -2094,11 +2117,7 @@ impl Backend for ClientBackend {
 
     fn preview_nodes(&self, ship: ShipId, nodes: &[m::ManeuverNode]) -> Option<m::Trajectory> {
         let g = self.game.as_ref()?;
-        let s = g.ship(lead(g, ship))?;
-        let ShipState::Flying(f) = &s.state else { return None };
-        let mut burns: Vec<Burn> = nodes.iter().map(|n| Burn { t: n.t, prograde: n.prograde, radial: n.radial }).collect();
-        burns.sort_by(|a, b| a.t.total_cmp(&b.t));
-        let tr = sim::traj::predict(&g.system, f.start, &burns, f.dest, f.start.t + g::Flight::HORIZON);
+        let (tr, _) = node_course(g, g.ship(lead(g, ship))?, nodes, self.now())?;
         Some(to_model_traj(&g.system, &tr))
     }
 }
@@ -2106,6 +2125,24 @@ impl Backend for ClientBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn node_preview_from_orbit_matches_the_departure_the_server_schedules() {
+        let settings = g::Settings { name: "t".into(), size: SystemSize::Medium, max_players: 2, length: 86_400.0, speed: 1.0 };
+        let mut game = Game::new("NODE".into(), settings, 5, "ann");
+        game.add_player("bob", None).unwrap();
+        game.start();
+        let s = game.ships.iter().find(|s| s.owner == 0 && s.parked_at().is_some()).unwrap().clone();
+        let home = s.parked_at().unwrap();
+        let t0 = game.t + 1800.0;
+        let nodes = [m::ManeuverNode { t: t0, prograde: 2.0, radial: 0.5 }];
+        let (tr, start) = node_course(&game, &s, &nodes, game.t).expect("a preview from orbit");
+        assert!(start <= t0 && start >= game.t, "starts on the parking orbit before the node");
+        let d = g::Departure::manual(&game.system, home, &[Burn { t: t0, prograde: 2.0, radial: 0.5 }]).unwrap();
+        let after = tr.state_at(&game.system, t0 + 60.0).unwrap();
+        let (r, _) = sim::kepler::propagate(game.system.body(home).mu, d.state.r, d.state.v, 60.0);
+        assert!((after.r - r).len() < 1.0, "preview and server agree: {:?} vs {:?}", after.r, r);
+    }
 
     #[test]
     fn fleets_show_as_one_token_that_maps_back_to_its_ships() {
