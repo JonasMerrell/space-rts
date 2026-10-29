@@ -516,6 +516,8 @@ pub struct LobbyInfo {
     pub length_days: u32,
     /// Game seconds per real second.
     pub speed: f64,
+    /// Game seconds per real second at 1× for this war (2 since rules 4; 0 = unknown, treat as 1).
+    pub pace: f64,
     pub bots: Vec<String>,
 }
 
@@ -549,6 +551,8 @@ pub struct GameView {
     pub ends_at: f64,
     /// Game seconds per real second (0 = unknown, treat as 1).
     pub speed: f64,
+    /// Game seconds per real second at 1× (0 = unknown, treat as 1); the multiplier shown is speed / pace.
+    pub pace: f64,
     pub bodies: Vec<Body>,
     pub ships: Vec<Ship>,
     pub players: Vec<Player>,
@@ -792,4 +796,10 @@ impl SensorsReport {
     pub fn threats(&self) -> usize {
         self.items.iter().filter(|i| i.section == ReportSection::Threats).count()
     }
+}
+
+/// Speed multiplier as players see it: true rate over the war's 1× pace.
+pub fn speed_mult(speed: f64, pace: f64) -> f64 {
+    let pace = if pace > 0.0 { pace } else { 1.0 };
+    if speed > 0.0 { speed / pace } else { 1.0 }
 }

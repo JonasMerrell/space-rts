@@ -23,7 +23,7 @@ pub enum UiAction {
     /// `invite`: code for invite-only servers when registering ("" = none)
     Login { server: String, user: String, pass: String, register: bool, invite: String },
     Logout,
-    /// `speed`: game seconds per real second (1 = real time; 4 = a 7-day game takes 42 real hours).
+    /// `speed`: multiplier of the war's 1× pace (the server stores speed × pace; at 1× a 14-day game takes 7 real days).
     CreateGame { name: String, length_days: u32, speed: f64, bots: Vec<String> },
     JoinGame { code: String },
     OpenGame { code: String },
@@ -55,6 +55,7 @@ pub enum UiAction {
     /// Bug report (`bug`) or feature request; the server logs it with the current war and client version.
     Feedback { bug: bool, text: String },
     /// Host only: game seconds per real second from now on.
+    /// `speed`: multiplier of the war's 1× pace, as shown to the host.
     SetSpeed { speed: f64 },
     /// Retry the server connection now instead of waiting for the backoff.
     Reconnect,

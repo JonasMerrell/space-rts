@@ -269,6 +269,7 @@ impl DemoBackend {
             now,
             ends_at: 7.0 * 86400.0,
             speed: 1.0,
+            pace: 1.0,
             bodies,
             ships: vec![],
             players,
@@ -537,7 +538,7 @@ impl Backend for DemoBackend {
                 for (i, b) in bots.iter().enumerate() {
                     players.push(Player { id: 10 + i as u32, name: format!("Bot ({b})"), color: i + 1, faction: "JUNKER CLANS".into(), online: false });
                 }
-                let info = LobbyInfo { code: "K7QX".into(), name, players, max_players: 4, host: 1, length_days, speed, bots };
+                let info = LobbyInfo { code: "K7QX".into(), name, players, max_players: 4, host: 1, length_days, speed: speed * crate::screens::NEW_WAR_PACE, pace: crate::screens::NEW_WAR_PACE, bots };
                 self.enter_lobby(info);
             }
             UiAction::JoinGame { code } => {
@@ -556,6 +557,7 @@ impl Backend for DemoBackend {
                         host: 2,
                         length_days: 7,
                         speed: 1.0,
+                        pace: 1.0,
                         bots: vec![],
                     };
                     self.enter_lobby(info);
@@ -782,7 +784,7 @@ impl Backend for DemoBackend {
             }
             UiAction::SetSpeed { speed } => {
                 if let Some(v) = self.view.as_mut() {
-                    v.speed = speed;
+                    v.speed = speed * if v.pace > 0.0 { v.pace } else { 1.0 };
                 }
             }
         }

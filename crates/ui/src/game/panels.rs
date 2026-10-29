@@ -108,7 +108,8 @@ pub fn hud(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameVie
     }
     // Clock line.
     let y = top + ch + 16.0 * s();
-    let clock = if view.speed > 1.0 { format!("{} · {}×", fmt_clock(view.now), view.speed) } else { fmt_clock(view.now) };
+    let mult = crate::model::speed_mult(view.speed, view.pace);
+    let clock = if mult > 1.0 { format!("{} · {}×", fmt_clock(view.now), mult) } else { fmt_clock(view.now) };
     inked(&clock, margin(), y, 17.0, PAPER, Align::Left);
     let left = view.ends_at - view.now;
     text(&format!("WAR ENDS IN {}", fmt_dur(left)), w - margin(), y, 14.0, MUTED, FontKind::Title, Align::Right);
@@ -140,11 +141,11 @@ fn game_menu(g: &mut GameScreen, inp: &mut Input, view: &GameView, at: Rect) {
     // Host: game speed slider (time multiplier) for a shorter war; sent when the finger lifts.
     if host {
         use crate::screens::{real_len, SPEEDS};
-        let live = if view.speed > 0.0 { view.speed } else { 1.0 };
+        let live = crate::model::speed_mult(view.speed, view.pace);
         let speed = g.speed_drag.unwrap_or(live);
         let lr = row(4);
         text(&format!("GAME SPEED {speed}×"), lr.x + 4.0 * s(), lr.y + 14.0 * s(), 14.0, PAPER, FontKind::Title, Align::Left);
-        let real_h = (view.ends_at - view.now).max(0.0) / 3600.0 / speed;
+        let real_h = (view.ends_at - view.now).max(0.0) / 3600.0 / (speed * if view.pace > 0.0 { view.pace } else { 1.0 });
         text(&format!("ends in {} real", real_len(real_h)), lr.x + 4.0 * s(), lr.y + 34.0 * s(), 12.0, MUTED, FontKind::Body, Align::Left);
         let (v, released) = widgets::log_slider(inp, row(5), speed, SPEEDS[0], SPEEDS[SPEEDS.len() - 1], &SPEEDS, false);
         g.speed_drag = Some(v).filter(|&v| v != live || inp.held.is_some());
