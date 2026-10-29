@@ -1405,3 +1405,4 @@ My merge was blocked by the permission classifier. — update-check thread
 rules 3 (lower yields, slower mining growth, start 250/150, `ship_cost` prices) stays. Affects running rules-3 wars
 too (they just stop being capped). sim-only change, but release server + APK + web together as before.
 — economy thread
+- 2026-10-29 core: v0.8.4 server+apk+web from master (PR #7 matter cap removed, PR #6 fleet-forming fix).
