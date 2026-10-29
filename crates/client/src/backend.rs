@@ -1892,6 +1892,7 @@ impl Backend for ClientBackend {
         let g = self.game.as_ref()?;
         let me = self.me;
         let p = g.players.get(me as usize)?;
+        let etas = g.waiting_eta(me);
         let labs: Vec<m::LabInfo> = (0..g.bodies.len())
             .filter(|&i| g.bodies[i].owner == Some(me) && g.bodies[i].level(g::Upgrade::Research) > 0)
             .map(|i| {
@@ -1904,10 +1905,13 @@ impl Backend for ClientBackend {
         let techs = Tech::every()
             .filter(|t| !t.advanced() || g.rules >= sim::tech::ADVANCED_RULES)
             .map(|t| {
+                let queued = p.waiting.iter().zip(&etas).find(|(w, _)| matches!(w.wish, Wish::Research { tech, .. } if tech == t));
                 let state = if p.techs.contains(&t) {
                     m::TechState::Done
                 } else if let Some(r) = p.research.iter().find(|r| r.tech == t) {
                     m::TechState::Running { lab: r.body.0, done_t: r.done_t }
+                } else if let Some((w, e)) = queued {
+                    m::TechState::Queued { lab: w.wish.body().0, wait: w.id, start_t: e.start_t }
                 } else {
                     // the best lab with a free slot; if they're all full, the best busy one (it waits
                     // there for a slot); else the reason the first lab gives
@@ -1948,7 +1952,23 @@ impl Backend for ClientBackend {
             .collect();
         debug_assert!(Branch::ALL.iter().zip(m::TECH_BRANCHES).all(|(b, n)| b.label() == n));
         debug_assert!(Branch::ADVANCED.iter().zip(m::ADV_BRANCHES).all(|(b, n)| b.label() == n));
-        Some(m::ResearchView { techs, labs })
+        let queue = p
+            .waiting
+            .iter()
+            .zip(&etas)
+            .enumerate()
+            .filter(|(_, (w, _))| matches!(w.wish, Wish::Research { .. }))
+            .map(|(index, (w, e))| m::WaitingItem {
+                id: w.id,
+                label: format!("{} at {}", w.wish.label(), g.system.body(w.wish.body()).name),
+                cost: m::Cost { matter: e.matter, energy: e.energy, seconds: 0.0 },
+                start_t: e.start_t,
+                blocked: e.blocked.clone(),
+                index,
+                of: etas.len(),
+            })
+            .collect();
+        Some(m::ResearchView { techs, labs, queue })
     }
 
     fn sensors(&self) -> Option<&m::SensorsReport> {

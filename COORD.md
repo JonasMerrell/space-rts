@@ -1415,3 +1415,4 @@ Tests of proto/server/client/ui + simtests proto/server pass; full ./ci.sh timed
 - 2026-10-29 core: 0.8.5 server = any parked ship claims (tankers too). 0.8.6 server+apk+web = PR #8 update URL.
 - 2026-10-29 core: 0.8.7 = base research energy-only (old M+E folded into E; advanced tier unchanged), rules-3 moons 12 / asteroids 8 matter base. Applies to running wars.
 - 2026-10-29 core: 0.8.8 = PR #9 control nodes from orbit (SetBurns on a parked ship -> hand-flown Departure, serde-default Departure.node; client backend preview; no UI/proto change).
+- 2026-10-29 core: 0.8.9 = research queue visible: TechState::Queued (card shows QUEUED + CANCEL), ResearchView.queue list under the labs; demo scene research_queue.

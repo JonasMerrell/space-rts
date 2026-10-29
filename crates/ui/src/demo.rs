@@ -868,6 +868,8 @@ impl Backend for DemoBackend {
                     TechState::Done
                 } else if let Some(r) = self.research_run.iter().find(|r| r.0 == i) {
                     TechState::Running { lab: r.1, done_t: r.2 }
+                } else if let Some(w) = self.waiting.iter().find(|w| w.2 == *id) {
+                    TechState::Queued { lab: w.1, wait: w.0, start_t: None }
                 } else if advanced && base_done < DEMO_ADV_UNLOCK {
                     TechState::Locked(format!("needs {DEMO_ADV_UNLOCK} base techs ({base_done} so far)"))
                 } else if has_pre && !done(i - 1) {
@@ -882,7 +884,17 @@ impl Backend for DemoBackend {
                 TechInfo { id: id.to_string(), name: name.to_string(), branch: branch.to_string(), tier, desc: desc.to_string(), cost: demo_tech_cost(i), min_lab, advanced, state }
             })
             .collect();
-        Some(ResearchView { techs, labs })
+        let queue = self
+            .waiting
+            .iter()
+            .enumerate()
+            .filter_map(|(index, w)| {
+                let (_, name, _) = DEMO_TECHS.iter().find(|t| t.0 == w.2)?;
+                let at = self.view.as_ref().and_then(|v| v.body(w.1)).map(|b| b.name.clone()).unwrap_or_default();
+                Some(WaitingItem { id: w.0, label: format!("{name} at {at}"), cost: w.3.clone(), start_t: None, blocked: None, index, of: self.waiting.len() })
+            })
+            .collect();
+        Some(ResearchView { techs, labs, queue })
     }
 
     fn sensors(&self) -> Option<&SensorsReport> {

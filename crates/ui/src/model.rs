@@ -586,6 +586,8 @@ pub enum TechState {
     Ready { lab: BodyId },
     /// Can't start yet; human-readable reason ("needs Hardened slugs", "needs lab level 2", ...).
     Locked(String),
+    /// Waiting in our queue at this lab (for energy or a free slot); `wait` goes back in `UiAction::Unwait`.
+    Queued { lab: BodyId, wait: u32, start_t: Option<f64> },
 }
 
 #[derive(Clone, Debug)]
@@ -626,6 +628,8 @@ pub struct ResearchView {
     /// All techs, branch-major, tier order.
     pub techs: Vec<TechInfo>,
     pub labs: Vec<LabInfo>,
+    /// Research waiting in our queue, in the order it gets funded.
+    pub queue: Vec<WaitingItem>,
 }
 
 pub const TECH_BRANCHES: [&str; 5] = ["Weapons", "Engines", "Industry", "Defense", "Scanning"];
