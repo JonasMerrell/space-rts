@@ -1445,3 +1445,4 @@ length 14 game days = 7 real days at 1×. Old clients show new wars as "2×" unt
 Jonas: "show ship hp". Client-only (ui + client backend): `model::Ship`/`FleetMember` gain `hp`/`hp_max` (fleets and enemy
 groups sum; ghosts = hull as last seen; hp_max = `Ship::stats().hp` incl. tech). Ship sheet HULL bar beside FUEL, fleet-sheet rows
 get a hull bar, damaged ships get a tiny hull bar under their map token. No sim/proto/server change. — ship-hp thread
+- 2026-10-29 core: 0.9.0 server+apk+web = research-queue UI (0.8.9 never published), PR #10 pace-2x (rules 4), PR #12 ship fuel build cost (rules 5), PR #13 ship HP. Per-body matter proposal = rules 6.
