@@ -39,17 +39,18 @@ impl FleetSheet {
     }
 }
 
-/// Own tokens parked at `body` (what the sheet can group).
+/// Own tokens parked at `body` (what the sheet can group). Ships that only exist in the forecast
+/// (still in a build queue, seen while scrubbed ahead) can't be grouped yet: the server has no such ship.
 pub fn ships_here(view: &GameView, body: BodyId) -> Vec<&Ship> {
     view.ships
         .iter()
-        .filter(|s| s.owner == view.me && s.seen_at.is_none() && s.parked_at == Some(body) && !super::map::is_flying(s, view.now))
+        .filter(|s| s.owner == view.me && s.seen_at.is_none() && s.planned.is_none() && s.parked_at == Some(body) && !super::map::is_flying(s, view.now))
         .collect()
 }
 
 /// Whether the FLEET button makes sense for this token: it is a fleet, or has company to group with.
 pub fn can_group(view: &GameView, sh: &Ship) -> bool {
-    sh.owner == view.me && (sh.is_fleet() || sh.parked_at.is_some_and(|b| ships_here(view, b).len() > 1))
+    sh.owner == view.me && sh.planned.is_none() && (sh.is_fleet() || sh.parked_at.is_some_and(|b| ships_here(view, b).len() > 1))
 }
 
 fn toggle(list: &mut Vec<ShipId>, id: ShipId) {
