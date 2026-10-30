@@ -523,8 +523,16 @@ impl Game {
             .map(|s| if s.owner == p { s.clone() } else { self.redact(s, see_decoys && s.class == ShipClass::Decoy || v.scanned.binary_search(&s.id).is_ok()) })
             .collect();
         g.next_ship = g.ships.iter().map(|s| s.id.0 + 1).max().unwrap_or(0);
-        // live battles: only the ones you're in, without the ships you can't see
+        // live battles: only the ones you're in, without the ships you can't see. Enemy ships fighting
+        // you keep their fuel: their autopilot depends on it, and your screen runs the same battle.
         g.battles.retain(|b| b.sides.contains(&p));
+        for s in g.ships.iter_mut().filter(|s| s.owner != p) {
+            if g.battles.iter().any(|b| b.fighters.iter().any(|f| f.unit == crate::battle::Unit::Ship(s.id))) {
+                if let Some(real) = self.ship(s.id) {
+                    s.fuel = real.fuel;
+                }
+            }
+        }
         for b in g.battles.iter_mut() {
             b.fighters.retain(|f| match f.unit {
                 crate::battle::Unit::Ship(id) => g.ships.iter().any(|s| s.id == id),
