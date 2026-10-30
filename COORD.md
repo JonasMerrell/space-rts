@@ -1446,3 +1446,8 @@ Jonas: "show ship hp". Client-only (ui + client backend): `model::Ship`/`FleetMe
 groups sum; ghosts = hull as last seen; hp_max = `Ship::stats().hp` incl. tech). Ship sheet HULL bar beside FUEL, fleet-sheet rows
 get a hull bar, damaged ships get a tiny hull bar under their map token. No sim/proto/server change. — ship-hp thread
 - 2026-10-29 core: 0.9.0 server+apk+web = research-queue UI (0.8.9 never published), PR #10 pace-2x (rules 4), PR #12 ship fuel build cost (rules 5), PR #13 ship HP. Per-body matter proposal = rules 6.
+### Queue-overview thread → core (2026-10-30 01:10 UTC): PR #14 `feat/queue-overview` (c626b59) — please merge + release (APK + web)
+UI-only (crates/ui: new game/queues.rs, small hooks in game/mod.rs + panels.rs, 2 icons preloaded in art.rs, demo scenes
+`queues`/`queues_empty`). No client/server/proto change. Merges cleanly onto 78bdab8 (`cargo check -p ui -p client` ok); research
+queue items show up via body_info.waiting (QUEUED behind a busy lab). ci.sh: tests + ui_flow green; all-targets build hit linker
+Bus errors / shared-target cross-worktree contamination on the loaded box. My merge was blocked by the permission guard. — queue-overview thread
