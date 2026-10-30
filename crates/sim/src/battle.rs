@@ -16,7 +16,7 @@ use crate::combat::{expected_damage, lead_time, range, Combatant, Who, KINETIC_B
 use crate::game::{EventKind, Game, PlayerId, Ship, ShipClass, ShipId, ShipState, Weapon, TICK};
 use crate::station::StationId;
 use crate::system::{BodyId, Rng, System};
-use crate::traj::State;
+use crate::traj::{End, State};
 use crate::v2::V2;
 
 /// First rules revision with live battles (older wars keep `Game::combat_tick`).
@@ -35,6 +35,8 @@ pub const SALVO_LIFE: f64 = 300.0;
 pub const DISENGAGE: f64 = 3_000.0;
 /// Ships parked at a body stay within this distance of their parking orbit while they fight (km).
 pub const PARK_LEASH: f64 = 3_000.0;
+/// Players hear about enemy flights heading their way this long before they arrive (real seconds).
+pub const INBOUND_WARN: f64 = 3600.0;
 /// The autopilot starts dodging a salvo that will pass close within this many seconds.
 pub const REACT: f64 = 60.0;
 /// The autopilot only spends fuel on positioning while the ship has more than this share left.
@@ -217,6 +219,19 @@ struct Now {
     dark: Option<ShipId>,
     /// index into `Game::ships`
     ship: Option<usize>,
+}
+
+/// "3 Gunships, Scout"
+fn class_list(classes: &[ShipClass]) -> String {
+    let mut n: Vec<(&str, usize)> = vec![];
+    for c in classes {
+        let name = c.stats().name;
+        match n.iter_mut().find(|x| x.0 == name) {
+            Some(x) => x.1 += 1,
+            None => n.push((name, 1)),
+        }
+    }
+    n.iter().map(|(c, k)| if *k > 1 { format!("{k} {c}s") } else { c.to_string() }).collect::<Vec<_>>().join(", ")
 }
 
 fn class_mult(a: Option<ShipClass>, t: Option<ShipClass>) -> f64 {
@@ -494,6 +509,61 @@ impl Game {
             None => ("Battle", "Your ships are fighting in deep space".to_string()),
         };
         self.event(Some(p), EventKind::Battle, title, &text, body, None);
+    }
+
+    /// Once per tick: warn each player about enemy flights they can see heading for a body they own
+    /// or have ships at, arriving within `INBOUND_WARN` of real time. One warning per flight and
+    /// destination, grouped per enemy and body.
+    pub(crate) fn inbound_warnings(&mut self) {
+        let t = self.t;
+        let window = INBOUND_WARN * self.settings.speed.max(1e-9);
+        for p in 0..self.players.len() {
+            let me = p as PlayerId;
+            if self.players[p].bot.is_some() {
+                continue;
+            }
+            // forget flights that landed, died or changed course
+            let ships = &self.ships;
+            self.players[p].warned.retain(|&(id, b)| ships.iter().any(|s| s.id == id && matches!(&s.state, ShipState::Flying(f) if f.dest == Some(b))));
+            let mut news: Vec<(PlayerId, BodyId, f64, Vec<ShipClass>)> = vec![];
+            for i in 0..self.ships.len() {
+                let s = &self.ships[i];
+                if s.owner == me || self.players[p].vision.ships.binary_search(&s.id).is_err() {
+                    continue;
+                }
+                let ShipState::Flying(f) = &s.state else { continue };
+                let Some(dest) = f.dest else { continue };
+                let mine = self.bodies[dest.0 as usize].owner == Some(me) || self.ships.iter().any(|o| o.owner == me && o.parked_at() == Some(dest));
+                if !mine || self.players[p].warned.contains(&(s.id, dest)) {
+                    continue;
+                }
+                let (owner, id, class) = (s.owner, s.id, crate::cloak::apparent_class(s));
+                let ShipState::Flying(f) = &mut self.ships[i].state else { continue };
+                let eta = match f.trajectory(&self.system).end {
+                    End::Capture { body, t: te, .. } | End::Impact { body, t: te } if body == dest => te,
+                    _ => continue,
+                };
+                if eta - t > window {
+                    continue;
+                }
+                self.players[p].warned.push((id, dest));
+                match news.iter_mut().find(|n| n.0 == owner && n.1 == dest) {
+                    Some(n) => {
+                        n.2 = n.2.min(eta);
+                        n.3.push(class);
+                    }
+                    None => news.push((owner, dest, eta, vec![class])),
+                }
+            }
+            for (owner, dest, eta, classes) in news {
+                let who = self.players[owner as usize].name.clone();
+                let bname = self.system.body(dest).name.clone();
+                let mins = ((eta - t) / self.settings.speed.max(1e-9) / 60.0).ceil().max(1.0);
+                // the apps count "in about N min" down from the event's time when they show it later
+                let text = format!("Battle at {bname} in about {mins:.0} min: {who}'s {} on the way", class_list(&classes));
+                self.event(Some(me), EventKind::Battle, "Enemies inbound", &text, Some(dest), None);
+            }
+        }
     }
 
     /// One `BATTLE_DT` step of every battle, ending at `self.t`.
@@ -1128,6 +1198,51 @@ pub(crate) mod tests {
         if let Some(s) = g.ship(gs) {
             assert!(matches!(s.state, ShipState::Flying(_)), "it should still be on its way");
         }
+    }
+
+    #[test]
+    fn players_hear_about_enemies_heading_their_way_once() {
+        let (mut g, x) = arena();
+        g.spawn(0, ShipClass::Scout, x);
+        // bob's gunship flies over from the moon's planet
+        let planet = g.system.body(x).parent.unwrap();
+        let gs = g.spawn(1, ShipClass::Gunship, planet);
+        g.apply(1, Command::Transfer { ships: vec![gs], to: x, depart_t: None }).unwrap();
+        let warnings = |g: &Game, p: PlayerId| g.events_for(p).filter(|e| e.title == "Enemies inbound").count();
+        let eta = |g: &mut Game| match &mut g.ship_mut(gs).unwrap().state {
+            ShipState::Flying(f) if f.dest == Some(x) => {
+                let mut f = f.clone();
+                Some(f.trajectory(&g.system).end.t())
+            }
+            _ => None,
+        };
+        let mut warned = false;
+        let end = g.t + 4.0 * 86_400.0;
+        let mut left = false;
+        loop {
+            g.advance_to(g.t + TICK);
+            assert!(g.t < end, "the gunship never got there");
+            let Some(eta) = eta(&mut g) else {
+                if left {
+                    break;
+                }
+                continue;
+            };
+            left = true;
+            let seen = g.players[0].vision.ships.contains(&gs);
+            if !warned && seen && eta - g.t <= INBOUND_WARN {
+                // the first tick she can see it coming within the window
+                assert_eq!(warnings(&g, 0), 1, "not warned {} s before arrival", eta - g.t);
+                warned = true;
+            }
+        }
+        assert!(warned, "alice has a scout there and should have been warned");
+        assert_eq!(warnings(&g, 0), 1, "one warning per flight");
+        assert_eq!(warnings(&g, 1), 0);
+        assert_eq!(warnings(&g, 2), 0, "carol has nothing at the moon");
+        let e = g.events_for(0).find(|e| e.title == "Enemies inbound").unwrap();
+        assert!(e.body.contains("Gunship") && e.body.contains(" in about "), "{}", e.body);
+        assert!(g.players[0].warned.is_empty(), "forgotten once it landed");
     }
 }
 #[cfg(test)]

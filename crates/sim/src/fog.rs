@@ -608,6 +608,7 @@ fn blank_player(pl: &mut crate::game::Player) {
     pl.techs.clear();
     pl.vision = Vision::default();
     pl.bot_avoid.clear();
+    pl.warned.clear();
 }
 
 
