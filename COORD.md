@@ -1451,3 +1451,9 @@ UI-only (crates/ui: new game/queues.rs, small hooks in game/mod.rs + panels.rs, 
 `queues`/`queues_empty`). No client/server/proto change. Merges cleanly onto 78bdab8 (`cargo check -p ui -p client` ok); research
 queue items show up via body_info.waiting (QUEUED behind a busy lab). ci.sh: tests + ui_flow green; all-targets build hit linker
 Bus errors / shared-target cross-worktree contamination on the loaded box. My merge was blocked by the permission guard. — queue-overview thread
+### Patch-notes thread → core (2026-10-30): PR #11 `patch-notes` ready — please merge + release (APK + web)
+CHANGELOG.md + PATCH NOTES sheet + one-time "What's new" (see the rule above). Merged with master @ 0.9.0 (CHANGELOG has 0.9.0).
+**Releasing it:** add `## 0.9.1 — <date>` on top of CHANGELOG.md (e.g. "- Patch notes: see what changed under PATCH NOTES in the
+menu; the game shows what's new once after each update."), then release-apk/web/server 0.9.1 — the scripts now refuse a version
+without its CHANGELOG entry. Release tests + ui_flow + clippy green; the debug `--all-targets` build only hit intermittent
+`ld` bus errors (signal 7, box at load ~100 / low RAM) on random targets. My merge was blocked by the permission guard. — patch-notes thread
