@@ -44,6 +44,29 @@ pub enum ClientMsg {
     Feedback { bug: bool, text: String, game: Option<String>, client: String },
     /// Host only: delete the war for everyone (it disappears from every player's list).
     DeleteGame { code: String },
+    /// Send push notifications (battles, enemies inbound) for this account here too.
+    PushSubscribe { sub: PushSub },
+    /// Stop pushing to the subscription with this endpoint / token (logging out).
+    PushUnsubscribe { id: String },
+}
+
+/// Where the server pushes notifications to (see server/src/push.rs).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum PushSub {
+    /// A browser's Web Push subscription (`PushSubscription.toJSON()`; keys in base64url).
+    Web { endpoint: String, p256dh: String, auth: String },
+    /// The Android app's Firebase Cloud Messaging registration token.
+    Fcm { token: String },
+}
+
+impl PushSub {
+    /// The endpoint or token: what `PushUnsubscribe` names.
+    pub fn id(&self) -> &str {
+        match self {
+            PushSub::Web { endpoint, .. } => endpoint,
+            PushSub::Fcm { token } => token,
+        }
+    }
 }
 
 /// Session tokens: 32 random bytes as 64 lowercase hex digits.
@@ -74,6 +97,11 @@ impl ClientMsg {
             ClientMsg::Cmd { code, .. } => short(code),
             ClientMsg::Events { since } => !since.is_nan(),
             ClientMsg::Feedback { text, game, client, .. } => text.len() <= 16_000 && game.as_deref().is_none_or(short) && client.len() <= 200,
+            ClientMsg::PushSubscribe { sub: PushSub::Web { endpoint, p256dh, auth } } => {
+                endpoint.len() <= 1024 && endpoint.starts_with("https://") && p256dh.len() <= 128 && auth.len() <= 64
+            }
+            ClientMsg::PushSubscribe { sub: PushSub::Fcm { token } } => !token.is_empty() && token.len() <= 512,
+            ClientMsg::PushUnsubscribe { id } => id.len() <= 1024,
             ClientMsg::ListGames | ClientMsg::Ping => true,
         };
         if ok {

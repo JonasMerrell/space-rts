@@ -266,6 +266,8 @@ pub struct Ctx<'a> {
     pub origins: &'a [String],
     /// plain /play/ requests from outside get sent here, when set
     pub https_base: Option<&'a str>,
+    /// the push (VAPID) public key for /play/push-key
+    pub push_key: Option<&'a str>,
     pub head_timeout: Duration,
 }
 
@@ -389,6 +391,14 @@ Content-Disposition: attachment; filename=\"{APK_NAME}\"\r\nConnection: close\r\
                 respond(w, "404 Not Found", "text/plain", "", b"no app published yet\n", head_only, false);
             }
         },
+        "/play/push-key" => match ctx.push_key {
+            Some(k) => {
+                respond(w, "200 OK", "text/plain", "Cache-Control: no-cache\r\n", k.as_bytes(), head_only, false);
+            }
+            None => {
+                respond(w, "404 Not Found", "text/plain", "", b"push is off on this server\n", head_only, false);
+            }
+        },
         _ if play => return play_file(req, w, ctx, head_only),
         _ => {
             respond(w, "404 Not Found", "text/plain", "", b"not found\n", head_only, false);
@@ -508,7 +518,7 @@ mod tests {
                 let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
                 let mut w = s.try_clone().unwrap();
                 let mut r = BufReader::new(s);
-                let ctx = Ctx { ip, data: &dir, site: &site, secure: false, game_ok: true, origins: &origins, https_base: None, head_timeout: Duration::from_secs(2) };
+                let ctx = Ctx { ip, data: &dir, site: &site, secure: false, game_ok: true, origins: &origins, https_base: None, push_key: Some("KEY"), head_timeout: Duration::from_secs(2) };
                 if let Outcome::WebSocket = serve(&mut r, &mut w, &ctx) {
                     let _ = w.write_all(b"UPGRADED");
                 }
@@ -542,6 +552,7 @@ mod tests {
         assert!(get(port, &format!("GET / HTTP/1.1\r\n{}\r\n\r\n", "X: y\r\n".repeat(2000))).is_empty(), "head too big");
         assert!(get(port, &format!("GET / HTTP/1.1\r\n{}\r\n\r\n", "X: y\r\n".repeat(51))).is_empty(), "too many headers");
         assert!(get(port, "GET /play HTTP/1.1\r\n\r\n").contains("Location: /play/"));
+        assert!(get(port, "GET /play/push-key HTTP/1.1\r\nConnection: close\r\n\r\n").ends_with("\r\n\r\nKEY"));
         // keep-alive: three requests on one connection, the wasm with its MIME type and a strict CSP
         let both = get(port, "GET /play/ HTTP/1.1\r\nHost: h:7777\r\n\r\nGET /play/hohmann.wasm HTTP/1.1\r\n\r\nGET /play/assets/a.png HTTP/1.1\r\nConnection: close\r\n\r\n");
         assert_eq!(both.matches("HTTP/1.1 200").count(), 3, "{both}");

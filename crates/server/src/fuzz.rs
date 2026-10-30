@@ -117,6 +117,9 @@ fn client_msg(code: &'static str) -> impl Strategy<Value = Value> {
         1 => (text(), pick(&["Small", "Medium", "Large", "Huge"]), num(), num(), num(), prop::collection::vec(text(), 0..10))
             .prop_map(|(n, sz, l, sp, m, b)| json!({"CreateGame": {"name": n, "size": sz, "length_days": l, "speed": sp, "max_players": m, "bots": b}})),
         1 => (text(), text(), any::<bool>()).prop_map(|(u, p, r)| json!({"Hello": {"user": u, "pass": p, "register": r}})),
+        1 => (text(), text(), text()).prop_map(|(e, k, a)| json!({"PushSubscribe": {"sub": {"Web": {"endpoint": e, "p256dh": k, "auth": a}}}})),
+        1 => text().prop_map(|t| json!({"PushSubscribe": {"sub": {"Fcm": {"token": t}}}})),
+        1 => text().prop_map(|i| json!({"PushUnsubscribe": {"id": i}})),
     ]
 }
 

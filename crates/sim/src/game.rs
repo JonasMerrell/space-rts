@@ -563,6 +563,9 @@ pub struct Player {
     pub waiting: Vec<crate::waitlist::Waiting>,
     #[serde(default)]
     pub next_wait: u32,
+    /// enemy flights already warned about, with the body they're heading for (see battle.rs)
+    #[serde(default)]
+    pub warned: Vec<(ShipId, BodyId)>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -862,6 +865,7 @@ impl Game {
             vision: Default::default(),
             waiting: vec![],
             next_wait: 0,
+            warned: vec![],
         });
         self.preview_homes();
         Ok(id)
@@ -1529,6 +1533,9 @@ impl Game {
                 self.ownership();
                 self.outposts_tick();
                 self.update_intel();
+                if self.rules >= BATTLE_RULES {
+                    self.inbound_warnings();
+                }
                 self.intercept_tick();
                 if bots {
                     crate::bot::think_all(self);

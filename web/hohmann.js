@@ -121,10 +121,55 @@
         const once = () => {
             window.removeEventListener("pointerdown", once, true);
             window.removeEventListener("keydown", once, true);
-            try { Notification.requestPermission(); } catch (e) {}
+            try {
+                Promise.resolve(Notification.requestPermission()).then((p) => { if (p === "granted") pushSetup(); });
+            } catch (e) {}
         };
         window.addEventListener("pointerdown", once, true);
         window.addEventListener("keydown", once, true);
+    }
+
+    // ---- push: battle alerts even with the game closed (server/src/push.rs, web/sw.js).
+    // Needs https (or localhost) and the notification permission.
+    let pushId = null;
+
+    function pushKey(s) {
+        const b = atob(s.replace(/-/g, "+").replace(/_/g, "/"));
+        return Uint8Array.from(b, (c) => c.charCodeAt(0));
+    }
+
+    async function pushSetup() {
+        if (!notifyOn || !window.isSecureContext || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
+        if (!("Notification" in window) || Notification.permission !== "granted") return;
+        try {
+            const r = await fetch("push-key", { cache: "no-store" });
+            if (!r.ok) return; // push is off on this server
+            const key = pushKey((await r.text()).trim());
+            const reg = await navigator.serviceWorker.register("sw.js");
+            await navigator.serviceWorker.ready;
+            let sub = await reg.pushManager.getSubscription();
+            // a subscription made for another server key (the server was set up again) is useless
+            const old = sub && sub.options && sub.options.applicationServerKey;
+            if (sub && old && !new Uint8Array(old).every((b, i) => b === key[i])) {
+                await sub.unsubscribe();
+                sub = null;
+            }
+            if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+            const j = sub.toJSON();
+            if (!notifyOn || !j.keys) return;
+            pushId = j.endpoint;
+            sendRaw(JSON.stringify({ PushSubscribe: { sub: { Web: { endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth } } } }) + "\n");
+        } catch (e) {}
+    }
+
+    async function pushOff() {
+        if (pushId) sendRaw(JSON.stringify({ PushUnsubscribe: { id: pushId } }) + "\n");
+        pushId = null;
+        try {
+            const reg = await navigator.serviceWorker.getRegistration();
+            const sub = reg && await reg.pushManager.getSubscription();
+            if (sub) await sub.unsubscribe();
+        } catch (e) {}
     }
 
     // ---- on-screen keyboard. Phones only open their keyboard for a focused HTML input, and only
@@ -280,7 +325,12 @@
         };
         env.hr_notify = (on) => {
             notifyOn = on !== 0;
-            if (notifyOn) askPermission();
+            if (notifyOn) {
+                askPermission();
+                pushSetup();
+            } else {
+                pushOff();
+            }
         };
     }
 

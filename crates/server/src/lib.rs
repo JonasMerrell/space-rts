@@ -3,6 +3,7 @@
 //! Internet-facing: see `guard` for the abuse limits and `tls` for the certificate.
 pub mod guard;
 pub mod http;
+pub mod push;
 pub mod tls;
 pub mod ws;
 #[cfg(test)]
@@ -35,6 +36,9 @@ struct Account {
     /// A password change (not a feature yet) must clear these.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     tokens: Vec<Session>,
+    /// Where to push battle alerts (browsers, phones), newest last.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    push: Vec<proto::PushSub>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
@@ -116,6 +120,8 @@ pub struct Config {
     pub port: u16,
     /// Browser build files, scanned from `<data>/public/web/` when the server starts.
     pub site: Arc<http::LiveSite>,
+    /// the push (VAPID) public key, served at /play/push-key (set when the server starts)
+    pub push_key: Option<String>,
     /// Newest released client version told to apps at login (`--latest-client`); without it the
     /// version in the deployed browser build's `version.json` (see `Server::latest_client`).
     pub latest_client: Option<String>,
@@ -146,6 +152,7 @@ impl Config {
             web_hosts: vec![],
             port: proto::DEFAULT_PORT,
             site: Arc::default(),
+            push_key: None,
             latest_client: None,
             update_url: None,
         }
@@ -193,6 +200,12 @@ pub struct Server {
     pub latest_client: Option<String>,
     /// `Config::update_url`
     pub update_url: Option<String>,
+    /// push notification sender (None: no key, nothing is pushed)
+    pusher: Option<push::Pusher>,
+    /// per game, the first event not yet considered for pushing
+    pushed: HashMap<String, u64>,
+    /// pushes per user in the current 10 minutes (user -> (window, count))
+    push_rate: HashMap<String, (u64, u32)>,
 }
 
 fn legacy_hash(salt: &str, pass: &str) -> String {
@@ -300,7 +313,7 @@ impl Server {
             }
         }
         eprintln!("loaded {} accounts, {} games from {}", accounts_len(&accounts), games.len(), data.display());
-        Server { data, invites: None, guard: None, accounts, games, conns: HashMap::new(), next_conn: 1, dirty: HashSet::new(), changed: HashSet::new(), ticks: 0, feedback: HashMap::new(), latest_client: None, update_url: None }
+        Server { data, invites: None, guard: None, accounts, games, conns: HashMap::new(), next_conn: 1, dirty: HashSet::new(), changed: HashSet::new(), ticks: 0, feedback: HashMap::new(), latest_client: None, update_url: None, pusher: None, pushed: HashMap::new(), push_rate: HashMap::new() }
     }
 
     /// The newest client version to announce in the Welcome: `--latest-client`, else the
@@ -625,6 +638,27 @@ impl Server {
                 };
                 reply(self, ServerMsg::CmdResult { ok, msg });
             }
+            ClientMsg::PushSubscribe { sub } => {
+                if !push::acceptable(&sub) {
+                    return err(self, "can't push to that address");
+                }
+                if let Some(a) = self.accounts.get_mut(&user) {
+                    a.push.retain(|x| x.id() != sub.id());
+                    a.push.push(sub);
+                    let n = a.push.len();
+                    a.push.drain(..n.saturating_sub(push::MAX_SUBS));
+                    self.save_accounts();
+                }
+            }
+            ClientMsg::PushUnsubscribe { id } => {
+                if let Some(a) = self.accounts.get_mut(&user) {
+                    let n = a.push.len();
+                    a.push.retain(|x| x.id() != id);
+                    if a.push.len() != n {
+                        self.save_accounts();
+                    }
+                }
+            }
             ClientMsg::Events { since } => {
                 let u = user.clone();
                 let mut out = vec![];
@@ -702,12 +736,54 @@ impl Server {
                 }
             }
         }
+        self.push_events();
         let changed: Vec<String> = self.changed.drain().collect();
         for code in changed {
             self.broadcast(&code);
         }
     }
+
+    /// Push this tick's battle alerts to their players' browsers and phones.
+    fn push_events(&mut self) {
+        let Some(pusher) = &self.pusher else { return };
+        let gone: Vec<String> = std::mem::take(&mut *pusher.gone.lock().unwrap_or_else(|e| e.into_inner()));
+        if !gone.is_empty() {
+            for a in self.accounts.values_mut() {
+                a.push.retain(|x| !gone.iter().any(|g| g == x.id()));
+            }
+            self.save_accounts();
+        }
+        let window = unix_now() as u64 / PUSH_WINDOW;
+        for g in self.games.values() {
+            // after a restart, start from now (never re-send old news)
+            let from = *self.pushed.entry(g.code.clone()).or_insert(g.next_event);
+            if from == g.next_event {
+                continue;
+            }
+            self.pushed.insert(g.code.clone(), g.next_event);
+            for e in g.events.iter().filter(|e| e.seq >= from && e.kind == sim::game::EventKind::Battle && push::TITLES.contains(&e.title.as_str())) {
+                let Some(pl) = e.to.and_then(|p| g.players.get(p as usize)) else { continue };
+                let Some(a) = self.accounts.get(&pl.name).filter(|a| pl.bot.is_none() && !a.push.is_empty()) else { continue };
+                let rate = self.push_rate.entry(pl.name.clone()).or_insert((window, 0));
+                if rate.0 != window {
+                    *rate = (window, 0);
+                }
+                if rate.1 >= PUSH_MAX {
+                    continue;
+                }
+                rate.1 += 1;
+                let note = push::Note { title: e.title.clone(), body: format!("{}: {}", g.settings.name, e.body).chars().take(300).collect(), tag: format!("{}#{}", g.code, e.seq) };
+                for sub in &a.push {
+                    pusher.push(sub, note.clone());
+                }
+            }
+        }
+    }
 }
+
+/// At most `PUSH_MAX` pushes per player every `PUSH_WINDOW` seconds.
+const PUSH_WINDOW: u64 = 600;
+const PUSH_MAX: u32 = 6;
 
 fn accounts_len(a: &HashMap<String, Account>) -> usize {
     a.len()
@@ -915,6 +991,7 @@ fn setup(cfg: &Config, tls: &Arc<rustls::ServerConfig>, stream: TcpStream, ip: I
         game_ok: secure || plain_ok,
         origins: &origins,
         https_base: https_base.as_deref(),
+        push_key: cfg.push_key.as_deref(),
         head_timeout: cfg.limits.handshake_timeout,
     };
     match http::serve(&mut r, &mut *w, &ctx) {
@@ -1043,6 +1120,13 @@ pub fn serve_with(listener: TcpListener, mut cfg: Config) -> Result<(), String> 
     srv.latest_client = cfg.latest_client.clone();
     srv.update_url = cfg.update_url.clone();
     srv.guard = Some(guard.clone());
+    match push::Pusher::start(&cfg.data) {
+        Ok(p) => {
+            cfg.push_key = Some(p.public_key());
+            srv.pusher = Some(p);
+        }
+        Err(e) => eprintln!("push notifications off: {e}"),
+    }
     let server = Arc::new(Mutex::new(srv));
     let cfg = Arc::new(cfg);
     {
@@ -1100,6 +1184,72 @@ pub fn serve_with(listener: TcpListener, mut cfg: Config) -> Result<(), String> 
         });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod push_tests {
+    use super::*;
+    use proto::PushSub;
+    use sim::game::{Event, EventKind};
+
+    #[test]
+    fn battle_alerts_are_pushed_to_the_players_subscriptions() {
+        let dir = std::env::temp_dir().join(format!("server-push-{}", std::process::id()));
+        let mut s = Server::load(dir);
+        let (p, rx) = push::Pusher::capture();
+        s.pusher = Some(p);
+        let mut rxs = vec![];
+        for (id, user) in [(1u64, "ann"), (2, "bob")] {
+            let (tx, r) = sync_channel(1 << 16);
+            rxs.push(r);
+            s.conns.insert(id, Conn { user: Some(user.into()), open: None, tx, sock: None, ip: "203.0.113.9".parse().unwrap() });
+            s.accounts.insert(user.into(), Account::default());
+        }
+        let k = push::b64(&[4u8; 65]);
+        let a = push::b64(&[1u8; 16]);
+        let sub = |e: &str| PushSub::Web { endpoint: e.into(), p256dh: k.clone(), auth: a.clone() };
+        s.handle(1, ClientMsg::PushSubscribe { sub: sub("https://fcm.googleapis.com/fcm/send/ann") });
+        s.handle(1, ClientMsg::PushSubscribe { sub: sub("https://fcm.googleapis.com/fcm/send/ann") });
+        s.handle(2, ClientMsg::PushSubscribe { sub: sub("https://10.0.0.1/steal") });
+        assert_eq!(s.accounts["ann"].push.len(), 1, "the same subscription is kept once");
+        assert!(s.accounts["bob"].push.is_empty(), "only push services");
+        assert!(rxs[1].try_iter().any(|l| l.contains("can't push")));
+
+        s.handle(1, ClientMsg::CreateGame { name: "War".into(), size: sim::system::SystemSize::Small, length_days: 7.0, speed: 1.0, max_players: 2, bots: vec![] });
+        let code = s.games.keys().next().cloned().unwrap();
+        s.handle(2, ClientMsg::JoinGame { code: code.clone() });
+        s.handle(1, ClientMsg::StartGame { code: code.clone() });
+        s.push_events(); // the starting point: nothing old is sent
+        let add = |s: &mut Server, to: PlayerId, title: &str| {
+            let g = s.games.get_mut(&code).unwrap();
+            let seq = g.next_event;
+            g.next_event += 1;
+            g.events.push(Event { seq, t: g.t, to: Some(to), kind: EventKind::Battle, title: title.into(), body: "Bob's Gunship heading for Vesper".into(), body_ref: None, ship_ref: None, group: None });
+        };
+        add(&mut s, 0, "Enemies inbound");
+        add(&mut s, 0, "Battle over");
+        add(&mut s, 1, "Battle");
+        s.push_events();
+        let got: Vec<(PushSub, push::Note)> = rx.try_iter().collect();
+        assert_eq!(got.len(), 1, "only ann's alert: {got:?}");
+        assert_eq!(got[0].1.title, "Enemies inbound");
+        assert!(got[0].1.body.starts_with("War: "));
+        s.push_events();
+        assert!(rx.try_iter().next().is_none(), "sent once");
+
+        for _ in 0..20 {
+            add(&mut s, 0, "Under attack");
+        }
+        s.push_events();
+        assert_eq!(rx.try_iter().count(), PUSH_MAX as usize - 1, "rate limited");
+
+        s.pusher.as_ref().unwrap().gone.lock().unwrap().push("https://fcm.googleapis.com/fcm/send/ann".into());
+        s.push_events();
+        assert!(s.accounts["ann"].push.is_empty(), "dropped once the push service forgot it");
+        s.handle(1, ClientMsg::PushSubscribe { sub: sub("https://fcm.googleapis.com/fcm/send/ann2") });
+        s.handle(1, ClientMsg::PushUnsubscribe { id: "https://fcm.googleapis.com/fcm/send/ann2".into() });
+        assert!(s.accounts["ann"].push.is_empty());
+    }
 }
 
 #[cfg(test)]
