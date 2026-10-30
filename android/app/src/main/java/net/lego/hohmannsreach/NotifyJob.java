@@ -111,7 +111,7 @@ public class NotifyJob extends JobService {
             Notification n = new Notification.Builder(c, alert ? Notify.ALERTS : Notify.NEWS)
                     .setSmallIcon(R.drawable.ic_notify)
                     .setContentTitle(e.optString("title"))
-                    .setContentText(e.optString("body"))
+                    .setContentText(countdown(e.optString("body"), when))
                     .setSubText(code)
                     .setWhen((long) (when * 1000))
                     .setShowWhen(true)
@@ -138,6 +138,16 @@ public class NotifyJob extends JobService {
         Log.i(TAG, events.length() + " events, " + posted + " notified");
         c.getSharedPreferences("notify", Context.MODE_PRIVATE).edit()
                 .putString("since", Double.toString(newest)).apply();
+    }
+
+    static final java.util.regex.Pattern IN_MIN = java.util.regex.Pattern.compile("in about (\\d+) min");
+
+    /** "Battle at X in about 40 min" from an event 25 min ago reads "in about 15 min" (or "now"). */
+    static String countdown(String body, double when) {
+        java.util.regex.Matcher m = IN_MIN.matcher(body);
+        if (!m.find()) return body;
+        long left = Math.round(Long.parseLong(m.group(1)) - (System.currentTimeMillis() / 1000.0 - when) / 60.0);
+        return body.substring(0, m.start()) + (left >= 1 ? "in about " + left + " min" : "now") + body.substring(m.end());
     }
 
     /** Arrivals, attacks, captures/losses, builds; skip routine chatter like "Departed". */
