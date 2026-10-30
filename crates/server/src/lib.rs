@@ -1212,6 +1212,9 @@ mod push_tests {
         s.handle(1, ClientMsg::PushSubscribe { sub: sub("https://fcm.googleapis.com/fcm/send/ann") });
         s.handle(2, ClientMsg::PushSubscribe { sub: sub("https://10.0.0.1/steal") });
         assert_eq!(s.accounts["ann"].push.len(), 1, "the same subscription is kept once");
+        // the line web/hohmann.js sends
+        let line = r#"{"PushSubscribe":{"sub":{"Web":{"endpoint":"https://fcm.googleapis.com/fcm/send/x","p256dh":"BAAA","auth":"AAAA"}}}}"#;
+        assert!(matches!(decode::<ClientMsg>(line), Ok(ClientMsg::PushSubscribe { sub: PushSub::Web { .. } })));
         assert!(s.accounts["bob"].push.is_empty(), "only push services");
         assert!(rxs[1].try_iter().any(|l| l.contains("can't push")));
 
