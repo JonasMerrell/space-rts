@@ -2,6 +2,7 @@
 //! Runs identically on the server (authoritative) and the client (prediction / planning UI).
 pub mod assist;
 pub mod bastion;
+pub mod battle;
 pub mod asteroid;
 pub mod bot;
 pub mod cloak;

@@ -276,8 +276,12 @@ use crate::system::BodyId;
 /// Sub-steps per combat tick: flybys at tens of km/s cross a weapon envelope in a minute or two.
 const SUBSTEPS: usize = 4;
 
+/// Something that can fight over a span of time: who, the body it's parked at, and it as a
+/// combatant at the start and the end of the span.
+pub(crate) type Engager = (Who, Option<BodyId>, Combatant, Combatant);
+
 #[derive(Clone, Copy, PartialEq)]
-enum Who {
+pub(crate) enum Who {
     Ship(usize),
     Defense(BodyId),
     Station(usize),
@@ -316,7 +320,7 @@ impl Game {
     }
 
     /// Absolute position and velocity of a ship at `t`, if it exists then.
-    fn ship_state_abs(sys: &crate::System, ship: &mut Ship, t: f64) -> Option<(V2, V2, Option<BodyId>)> {
+    pub(crate) fn ship_state_abs(sys: &crate::System, ship: &mut Ship, t: f64) -> Option<(V2, V2, Option<BodyId>)> {
         match &mut ship.state {
             ShipState::Parked { body, .. } => Some((sys.pos(*body, t), sys.vel(*body, t), Some(*body))),
             ShipState::Flying(f) => {
@@ -326,107 +330,125 @@ impl Game {
         }
     }
 
-    /// One combat tick ending at `self.t`: everything armed shoots whatever enemy is in range,
-    /// parked fleets, ships in flight and planetary defenses alike. Two things parked at
-    /// *different* bodies never fight; ships in transit can be shot by (and shoot) anything.
-    pub(crate) fn combat_tick(&mut self, dt: f64) {
-        self.battle_alerts();
-        let (t0, t1) = (self.t - dt, self.t);
-        // (who, parked-at, combatant at t0, combatant at t1)
-        let mut all: Vec<(Who, Option<BodyId>, Combatant, Combatant)> = vec![];
-        let sys = &self.system;
-        let mut mods = vec![];
-        for p in 0..self.players.len() {
-            mods.push(self.combat_mods(p as PlayerId));
+    /// Research multipliers (damage, accuracy) for `p` firing `w`.
+    pub(crate) fn weapon_mods(&self, p: PlayerId, w: Weapon) -> (f64, f64) {
+        let m = self.combat_mods(p);
+        (if w == Weapon::Kinetic { m.0 } else { m.1 }, m.2)
+    }
+
+    /// A ship as a combatant at absolute `pos`/`vel` (time `t` decides a first strike out of the dark).
+    pub(crate) fn ship_combatant(&self, s: &Ship, pos: V2, vel: V2, t: f64) -> Combatant {
+        let st = s.class.stats();
+        let (dm, am) = self.weapon_mods(s.owner, st.weapon);
+        Combatant {
+            key: s.id.0 as u64,
+            owner: s.owner,
+            class: Some(s.class),
+            weapon: st.weapon,
+            attack: st.attack,
+            hp: s.hp,
+            pos,
+            vel,
+            size: size(s.class),
+            evade: evasion(s.class),
+            dmg_mult: dm * Game::strike_mult(s, t),
+            acc_mult: am,
         }
-        let modf = |p: PlayerId, w: Weapon| {
-            let m = mods.get(p as usize).copied().unwrap_or((1.0, 1.0, 1.0));
-            (if w == Weapon::Kinetic { m.0 } else { m.1 }, m.2)
+    }
+
+    /// A body's planetary defenses as a combatant at `t` (None = unowned or knocked out).
+    pub(crate) fn defense_combatant(&self, body: BodyId, t: f64) -> Option<Combatant> {
+        let bs = &self.bodies[body.0 as usize];
+        let o = bs.owner?;
+        if bs.def_hp <= 0.0 {
+            return None;
+        }
+        let (dm, am) = self.weapon_mods(o, Weapon::Energy);
+        Some(Combatant {
+            key: 1 << 40 | body.0 as u64,
+            owner: o,
+            class: None,
+            weapon: Weapon::Energy,
+            attack: self.def_attack(body),
+            hp: bs.def_hp,
+            pos: self.system.pos(body, t),
+            vel: self.system.vel(body, t),
+            size: self.system.body(body).radius.max(20.0),
+            evade: 0.0,
+            dmg_mult: dm,
+            acc_mult: am,
+        })
+    }
+
+    /// Station `si` as a combatant at `t` (None while it isn't built); defense platforms shoot back.
+    pub(crate) fn station_combatant(&self, si: usize, t: f64) -> Option<Combatant> {
+        let st = &self.stations[si];
+        if !st.active(t) {
+            return None;
+        }
+        let (dm, am) = self.weapon_mods(st.owner, Weapon::Energy);
+        let armed = st.kind.attack() > 0.0;
+        let weapon = match st.kind {
+            StationKind::LaserBattery => Weapon::Beam,
+            _ if armed => Weapon::Energy,
+            _ => Weapon::None,
         };
+        Some(Combatant {
+            key: 2 << 40 | st.id.0 as u64,
+            owner: st.owner,
+            class: None,
+            weapon,
+            attack: st.kind.attack(),
+            hp: st.hp,
+            pos: self.system.pos(st.body, t),
+            vel: self.system.vel(st.body, t),
+            size: 2.0,
+            evade: 0.0,
+            dmg_mult: dm,
+            acc_mult: am,
+        })
+    }
+
+    /// Everything that can fight, as (who, parked-at, combatant at t0, combatant at t1), and the ids
+    /// of dark (cloaked) ships, by the same index.
+    pub(crate) fn gather(&mut self, t0: f64, t1: f64) -> (Vec<Engager>, Vec<Option<ShipId>>) {
+        let mut all: Vec<Engager> = vec![];
         // dark (cloaked) ships: only targetable by players whose sensors see them, and they hold
         // fire unless fired on; whoever is seen and engaged comes out of the dark
-        let players = &self.players;
-        let seen_by = |q: PlayerId, id: ShipId| players.get(q as usize).is_some_and(|p| p.vision.ships.binary_search(&id).is_ok());
         let mut dark: Vec<Option<ShipId>> = vec![];
-        for (i, s) in self.ships.iter_mut().enumerate() {
-            let Some(b) = Self::ship_state_abs(sys, s, t1) else { continue };
-            let a = Self::ship_state_abs(sys, s, t0).unwrap_or(b);
-            let st = s.class.stats();
-            let (dm, am) = modf(s.owner, st.weapon);
-            let dm = dm * Game::strike_mult(s, t1);
+        for i in 0..self.ships.len() {
+            let Some(b) = Self::ship_state_abs(&self.system, &mut self.ships[i], t1) else { continue };
+            let a = Self::ship_state_abs(&self.system, &mut self.ships[i], t0).unwrap_or(b);
+            let s = &self.ships[i];
             dark.push(s.dark(t1).then_some(s.id));
-            let c = |pos, vel| Combatant {
-                key: s.id.0 as u64,
-                owner: s.owner,
-                class: Some(s.class),
-                weapon: st.weapon,
-                attack: st.attack,
-                hp: s.hp,
-                pos,
-                vel,
-                size: size(s.class),
-                evade: evasion(s.class),
-                dmg_mult: dm,
-                acc_mult: am,
-            };
-            all.push((Who::Ship(i), b.2, c(a.0, a.1), c(b.0, b.1)));
+            all.push((Who::Ship(i), b.2, self.ship_combatant(s, a.0, a.1, t1), self.ship_combatant(s, b.0, b.1, t1)));
         }
-
-        for (bi, bs) in self.bodies.iter().enumerate() {
-            let Some(o) = bs.owner else { continue };
-            if bs.def_hp <= 0.0 {
-                continue;
-            }
+        for bi in 0..self.bodies.len() {
             let body = BodyId(bi as u32);
-            let (dm, am) = modf(o, Weapon::Energy);
-            let c = |t| Combatant {
-                key: 1 << 40 | bi as u64,
-                owner: o,
-                class: None,
-                weapon: Weapon::Energy,
-                attack: self.def_attack(body),
-                hp: bs.def_hp,
-                pos: sys.pos(body, t),
-                vel: sys.vel(body, t),
-                size: sys.body(body).radius.max(20.0),
-                evade: 0.0,
-                dmg_mult: dm,
-                acc_mult: am,
-            };
-            all.push((Who::Defense(body), Some(body), c(t0), c(t1)));
-        }
-        // stations in orbit are targets; defense platforms shoot back
-        for (si, st) in self.stations.iter().enumerate() {
-            if !st.active(t1) {
-                continue;
+            if let (Some(a), Some(b)) = (self.defense_combatant(body, t0), self.defense_combatant(body, t1)) {
+                all.push((Who::Defense(body), Some(body), a, b));
             }
-            let (dm, am) = modf(st.owner, Weapon::Energy);
-            let armed = st.kind.attack() > 0.0;
-            let weapon = match st.kind {
-                StationKind::LaserBattery => Weapon::Beam,
-                _ if armed => Weapon::Energy,
-                _ => Weapon::None,
-            };
-            let c = |t| Combatant {
-                key: 2 << 40 | st.id.0 as u64,
-                owner: st.owner,
-                class: None,
-                weapon,
-                attack: st.kind.attack(),
-                hp: st.hp,
-                pos: sys.pos(st.body, t),
-                vel: sys.vel(st.body, t),
-                size: 2.0,
-                evade: 0.0,
-                dmg_mult: dm,
-                acc_mult: am,
-            };
-            all.push((Who::Station(si), Some(st.body), c(t0), c(t1)));
         }
+        for si in 0..self.stations.len() {
+            let Some(b) = self.station_combatant(si, t1) else { continue };
+            let a = self.station_combatant(si, t0).unwrap_or(b);
+            all.push((Who::Station(si), Some(self.stations[si].body), a, b));
+        }
+        dark.resize(all.len(), None);
+        (all, dark)
+    }
 
+    /// Whether player `q`'s sensors see ship `id` (dark ships can only be fought by those who do).
+    pub(crate) fn seen_by(&self, q: PlayerId, id: ShipId) -> bool {
+        self.players.get(q as usize).is_some_and(|p| p.vision.ships.binary_search(&id).is_ok())
+    }
+
+    /// Which of `all` can engage each other over the span they cover (closest approach of linear
+    /// relative motion): the engaged indices and the pairs (i < j), sorted.
+    pub(crate) fn engagements(&self, all: &[Engager], dark: &[Option<ShipId>]) -> (Vec<usize>, Vec<(usize, usize)>) {
+        let seen_by = |q: PlayerId, id: ShipId| self.seen_by(q, id);
         // who can possibly engage whom this tick (closest approach of linear relative motion)
         let n = all.len();
-        dark.resize(n, None);
         let mut engaged = vec![false; n];
         let mut pairs: Vec<(usize, usize)> = vec![];
         for i in 0..n {
@@ -453,6 +475,33 @@ impl Game {
             }
         }
         let idx: Vec<usize> = (0..n).filter(|&i| engaged[i]).collect();
+        (idx, pairs)
+    }
+
+    /// Remove destroyed ships (`lost`, with the body they died near) and stations, and log it.
+    pub(crate) fn bury(&mut self, lost: Vec<(Ship, Option<BodyId>)>) {
+        self.ships.retain(|s| s.hp > 0.0);
+        let dead: Vec<(PlayerId, String, BodyId)> =
+            self.stations.iter().filter(|s| s.hp <= 0.0).map(|s| (s.owner, s.kind.label().to_string(), s.body)).collect();
+        self.stations.retain(|s| s.hp > 0.0);
+        for (o, label, b) in dead {
+            let bn = self.system.body(b).name.clone();
+            self.event(Some(o), EventKind::Battle, "Station destroyed", &format!("{label} at {bn} was destroyed"), Some(b), None);
+        }
+        for (s, near) in lost {
+            let place = near.map(|b| format!("at {}", self.system.body(b).name)).unwrap_or_else(|| "in deep space".into());
+            self.ship_note(crate::shiplog::ShipNote { to: s.owner, kind: EventKind::Battle, title: ("Ship destroyed", "Ships destroyed"), ship: s.id, name: &s.name, verb: ("was", "were"), rest: format!("destroyed {place}"), body_ref: near, ship_ref: None });
+        }
+    }
+
+    /// One combat tick ending at `self.t`: everything armed shoots whatever enemy is in range,
+    /// parked fleets, ships in flight and planetary defenses alike. Two things parked at
+    /// *different* bodies never fight; ships in transit can be shot by (and shoot) anything.
+    pub(crate) fn combat_tick(&mut self, dt: f64) {
+        self.battle_alerts();
+        let (t0, t1) = (self.t - dt, self.t);
+        let (all, dark) = self.gather(t0, t1);
+        let (idx, pairs) = self.engagements(&all, &dark);
         if idx.is_empty() {
             return;
         }
@@ -463,7 +512,7 @@ impl Game {
         }
         // separate battlefields (parked at different bodies) stay separate even if a flyby
         // links them: a combatant may only target partners it was paired with
-        let mut dmg = vec![0.0; n];
+        let mut dmg = vec![0.0; all.len()];
         let h = dt / SUBSTEPS as f64;
         for k in 0..SUBSTEPS {
             let f = (k as f64 + 0.5) / SUBSTEPS as f64;
@@ -516,18 +565,7 @@ impl Game {
                 }
             }
         }
-        self.ships.retain(|s| s.hp > 0.0);
-        let dead: Vec<(PlayerId, String, BodyId)> =
-            self.stations.iter().filter(|s| s.hp <= 0.0).map(|s| (s.owner, s.kind.label().to_string(), s.body)).collect();
-        self.stations.retain(|s| s.hp > 0.0);
-        for (o, label, b) in dead {
-            let bn = self.system.body(b).name.clone();
-            self.event(Some(o), EventKind::Battle, "Station destroyed", &format!("{label} at {bn} was destroyed"), Some(b), None);
-        }
-        for (s, near) in lost {
-            let place = near.map(|b| format!("at {}", self.system.body(b).name)).unwrap_or_else(|| "in deep space".into());
-            self.ship_note(crate::shiplog::ShipNote { to: s.owner, kind: EventKind::Battle, title: ("Ship destroyed", "Ships destroyed"), ship: s.id, name: &s.name, verb: ("was", "were"), rest: format!("destroyed {place}"), body_ref: near, ship_ref: None });
-        }
+        self.bury(lost);
         fought.sort();
         for b in fought {
             self.retreats(b);
