@@ -180,7 +180,8 @@ fn teammates_share_sensors_and_see_each_others_plans() {
     let far = g.players[1].home.unwrap();
     let scout = put_ship(&mut g, 2, ShipClass::Scout, far);
     let t = g.t;
-    g.advance_to(t + 120.0);
+    // one tick: bob's home defenses make short work of a scout in a live battle
+    g.advance_to(t + 60.0);
     assert!(g.players[0].vision.ships.binary_search(&scout).is_ok(), "ann sees cat's scout");
     let v = g.view_for(0);
     assert!(v.ships.iter().any(|s| s.id == scout));

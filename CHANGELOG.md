@@ -4,6 +4,13 @@ Newest first. The app shows these under PATCH NOTES and once after each update.
 Format: a `## <version> — <YYYY-MM-DD>` line, then `- ` bullets in plain player language.
 Every release adds an entry here (a unit test checks the newest one matches the release version).
 
+## 0.10.0 — 2026-10-30
+- Live battles (new wars): fights play out in real time. Open a battle to steer your ships, watch the shots fly and burn to dodge them; ships you leave alone follow their stance.
+- Get a browser notification when you're in a battle, and an "Enemies inbound" warning when hostile ships head for your bodies.
+- Wars for up to 8 pilots, with a bigger system for bigger wars.
+- New QUEUES button: every shipyard, upgrade and research queue you have on one screen.
+- PATCH NOTES in the menu, and a "What's new" note after each update.
+
 ## 0.9.0 — 2026-10-29
 - New wars run at a calmer pace: the old 2× speed is the new 1×.
 - New wars: building a ship costs fuel, taken from the tanks and fuel depots where it's built.

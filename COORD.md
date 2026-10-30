@@ -1501,3 +1501,4 @@ Jonas: games up to 8 players. `sim::game::MAX_PLAYERS = 8`, `RULES = 6` (`SCALED
   origin/master (tests/data/old4_rules3.json, force-added: `data/` is gitignored).
 - NB: don't share CARGO_TARGET_DIR between worktrees — cargo reuses the same artifact hash for path crates, builds clobber each other.
 — 8-players thread
+- 2026-10-30 core: 0.10.0 server+apk+web = PR #11 patch notes, #14 queue overview, #15 live battles (rules 6), #16 8 players (scaled systems = rules 7; combat + battle salvos use sides), #17 battle screen, #18 browser push + enemies inbound (web/sw.js; server writes <data>/push-vapid.p8), #19 DMG_SCALE 15. Next free rules number: 8 (per-body matter proposal).

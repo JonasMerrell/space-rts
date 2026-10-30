@@ -1235,7 +1235,7 @@ mod push_tests {
         assert!(s.accounts["bob"].push.is_empty(), "only push services");
         assert!(rxs[1].try_iter().any(|l| l.contains("can't push")));
 
-        s.handle(1, ClientMsg::CreateGame { name: "War".into(), size: sim::system::SystemSize::Small, length_days: 7.0, speed: 1.0, max_players: 2, bots: vec![] });
+        s.handle(1, ClientMsg::CreateGame { name: "War".into(), size: sim::system::SystemSize::Small, length_days: 7.0, speed: 1.0, max_players: 2, bots: vec![], teams: 0 });
         let code = s.games.keys().next().cloned().unwrap();
         s.handle(2, ClientMsg::JoinGame { code: code.clone() });
         s.handle(1, ClientMsg::StartGame { code: code.clone() });
