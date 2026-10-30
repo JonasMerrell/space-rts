@@ -175,7 +175,7 @@ pub const MAX_PLAYERS: u32 = 8;
 /// (mirrors sim::game::team_options).
 pub fn team_options(slots: usize) -> Vec<usize> {
     let mut v = vec![0];
-    v.extend((2..slots).filter(|t| slots % t == 0));
+    v.extend((2..slots).filter(|&t| slots.is_multiple_of(t)));
     v
 }
 

@@ -624,7 +624,7 @@ pub const MAX_PLAYERS: usize = 8;
 /// into equal teams of at least two (8 slots: FFA, 2 teams of 4, 4 teams of 2).
 pub fn team_options(slots: usize) -> Vec<usize> {
     let mut v = vec![0];
-    v.extend((2..slots).filter(|t| slots % t == 0));
+    v.extend((2..slots).filter(|&t| slots.is_multiple_of(t)));
     v
 }
 

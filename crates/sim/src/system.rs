@@ -243,7 +243,7 @@ pub fn generate_for(seed: u64, size: SystemSize, slots: usize) -> System {
             // balance: outer years were very long, so pull planets in until the outermost one
             // orbits 2x faster (T ∝ a^1.5, so a shrinks by k^-2/3), ramping from 1x at the innermost
             let k = 1.0 + i as f64 / (n_planets - 1) as f64;
-            let a = inner * ratio.powi(i as i32) * k.powf(-2.0 / 3.0) * rng.range(0.93, 1.07);
+            let a = inner * ratio.powi(i) * k.powf(-2.0 / 3.0) * rng.range(0.93, 1.07);
             // The system is time-compressed (years of hours/days), so bodies are small and dense to
             // keep their spheres of influence comfortably larger than the bodies themselves.
             // rocky planets grow outward (bigger = richer: see Game::base_yield), offsetting the slower,
@@ -415,7 +415,7 @@ mod tests {
                 assert!(rocky + giants >= 9, "{size:?} seed {seed}: {rocky} rocky + {giants} giants");
                 assert!(rocky >= giants, "inner/outer balance: {rocky} rocky vs {giants} giants");
                 // the outermost year stays playable (a few days, not weeks)
-                let last = s.bodies.iter().filter(|b| b.parent == Some(BodyId(0)) && b.kind == BodyKind::GasGiant).last().unwrap();
+                let last = s.bodies.iter().rfind(|b| b.parent == Some(BodyId(0)) && b.kind == BodyKind::GasGiant).unwrap();
                 let days = last.orbit.unwrap().period() / 86_400.0;
                 assert!(days < 21.0, "{size:?} seed {seed}: outer year {days:.1} d");
             }
