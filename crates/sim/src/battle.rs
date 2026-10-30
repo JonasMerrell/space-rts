@@ -559,7 +559,8 @@ impl Game {
                 let who = self.players[owner as usize].name.clone();
                 let bname = self.system.body(dest).name.clone();
                 let mins = ((eta - t) / self.settings.speed.max(1e-9) / 60.0).ceil().max(1.0);
-                let text = format!("{who}'s {} heading for {bname}, arriving in about {mins:.0} min", class_list(&classes));
+                // the apps count "in about N min" down from the event's time when they show it later
+                let text = format!("Battle at {bname} in about {mins:.0} min: {who}'s {} on the way", class_list(&classes));
                 self.event(Some(me), EventKind::Battle, "Enemies inbound", &text, Some(dest), None);
             }
         }
@@ -1237,7 +1238,7 @@ pub(crate) mod tests {
         assert_eq!(warnings(&g, 1), 0);
         assert_eq!(warnings(&g, 2), 0, "carol has nothing at the moon");
         let e = g.events_for(0).find(|e| e.title == "Enemies inbound").unwrap();
-        assert!(e.body.contains("Gunship") && e.body.contains("arriving in about"), "{}", e.body);
+        assert!(e.body.contains("Gunship") && e.body.contains(" in about "), "{}", e.body);
         assert!(g.players[0].warned.is_empty(), "forgotten once it landed");
     }
 }

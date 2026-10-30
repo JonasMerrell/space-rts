@@ -80,6 +80,14 @@
         return e.title !== "Retreating";
     }
 
+    // "Battle at X in about 40 min" from an event 25 min ago reads "in about 15 min" (or "now")
+    function countdown(body, when) {
+        return body.replace(/in about (\d+) min/, (_, n) => {
+            const left = Math.round(Number(n) - (Date.now() / 1000 - when) / 60);
+            return left >= 1 ? "in about " + left + " min" : "now";
+        });
+    }
+
     function showEvents(line) {
         let rows;
         try { rows = JSON.parse(line).Events; } catch (e) { return; }
@@ -89,7 +97,7 @@
             if (!worth(e) || !("Notification" in window) || Notification.permission !== "granted") continue;
             try {
                 const n = new Notification(e.title || "Hohmann's Reach", {
-                    body: e.body || "",
+                    body: countdown(e.body || "", when),
                     tag: code + "#" + e.seq,
                     icon: "icon.png",
                 });
