@@ -5,7 +5,7 @@ use sim::system::SystemSize;
 use sim::traj::Burn;
 
 fn game() -> Game {
-    let s = Settings { name: "test".into(), size: SystemSize::Medium, max_players: 2, length: 7.0 * 86_400.0, speed: 1.0 };
+    let s = Settings { name: "test".into(), size: SystemSize::Medium, max_players: 2, length: 7.0 * 86_400.0, speed: 1.0, teams: 0 };
     let mut g = Game::new("NODE".into(), s, 11, "ann");
     g.add_player("bob", None).unwrap();
     g.start();

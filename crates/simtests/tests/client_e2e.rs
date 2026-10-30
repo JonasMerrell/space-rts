@@ -47,7 +47,7 @@ fn four_phones_play_a_game_through_the_real_client_backend() {
     until(&mut bad, "LoginFailed", 10.0, |_, ev| ev.iter().any(|e| matches!(e, BackendEvent::LoginFailed(_))).then_some(()));
 
     // ann hosts; the lobby event carries the join code
-    cs[0].act(UiAction::CreateGame { name: "E2E".into(), length_days: 7, speed: 1.0, bots: vec![] });
+    cs[0].act(UiAction::CreateGame { name: "E2E".into(), length_days: 7, speed: 1.0, bots: vec![], max_players: 4, teams: 0 });
     let code = until(&mut cs[0], "Lobby", 10.0, |_, ev| {
         ev.iter().find_map(|e| if let BackendEvent::Lobby(l) = e { Some(l.code.clone()) } else { None })
     });

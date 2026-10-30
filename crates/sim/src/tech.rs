@@ -513,7 +513,7 @@ pub(crate) mod tests {
     pub(crate) fn game() -> Game {
         let mut g = Game::new(
             "ABCD".into(),
-            Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0 },
+            Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0, teams: 0 },
             5,
             "alice",
         );
@@ -584,7 +584,7 @@ pub(crate) mod tests {
     fn normal_bots_research() {
         let mut g = Game::new(
             "BOTS".into(),
-            Settings { name: "t".into(), size: SystemSize::Small, max_players: 2, length: 7.0 * 86_400.0, speed: 1.0 },
+            Settings { name: "t".into(), size: SystemSize::Small, max_players: 2, length: 7.0 * 86_400.0, speed: 1.0, teams: 0 },
             3,
             "alice",
         );

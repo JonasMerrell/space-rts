@@ -27,12 +27,24 @@ pub enum ClientMsg {
     /// Revoke the session token this device holds (logging out).
     Logout { token: String },
     ListGames,
-    CreateGame { name: String, size: SystemSize, length_days: f64, speed: f64, max_players: usize, bots: Vec<String> },
+    CreateGame {
+        name: String,
+        size: SystemSize,
+        length_days: f64,
+        speed: f64,
+        max_players: usize,
+        bots: Vec<String>,
+        /// number of teams (0 = free-for-all), see `sim::game::team_options`
+        #[serde(default)]
+        teams: usize,
+    },
     JoinGame { code: String },
     AddBot { code: String, difficulty: String },
     /// Host only, while waiting for the start.
     RemoveBot { code: String, player: PlayerId },
     SetFaction { code: String, faction: String },
+    /// Lobby: move yourself (or, as host, a bot) to another team.
+    SetTeam { code: String, player: PlayerId, team: u8 },
     StartGame { code: String },
     /// Subscribe to a game's state (unsubscribes from the previous one).
     Open { code: String },
@@ -68,7 +80,7 @@ impl ClientMsg {
             ClientMsg::CreateGame { name, length_days, speed, bots, .. } => {
                 name.len() <= 200 && ok_f(*length_days) && ok_f(*speed) && bots.len() <= 16 && bots.iter().all(|b| short(b))
             }
-            ClientMsg::JoinGame { code } | ClientMsg::StartGame { code } | ClientMsg::Open { code } | ClientMsg::RemoveBot { code, .. } | ClientMsg::DeleteGame { code } => short(code),
+            ClientMsg::JoinGame { code } | ClientMsg::StartGame { code } | ClientMsg::Open { code } | ClientMsg::RemoveBot { code, .. } | ClientMsg::DeleteGame { code } | ClientMsg::SetTeam { code, .. } => short(code),
             ClientMsg::AddBot { code, difficulty } => short(code) && short(difficulty),
             ClientMsg::SetFaction { code, faction } => short(code) && short(faction),
             ClientMsg::Cmd { code, .. } => short(code),

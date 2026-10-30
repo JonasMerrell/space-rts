@@ -5,7 +5,7 @@ use sim::system::SystemSize;
 use sim::{BodyId, V2};
 
 fn game4(seed: u64) -> Game {
-    let s = Settings { name: "fog".into(), size: SystemSize::Large, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0 };
+    let s = Settings { name: "fog".into(), size: SystemSize::Large, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0, teams: 0 };
     let mut g = Game::new("FOGG".into(), s, seed, "ann");
     for n in ["bob", "cat", "dan"] {
         g.add_player(n, None).unwrap();

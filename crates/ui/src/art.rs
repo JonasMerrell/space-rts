@@ -8,7 +8,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 pub const SKINS: [&str; 4] = ["vanguard", "hive", "prism", "junker"];
-const TEAM_NAMES: [&str; 4] = ["blue", "red", "green", "yellow"];
+const TEAM_NAMES: [&str; 8] = ["blue", "red", "green", "yellow", "orange", "violet", "pink", "teal"];
 const CLASSES: [&str; 9] = ["scout", "interceptor", "gunship", "bomber", "tanker", "tug", "decoy", "torpedo", "slug"];
 const PLANETS: [&str; 11] = [
     "planet_terran", "planet_ocean", "planet_desert", "planet_ice", "planet_lava", "planet_barren", "planet_toxic",
@@ -170,7 +170,7 @@ pub fn ship_tex(class: ShipClass, skin: &str, team: Option<usize>) -> Option<Tex
         ShipClass::Torpedo => "torpedo",
         ShipClass::Slug => "slug",
     };
-    let team = team.map(|t| TEAM_NAMES[t % 4]).unwrap_or("neutral");
+    let team = team.map(|t| TEAM_NAMES[t % TEAM_NAMES.len()]).unwrap_or("neutral");
     let skin = if SKINS.contains(&skin) { skin } else { "vanguard" };
     tex(&format!("sprites/ships/{skin}/{class}_{team}.png"))
 }

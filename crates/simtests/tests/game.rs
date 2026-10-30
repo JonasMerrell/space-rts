@@ -6,7 +6,7 @@ use sim::{BodyId, BodyKind};
 const HOUR: f64 = 3600.0;
 
 fn settings(players: usize) -> Settings {
-    Settings { name: "test".into(), size: SystemSize::Medium, max_players: players, length: 7.0 * 86_400.0, speed: 1.0 }
+    Settings { name: "test".into(), size: SystemSize::Medium, max_players: players, length: 7.0 * 86_400.0, speed: 1.0, teams: 0 }
 }
 
 /// A started 4-player game.

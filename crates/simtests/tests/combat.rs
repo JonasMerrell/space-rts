@@ -10,7 +10,7 @@ fn ship(rng: &mut Rng, key: u64, owner: u32) -> Combatant {
     let class = classes[rng.below(classes.len() as u32) as usize];
     let st = class.stats();
     Combatant {
-        key, owner, class: Some(class), weapon: st.weapon, attack: st.attack, hp: st.hp,
+        key, owner, side: owner, class: Some(class), weapon: st.weapon, attack: st.attack, hp: st.hp,
         pos: rand_dir(rng) * rng.range(0.0, 6000.0), vel: rand_dir(rng) * rng.range(0.0, 20.0),
         size: size(class), evade: evasion(class), dmg_mult: 1.0, acc_mult: 1.0,
     }

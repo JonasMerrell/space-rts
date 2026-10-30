@@ -159,16 +159,39 @@ pub struct Menu {
     /// game seconds per real second
     pub speed: f64,
     pub bots: Vec<usize>,
+    /// pilot slots, 2..=MAX_PLAYERS
+    pub slots: u32,
+    /// number of teams (0 = free-for-all), one of `team_options(slots)`
+    pub teams: usize,
     pub error: Option<String>,
     pub user: String,
     scroll: f32,
+}
+
+/// Most pilots in one war (sim::game::MAX_PLAYERS).
+pub const MAX_PLAYERS: u32 = 8;
+
+/// Team splits for `slots` pilots: 0 (free-for-all) and every equal split into teams of two or more
+/// (mirrors sim::game::team_options).
+pub fn team_options(slots: usize) -> Vec<usize> {
+    let mut v = vec![0];
+    v.extend((2..slots).filter(|&t| slots.is_multiple_of(t)));
+    v
+}
+
+/// "FREE-FOR-ALL", "2v2", "4v4", "2v2v2v2".
+pub fn team_label(slots: usize, teams: usize) -> String {
+    if teams < 2 {
+        return "FREE-FOR-ALL".into();
+    }
+    vec![(slots / teams).to_string(); teams].join("v")
 }
 
 impl Menu {
     pub fn new(user: String) -> Self {
         let mut new_name = TextField::new(false);
         new_name.text = format!("{}'s war", user);
-        Menu { join: TextField::code(), creating: false, new_name, length_days: 14, speed: 1.0, bots: vec![], error: None, user, scroll: 0.0 }
+        Menu { join: TextField::code(), creating: false, new_name, length_days: 14, speed: 1.0, bots: vec![], slots: 4, teams: 0, error: None, user, scroll: 0.0 }
     }
 
     pub fn draw(&mut self, inp: &mut Input, be: &mut dyn Backend) {
@@ -277,17 +300,44 @@ impl Menu {
         let note = format!("{} days of game time in {}", self.length_days, real_len(real_h));
         text(&note, col.x + 4.0 * s(), col.y, 14.0, MUTED, FontKind::Body, Align::Left);
         col.gap(26.0);
+        text("PILOTS", col.x + 4.0 * s(), col.y, 18.0, MUTED, FontKind::Title, Align::Left);
+        col.gap(14.0);
+        let r = col.row(52.0);
+        let slots = widgets::stepper(inp, r, &format!("{} PILOTS", self.slots), self.slots, 2, MAX_PLAYERS);
+        if slots != self.slots {
+            self.slots = slots;
+            self.bots.truncate(slots as usize - 1);
+            if !team_options(slots as usize).contains(&self.teams) {
+                self.teams = 0;
+            }
+        }
+        let options = team_options(self.slots as usize);
+        if options.len() > 1 {
+            text("TEAMS", col.x + 4.0 * s(), col.y, 18.0, MUTED, FontKind::Title, Align::Left);
+            col.gap(14.0);
+            let r = col.row(44.0);
+            let n = options.len() as f32;
+            let cw = (r.w - (n - 1.0) * 12.0 * s()) / n;
+            for (i, &t) in options.iter().enumerate() {
+                let cr = Rect::new(r.x + i as f32 * (cw + 12.0 * s()), r.y, cw, r.h);
+                if widgets::chip(inp, cr, &team_label(self.slots as usize, t), self.teams == t, ACCENT) && self.teams != t {
+                    art::sfx("menu_select");
+                    self.teams = t;
+                }
+            }
+        }
         text("BOTS (fill empty seats)", col.x + 4.0 * s(), col.y, 18.0, MUTED, FontKind::Title, Align::Left);
         col.gap(14.0);
         let r = col.row(44.0);
         let cw = (r.w - 2.0 * 12.0 * s()) / 3.0;
+        let seats = self.slots as usize - 1;
         for (i, lvl) in BOT_LEVELS.iter().enumerate() {
             let n = self.bots.iter().filter(|&&b| b == i).count();
             let label = if n > 0 { format!("{lvl} ×{n}") } else { lvl.to_string() };
             let cr = Rect::new(r.x + i as f32 * (cw + 12.0 * s()), r.y, cw, r.h);
             if widgets::chip(inp, cr, &label, n > 0, [GOOD, ACCENT, DANGER][i]) {
-                art::sfx(if self.bots.len() < 3 { "toggle_on" } else { "toggle_off" });
-                if self.bots.len() < 3 {
+                art::sfx(if self.bots.len() < seats { "toggle_on" } else { "toggle_off" });
+                if self.bots.len() < seats {
                     self.bots.push(i);
                 } else {
                     self.bots.retain(|&b| b != i);
@@ -303,6 +353,8 @@ impl Menu {
                 length_days: self.length_days,
                 speed: self.speed,
                 bots: self.bots.iter().map(|&b| BOT_LEVELS[b].to_lowercase()).collect(),
+                max_players: self.slots as usize,
+                teams: self.teams,
             });
             self.creating = false;
         }

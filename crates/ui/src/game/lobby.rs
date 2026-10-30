@@ -23,7 +23,7 @@ pub fn draw_home(be: &dyn Backend, view: &GameView, cam: &Camera, t: f64) {
     let Some(home) = view.home.and_then(|h| view.body(h)) else { return };
     let c = cam.to_screen(be.body_pos(home.id, t));
     let r = map::body_radius_px(home, cam) + 10.0 * s();
-    let (light, _) = TEAMS[view.players.iter().find(|p| p.id == view.me).map(|p| p.color).unwrap_or(0) % 4];
+    let (light, _) = TEAMS[view.players.iter().find(|p| p.id == view.me).map(|p| p.color).unwrap_or(0) % TEAMS.len()];
     let pulse = 1.0 + 0.06 * (get_time() as f32 * 3.0).sin();
     draw_circle_lines(c.x, c.y, r * pulse, 2.5 * s(), light);
     let label = "YOUR HOME";
@@ -62,7 +62,7 @@ pub fn overlay(g: &mut GameScreen, inp: &mut Input, view: &GameView, info: &Lobb
         format!("{} DAYS", info.length_days)
     };
     text(
-        &format!("{}/{} PILOTS · {len}", info.players.len(), info.max_players),
+        &format!("{}/{} PILOTS{} · {len}", info.players.len(), info.max_players, if info.teams >= 2 { format!(" · {}", crate::screens::team_label(info.max_players, info.teams)) } else { String::new() }),
         banner.x + banner.w - 14.0 * s(),
         banner.y + 92.0 * s(),
         13.0,
@@ -108,8 +108,10 @@ pub fn overlay(g: &mut GameScreen, inp: &mut Input, view: &GameView, info: &Lobb
     }
 
     // -- roster sheet (collapsible so the map can be looked at)
-    let row_h = 44.0 * s();
-    let gap = 8.0 * s();
+    // up to 8 pilots: compact one-line rows past four so the map stays visible on a phone
+    let compact = info.max_players > 4;
+    let row_h = if compact { 34.0 } else { 44.0 } * s();
+    let gap = if compact { 5.0 } else { 8.0 } * s();
     let bottom = screen_height() - safe_bottom() - margin();
     let btn_h = 52.0 * s();
     let footer = btn_h + gap;
@@ -130,23 +132,26 @@ pub fn overlay(g: &mut GameScreen, inp: &mut Input, view: &GameView, info: &Lobb
     }
     let mut y = sheet.y + header;
     if g.lobby_roster {
+        // team games list the pilots team by team
+        let mut order: Vec<&Player> = info.players.iter().collect();
+        order.sort_by_key(|p| (p.team, p.id));
+        let team_cap = if info.teams >= 2 { info.max_players / info.teams } else { info.max_players };
         for i in 0..info.max_players {
             let r = Rect::new(sheet.x + 10.0 * s(), y, sheet.w - 20.0 * s(), row_h);
             y += row_h + gap;
-            let Some(p) = info.players.get(i) else {
+            let Some(p) = order.get(i).copied() else {
                 cel::round_rect(r, 8.0 * s(), alpha(PAPER, 0.05));
                 text("open slot · share the code", r.center().x, r.center().y, 14.0, MUTED, FontKind::Body, Align::Center);
                 continue;
             };
             cel::round_rect(r, 8.0 * s(), alpha(PAPER, 0.06));
             let c = vec2(r.x + 22.0 * s(), r.center().y);
-            let (l, d) = TEAMS[p.color % 4];
-            cel::body(c, 13.0 * s(), l, d);
+            let (l, d) = TEAMS[p.color % TEAMS.len()];
+            cel::body(c, if compact { 11.0 } else { 13.0 } * s(), l, d);
             if let Some(t) = art::tex(&format!("sprites/emblems/{}.png", art::skin_of(&p.faction))) {
-                art::draw_centered(&t, c, vec2(20.0, 20.0) * s(), 0.0, WHITE);
+                art::draw_centered(&t, c, vec2(20.0, 20.0) * s() * if compact { 0.85 } else { 1.0 }, 0.0, WHITE);
             }
             let me = if p.id == view.me { " (you)" } else { "" };
-            text(&format!("{}{me}", p.name), r.x + 44.0 * s(), r.y + 15.0 * s(), 16.0, PAPER, FontKind::Title, Align::Left);
             let role = if p.id == info.host {
                 "host"
             } else if !p.online {
@@ -154,11 +159,32 @@ pub fn overlay(g: &mut GameScreen, inp: &mut Input, view: &GameView, info: &Lobb
             } else {
                 "pilot"
             };
-            text(&format!("{} · {role}", p.faction.to_lowercase()), r.x + 44.0 * s(), r.y + 32.0 * s(), 12.0, MUTED, FontKind::Body, Align::Left);
+            if compact {
+                text(&format!("{}{me}", p.name), r.x + 40.0 * s(), r.center().y, 14.0, PAPER, FontKind::Title, Align::Left);
+            } else {
+                text(&format!("{}{me}", p.name), r.x + 44.0 * s(), r.y + 15.0 * s(), 16.0, PAPER, FontKind::Title, Align::Left);
+                text(&format!("{} · {role}", p.faction.to_lowercase()), r.x + 44.0 * s(), r.y + 32.0 * s(), 12.0, MUTED, FontKind::Body, Align::Left);
+            }
+            let inset = if compact { 4.0 } else { 7.0 } * s();
+            let mut right = r.x + r.w - 6.0 * s();
             if host && !p.online && p.id != info.host {
-                let br = Rect::new(r.x + r.w - 92.0 * s(), r.y + 7.0 * s(), 86.0 * s(), r.h - 14.0 * s());
+                let br = Rect::new(right - 86.0 * s(), r.y + inset, 86.0 * s(), r.h - 2.0 * inset);
+                right = br.x - 6.0 * s();
                 if widgets::button(inp, br, "REMOVE", Style::Ghost) {
                     g.emit(UiAction::RemoveBot { player: p.id });
+                }
+            }
+            // team chip: tap your own (or, as host, a bot's) to move to the next team with room
+            if let Some(team) = p.team {
+                let tr = Rect::new(right - 64.0 * s(), r.y + inset, 64.0 * s(), r.h - 2.0 * inset);
+                let movable = p.id == view.me || (host && !p.online);
+                if widgets::chip(inp, tr, &format!("TEAM {}", team + 1), true, if movable { ACCENT } else { MUTED }) && movable {
+                    let n = info.teams.max(1) as u8;
+                    let next = (1..n).map(|k| (team + k) % n).find(|&t| info.players.iter().filter(|q| q.team == Some(t)).count() < team_cap);
+                    if let Some(t) = next {
+                        art::sfx("menu_select");
+                        g.emit(UiAction::SetTeam { player: p.id, team: t });
+                    }
                 }
             }
         }

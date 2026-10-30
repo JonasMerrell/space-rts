@@ -280,7 +280,7 @@ mod tests {
     fn game() -> Game {
         let mut g = Game::new(
             "ABCD".into(),
-            Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0 },
+            Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0, teams: 0 },
             5,
             "alice",
         );

@@ -563,7 +563,7 @@ impl Game {
             }
         }
         let t = self.ship(hint.target).ok_or("that ship is gone")?;
-        if t.owner == player {
+        if self.allied(t.owner, player) {
             return Err("that's one of ours".into());
         }
         let known = self.known_ship(player, hint.target).ok_or("target is out of sensor range")?;
@@ -745,7 +745,7 @@ mod tests {
     }
 
     pub(crate) fn chase_game_with(mine: ShipClass, theirs: ShipClass) -> (Game, ShipId, ShipId) {
-        let mut g = Game::new("T".into(), Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0 }, 7, "a");
+        let mut g = Game::new("T".into(), Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0, teams: 0 }, 7, "a");
         g.add_player("b", None).unwrap();
         g.start();
         let planets: Vec<BodyId> = g.system.bodies.iter().filter(|b| matches!(b.kind, BodyKind::Planet)).map(|b| b.id).collect();

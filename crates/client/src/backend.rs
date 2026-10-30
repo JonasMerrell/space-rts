@@ -892,18 +892,20 @@ fn lobby_info(game: &Game) -> m::LobbyInfo {
     m::LobbyInfo {
         code: game.code.clone(),
         name: game.settings.name.clone(),
-        players: game.players.iter().map(|p| player_model(p)).collect(),
+        players: game.players.iter().map(|p| player_model(game, p)).collect(),
         max_players: game.settings.max_players,
         host: game.host,
         length_days: (game.settings.length / 86_400.0).round() as u32,
         speed: game.settings.speed,
         pace: game.pace(),
         bots: game.players.iter().filter_map(|p| p.bot.clone()).collect(),
+        teams: if game.team_game() { game.settings.teams } else { 0 },
     }
 }
 
-fn player_model(p: &g::Player) -> m::Player {
-    m::Player { id: p.id, name: p.name.clone(), color: p.color, faction: p.faction.clone(), online: p.bot.is_none() }
+fn player_model(game: &Game, p: &g::Player) -> m::Player {
+    let team = game.team_game().then_some(p.team);
+    m::Player { id: p.id, name: p.name.clone(), color: p.color, faction: p.faction.clone(), online: p.bot.is_none(), team }
 }
 
 fn ship_class(c: g::ShipClass) -> m::ShipClass {
@@ -1232,7 +1234,7 @@ fn build_view(game: &Game, me: g::PlayerId, now: f64, paths: &HashMap<u32, m::Tr
         pace: game.pace(),
         bodies,
         ships,
-        players: game.players.iter().map(player_model).collect(),
+        players: game.players.iter().map(|p| player_model(game, p)).collect(),
         resources: res,
         chat: game.chat.iter().map(|c| m::ChatMsg { from: c.from, t: c.t, text: c.text.clone() }).collect(),
         lobby: (game.status == Status::Lobby).then(|| lobby_info(game)),
@@ -1380,13 +1382,14 @@ impl Backend for ClientBackend {
                 self.forecast.clear();
                 self.events.push(BackendEvent::LoggedOut);
             }
-            UiAction::CreateGame { name, length_days, speed, bots } => self.send(ClientMsg::CreateGame {
+            UiAction::CreateGame { name, length_days, speed, bots, max_players, teams } => self.send(ClientMsg::CreateGame {
                 name,
                 size: SystemSize::Medium,
                 length_days: length_days as f64,
                 speed,
-                max_players: 4,
+                max_players,
                 bots,
+                teams,
             }),
             // opening a game always ends on the game screen, even if it's the one we had before
             UiAction::JoinGame { code } => {
@@ -1411,6 +1414,11 @@ impl Backend for ClientBackend {
             UiAction::RemoveBot { player } => {
                 if let Some(code) = code {
                     self.send(ClientMsg::RemoveBot { code, player });
+                }
+            }
+            UiAction::SetTeam { player, team } => {
+                if let Some(code) = code {
+                    self.send(ClientMsg::SetTeam { code, player, team });
                 }
             }
             UiAction::SetFaction(faction) => {
@@ -1827,7 +1835,7 @@ impl Backend for ClientBackend {
         let g = self.game.as_ref().filter(|g| g.status == Status::Ended)?;
         let mut scores: Vec<(m::PlayerId, u32)> = g.players.iter().map(|p| (p.id, g.score(p.id))).collect();
         scores.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        Some(m::GameResults { winner: g.winner, scores, ended_at: g.end_t })
+        Some(m::GameResults { winner: g.winner, winning_team: g.winning_team, scores, ended_at: g.end_t })
     }
 
     fn construction_done(&self, body: BodyId) -> Option<f64> {
@@ -2360,7 +2368,7 @@ mod tests {
 
     #[test]
     fn the_battle_screen_runs_the_servers_battle() {
-        let settings = g::Settings { name: "t".into(), size: SystemSize::Medium, max_players: 2, length: 86_400.0, speed: 1.0 };
+        let settings = g::Settings { name: "t".into(), size: SystemSize::Medium, max_players: 2, length: 86_400.0, speed: 1.0, teams: 0 };
         let mut game = Game::new("BTL".into(), settings, 7, "ann");
         game.add_player("bob", None).unwrap();
         game.start();
@@ -2393,7 +2401,7 @@ mod tests {
 
     #[test]
     fn node_preview_from_orbit_matches_the_departure_the_server_schedules() {
-        let settings = g::Settings { name: "t".into(), size: SystemSize::Medium, max_players: 2, length: 86_400.0, speed: 1.0 };
+        let settings = g::Settings { name: "t".into(), size: SystemSize::Medium, max_players: 2, length: 86_400.0, speed: 1.0, teams: 0 };
         let mut game = Game::new("NODE".into(), settings, 5, "ann");
         game.add_player("bob", None).unwrap();
         game.start();
@@ -2411,7 +2419,7 @@ mod tests {
 
     #[test]
     fn fleets_show_as_one_token_that_maps_back_to_its_ships() {
-        let settings = g::Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 86_400.0, speed: 1.0 };
+        let settings = g::Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 86_400.0, speed: 1.0, teams: 0 };
         let mut game = Game::new("FLT2".into(), settings, 5, "ann");
         game.add_player("bob", None).unwrap();
         game.start();
@@ -2444,7 +2452,7 @@ mod tests {
         // Jonas: "can't do that: no such ship" forming a fleet. Scrubbed ahead, ships still in a
         // build queue (ids from PLANNED_BASE) sit parked at their yard and could be picked; the
         // server has no such ship. Same for a fleet token whose fleet dissolved meanwhile.
-        let settings = g::Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 86_400.0, speed: 1.0 };
+        let settings = g::Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 86_400.0, speed: 1.0, teams: 0 };
         let mut game = Game::new("FLT3".into(), settings, 5, "ann");
         game.add_player("bob", None).unwrap();
         game.start();
@@ -2458,7 +2466,7 @@ mod tests {
 
     #[test]
     fn enemy_ships_together_show_as_one_counted_token_of_detected_ships_only() {
-        let settings = g::Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 86_400.0, speed: 1.0 };
+        let settings = g::Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 86_400.0, speed: 1.0, teams: 0 };
         let mut game = Game::new("EFC1".into(), settings, 5, "ann");
         game.add_player("bob", None).unwrap();
         game.start();
@@ -2483,7 +2491,7 @@ mod tests {
 
     #[test]
     fn snapshots_reuse_unchanged_courses() {
-        let settings = g::Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 86_400.0, speed: 1.0 };
+        let settings = g::Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 86_400.0, speed: 1.0, teams: 0 };
         let mut game = Game::new("CRS1".into(), settings, 7, "ann");
         game.add_player("bob", None).unwrap();
         game.start();

@@ -86,9 +86,9 @@ impl Game {
         let stations_too = self.has_tech(owner, Tech::FusionWarheads);
         // spread over everything hostile in that orbit, by share
         let bi = body.0 as usize;
-        let defense = self.bodies[bi].owner.filter(|&o| o != owner && self.bodies[bi].def_hp > 0.0).is_some();
-        let ships: Vec<usize> = (0..self.ships.len()).filter(|&i| self.ships[i].owner != owner && self.ships[i].parked_at() == Some(body)).collect();
-        let stations: Vec<usize> = if stations_too { (0..self.stations.len()).filter(|&i| self.stations[i].owner != owner && self.stations[i].body == body).collect() } else { vec![] };
+        let defense = self.bodies[bi].owner.filter(|&o| !self.allied(o, owner) && self.bodies[bi].def_hp > 0.0).is_some();
+        let ships: Vec<usize> = (0..self.ships.len()).filter(|&i| !self.allied(self.ships[i].owner, owner) && self.ships[i].parked_at() == Some(body)).collect();
+        let stations: Vec<usize> = if stations_too { (0..self.stations.len()).filter(|&i| !self.allied(self.stations[i].owner, owner) && self.stations[i].body == body).collect() } else { vec![] };
         let n = (ships.len() + stations.len() + defense as usize).max(1) as f64;
         let each = dmg / n;
         if defense {
@@ -155,7 +155,7 @@ impl Game {
             }
             let target = s.intercept.as_ref().map(|o| o.target);
             let pick = (0..self.ships.len())
-                .filter(|&j| j != i && self.ships[j].owner != s.owner && !is_ordnance(self.ships[j].class) && !dead.contains(&j))
+                .filter(|&j| j != i && !self.allied(self.ships[j].owner, s.owner) && !is_ordnance(self.ships[j].class) && !dead.contains(&j))
                 .filter(|&j| pos[j].dist(pos[i]) <= DETONATE_RANGE)
                 .min_by(|&a, &b| {
                     let pa = (Some(self.ships[a].id) != target, pos[a].dist(pos[i]));

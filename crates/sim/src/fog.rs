@@ -243,12 +243,18 @@ impl Game {
         let pos = self.ship_positions();
         let t = self.t;
         let sig = self.signatures();
+        // teammates share their sensor picture
+        let own: Vec<Vec<Sensor>> = (0..self.players.len()).map(|p| self.sensors_with(p as PlayerId, &pos)).collect();
         for p in 0..self.players.len() {
             let me = p as PlayerId;
-            let sensors = self.sensors_with(me, &pos);
+            let sensors: Vec<Sensor> = if self.team_game() {
+                self.allies(me).into_iter().flat_map(|q| own[q as usize].iter().copied()).collect()
+            } else {
+                own[p].clone()
+            };
             let mut v = Vision { t, ..Default::default() };
             for (i, s) in self.ships.iter().enumerate() {
-                if s.owner == me {
+                if self.allied(me, s.owner) {
                     v.ships.push(s.id);
                     continue;
                 }
@@ -263,7 +269,7 @@ impl Game {
             for i in 0..self.bodies.len() {
                 let b = BodyId(i as u32);
                 let pos = self.system.pos(b, t);
-                if self.bodies[i].owner == Some(me) || sees_point(&sensors, pos) {
+                if self.bodies[i].owner.is_some_and(|o| self.allied(me, o)) || sees_point(&sensors, pos) {
                     v.bodies.push(b);
                 }
                 if sensors.iter().any(|s| s.kind == SensorKind::Scanner && s.pos.dist(pos) <= s.range) {
@@ -323,7 +329,7 @@ impl Game {
                 !sees_point(&sensors, self.ghost_pos(c, t))
             });
                 for s in &self.ships {
-                if s.owner != me && v.ships.binary_search(&s.id).is_ok() {
+                if !self.allied(me, s.owner) && v.ships.binary_search(&s.id).is_ok() {
                     contacts.push(Contact { seen_t: t, ship: self.redact(s, false) });
                 }
             }
@@ -352,7 +358,7 @@ impl Game {
             }
         };
         for (i, s) in self.ships.iter().enumerate() {
-            if s.owner == me {
+            if self.allied(me, s.owner) {
                 continue;
             }
             let now = v.ships.binary_search(&s.id).is_ok();
@@ -520,7 +526,12 @@ impl Game {
             .ships
             .iter()
             .filter(|s| s.owner == p || v.ships.binary_search(&s.id).is_ok())
-            .map(|s| if s.owner == p { s.clone() } else { self.redact(s, see_decoys && s.class == ShipClass::Decoy || v.scanned.binary_search(&s.id).is_ok()) })
+            .map(|s| match () {
+                _ if s.owner == p => s.clone(),
+                // teammates' plans are shared, like a scanner reading
+                _ if self.allied(p, s.owner) => self.redact(s, true),
+                _ => self.redact(s, see_decoys && s.class == ShipClass::Decoy || v.scanned.binary_search(&s.id).is_ok()),
+            })
             .collect();
         g.next_ship = g.ships.iter().map(|s| s.id.0 + 1).max().unwrap_or(0);
         // live battles: only the ones you're in, without the ships you can't see. Enemy ships fighting
@@ -542,14 +553,14 @@ impl Game {
         // stations are big: seen whenever their body is
         g.stations.retain(|st| st.owner == p || v.bodies.binary_search(&st.body).is_ok());
         // mines are only seen by their owner and by scanning stations
-        g.minefields.retain(|m| m.owner == p || v.scanned_bodies.contains(&m.body));
+        g.minefields.retain(|m| self.allied(p, m.owner) || v.scanned_bodies.contains(&m.body));
         for st in g.stations.iter_mut().filter(|st| st.owner != p) {
             st.fuel = 0.0;
         }
         g.drives = self.visible_drives(p, v);
         g.bodies = (0..self.bodies.len())
             .map(|i| {
-                let mut b = if self.bodies[i].owner == Some(p) {
+                let mut b = if self.bodies[i].owner.is_some_and(|o| self.allied(p, o)) {
                     self.bodies[i].clone()
                 } else if v.bodies.binary_search(&BodyId(i as u32)).is_ok() {
                     self.bodies[i].clone()

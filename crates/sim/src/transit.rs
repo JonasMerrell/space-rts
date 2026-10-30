@@ -56,8 +56,8 @@ impl Game {
     /// Does an enemy out-gun `p` in orbit of `body`?
     fn held_against(&self, p: PlayerId, body: BodyId) -> bool {
         let pw = self.power_at(body);
-        let mine = pw.iter().filter(|x| x.0 == p).map(|x| x.1).sum::<f64>();
-        pw.iter().any(|x| x.0 != p && x.1 > mine)
+        let mine = pw.iter().filter(|x| self.allied(x.0, p)).map(|x| x.1).sum::<f64>();
+        pw.iter().any(|x| !self.allied(x.0, p) && x.1 > mine)
     }
 
     /// Why these ships can't jump from where they are to `to` (None = they can).

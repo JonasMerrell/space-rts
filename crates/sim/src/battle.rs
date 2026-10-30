@@ -273,7 +273,7 @@ impl Game {
     /// Can `a` shoot at `b`? (Different sides, not parked at different bodies, dark ships only by
     /// those who see them, defenses don't shoot defenses.)
     fn may_target(&self, a: &Now, b: &Now) -> bool {
-        a.c.owner != b.c.owner
+        a.c.side != b.c.side
             && !(a.parked.is_some() && b.parked.is_some() && a.parked != b.parked)
             && !b.dark.is_some_and(|id| !self.seen_by(a.c.owner, id))
             && !(a.c.is_defense() && b.c.is_defense())
@@ -508,6 +508,9 @@ impl Game {
 
     fn battle_step(&mut self, bi: usize) {
         let t = self.t;
+        // allies (team wars) never shoot each other's salvos down or dodge them
+        let side_of: Vec<PlayerId> = (0..self.players.len() as PlayerId).map(|p| self.side(p)).collect();
+        let sd = |p: PlayerId| side_of.get(p as usize).copied().unwrap_or(p);
         let dt = BATTLE_DT;
         let mut b = std::mem::replace(&mut self.battles[bi], Battle { id: 0, body: None, free: None, start_t: 0.0, fighters: vec![], salvos: vec![], hits: vec![], next_salvo: 0, rng: 0, sides: vec![], lost: vec![] });
         let mut rng = Rng(b.rng);
@@ -562,7 +565,7 @@ impl Game {
             // evasive ships only shoot when nothing is coming at them
             if let Some(si) = a.ship {
                 let st = self.ships[si].stance.resolve(self.ships[si].class);
-                if st == Stance::Evasive && threat(&b.salvos, (fp, fv), a).is_some() {
+                if st == Stance::Evasive && threat(&b.salvos, &side_of, (fp, fv), a).is_some() {
                     continue;
                 }
             }
@@ -598,7 +601,7 @@ impl Game {
             if let Some((x, radius)) = ground {
                 let tc = if s.vel.len2() > 0.0 { (-s.pos.dot(s.vel) / s.vel.len2()).clamp(0.0, dt) } else { 0.0 };
                 if (s.pos + s.vel * tc).len() <= radius {
-                    let guns = (0..n).find(|&j| b.fighters[j].unit == Unit::Defense(x) && now[j].c.owner != s.owner && s.aimed_at == Unit::Defense(x));
+                    let guns = (0..n).find(|&j| b.fighters[j].unit == Unit::Defense(x) && now[j].c.side != sd(s.owner) && s.aimed_at == Unit::Defense(x));
                     if let Some(j) = guns {
                         hit = Some((tc, j, (s.vel + fv - now[j].c.vel).len()));
                     } else {
@@ -608,7 +611,7 @@ impl Game {
             }
             for j in 0..n {
                 let c = &now[j].c;
-                if c.owner == s.owner || c.hp - dmg[j] <= 0.0 || matches!(b.fighters[j].unit, Unit::Defense(_)) {
+                if c.side == sd(s.owner) || c.hp - dmg[j] <= 0.0 || matches!(b.fighters[j].unit, Unit::Defense(_)) {
                     continue;
                 }
                 let r0 = s.pos + fp - c.pos;
@@ -694,7 +697,7 @@ impl Game {
                 V2::ZERO
             } else {
                 let enemies: Vec<&Now> = (0..n).filter(|&j| j != i && now[j].c.hp - dmg[j] > 0.0 && self.may_target(&now[j], &now[i])).map(|j| &now[j]).collect();
-                let (w, dodge) = autopilot(ship, f, &now[i], &enemies, &b.salvos, (fp, fv));
+                let (w, dodge) = autopilot(ship, f, &now[i], &enemies, &b.salvos, &side_of, (fp, fv));
                 dodging = dodge;
                 w
             };
@@ -757,7 +760,7 @@ impl Game {
                     stay[i] = true;
                 }
             }
-            if !stay[i] && b.salvos.iter().any(|s| s.owner != now[i].c.owner && (s.pos + fp).dist(now[i].c.pos) < 2.0 * DISENGAGE) {
+            if !stay[i] && b.salvos.iter().any(|s| sd(s.owner) != now[i].c.side && (s.pos + fp).dist(now[i].c.pos) < 2.0 * DISENGAGE) {
                 stay[i] = true;
             }
         }
@@ -828,9 +831,9 @@ impl Game {
 
 /// The enemy salvo that will pass closest to `me` soonest, if any comes near enough to burst:
 /// (seconds to closest approach, where it will be relative to `me` then, relative velocity).
-fn threat(salvos: &[Salvo], frame: (V2, V2), me: &Now) -> Option<(f64, V2, V2)> {
+fn threat(salvos: &[Salvo], sides: &[PlayerId], frame: (V2, V2), me: &Now) -> Option<(f64, V2, V2)> {
     let mut best: Option<(f64, V2, V2)> = None;
-    for s in salvos.iter().filter(|s| s.owner != me.c.owner) {
+    for s in salvos.iter().filter(|s| sides.get(s.owner as usize).copied().unwrap_or(s.owner) != me.c.side) {
         let r = s.pos + frame.0 - me.c.pos;
         let rv = s.vel + frame.1 - me.c.vel;
         if rv.len2() <= 0.0 {
@@ -849,13 +852,13 @@ fn threat(salvos: &[Salvo], frame: (V2, V2), me: &Now) -> Option<(f64, V2, V2)> 
 }
 
 /// The Δv a ship's stance wants this step (km/s; the caller limits it to the ship's thrust).
-fn autopilot(ship: &Ship, f: &Fighter, me: &Now, enemies: &[&Now], salvos: &[Salvo], frame: (V2, V2)) -> (V2, bool) {
+fn autopilot(ship: &Ship, f: &Fighter, me: &Now, enemies: &[&Now], salvos: &[Salvo], sides: &[PlayerId], frame: (V2, V2)) -> (V2, bool) {
     let stance = ship.stance.resolve(ship.class);
     let full = ship.stats().fuel_cap.max(1e-9);
     // nimble ships can afford to dodge more (an interceptor's thrust gets the whole budget)
     let budget = DODGE_BUDGET * (thrust(ship.class) / thrust(ShipClass::Interceptor)).min(1.5) * if stance == Stance::Evasive { 2.5 } else { 1.0 };
     // dodge: burn sideways out of the salvo's path
-    if let Some((tc, miss, rv)) = threat(salvos, frame, me) {
+    if let Some((tc, miss, rv)) = threat(salvos, sides, frame, me) {
         if f.dodged < budget && (ship.fuel > FUEL_RESERVE * full || (stance == Stance::Evasive && ship.fuel > 0.1 * full)) {
             let across = rv.perp().norm();
             // moving along the salvo's path doesn't help: get clear sideways, away from where it'll pass
@@ -914,7 +917,7 @@ pub(crate) mod tests {
 
     /// Three players, everything cleared, and a free moon to fight over.
     pub(crate) fn arena() -> (Game, BodyId) {
-        let settings = Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 14.0 * 86_400.0, speed: 1.0 };
+        let settings = Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 14.0 * 86_400.0, speed: 1.0, teams: 0 };
         let mut g = Game::new("T".into(), settings, 7, "a");
         g.add_player("b", None).unwrap();
         g.add_player("c", None).unwrap();

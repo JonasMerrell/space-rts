@@ -44,7 +44,7 @@ async fn main() {
     let mut be = ClientBackend::new(addr);
     be.act(UiAction::Login { server: String::new(), user: "Jonas".into(), pass: "pw".into(), register: true, invite: String::new() });
     pump(&mut be, 5.0, |_, ev| ev.iter().any(|e| matches!(e, BackendEvent::LoggedIn { .. })));
-    be.act(UiAction::CreateGame { name: "Sensors test".into(), length_days: 7, speed, bots: vec!["hard".into(), "hard".into(), "normal".into()] });
+    be.act(UiAction::CreateGame { name: "Sensors test".into(), length_days: 7, speed, bots: vec!["hard".into(), "hard".into(), "normal".into()], max_players: 4, teams: 0 });
     pump(&mut be, 5.0, |_, ev| ev.iter().any(|e| matches!(e, BackendEvent::Lobby(_))));
     be.act(UiAction::StartGame);
     pump(&mut be, 10.0, |b, _| b.view().is_some_and(|v| v.lobby.is_none() && v.bodies.iter().any(|b| b.owner == Some(v.me))));

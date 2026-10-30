@@ -207,7 +207,7 @@ mod tests {
 
     #[test]
     fn flying_ship_gets_a_new_course_and_parks_there() {
-        let mut g = Game::new("T".into(), Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0 }, 7, "a");
+        let mut g = Game::new("T".into(), Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0, teams: 0 }, 7, "a");
         g.start();
         let planets: Vec<BodyId> = g.system.bodies.iter().filter(|b| matches!(b.kind, BodyKind::Planet)).map(|b| b.id).collect();
         let me = g.spawn(0, ShipClass::Scout, planets[1]);
