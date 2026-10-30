@@ -66,6 +66,8 @@ pub struct DemoBackend {
     pub report: Option<SensorsReport>,
     /// Scene `results`: the war has ended.
     pub results: Option<GameResults>,
+    /// Scene `battle`: a live battle (frozen in time).
+    pub battle: Option<BattleView>,
 }
 
 impl Default for DemoBackend {
@@ -75,6 +77,14 @@ impl Default for DemoBackend {
 }
 
 impl DemoBackend {
+    fn battle_units(&mut self, ships: &[ShipId], f: impl Fn(&mut BattleUnit)) {
+        if let Some(b) = self.battle.as_mut() {
+            for u in b.units.iter_mut().filter(|u| matches!(u.unit, BattleRef::Ship(id) if ships.contains(&id))) {
+                f(u);
+            }
+        }
+    }
+
     pub fn new() -> Self {
         DemoBackend {
             view: None,
@@ -95,6 +105,7 @@ impl DemoBackend {
             stations: vec![],
             report: None,
             results: None,
+            battle: None,
             games: vec![
                 GameSummary { code: "K7QX".into(), name: "Friday Night War".into(), day: 3, length_days: 7, players: 4, unread: 3 },
                 GameSummary { code: "ZB2M".into(), name: "Bots practice".into(), day: 1, length_days: 5, players: 3, unread: 0 },
@@ -793,6 +804,13 @@ impl Backend for DemoBackend {
                     v.speed = speed * if v.pace > 0.0 { v.pace } else { 1.0 };
                 }
             }
+            UiAction::BattleBurn { ships, dv } => self.battle_units(&ships, |u| {
+                u.manual = true;
+                u.burn_left = dv;
+            }),
+            UiAction::BattleTarget { ships, target } => self.battle_units(&ships, |u| u.target = target),
+            UiAction::BattleSteer { ships, manual } => self.battle_units(&ships, |u| u.manual = manual),
+            UiAction::SetStance { ships, stance } => self.battle_units(&ships, |u| u.stance = stance),
         }
     }
 
@@ -1029,6 +1047,10 @@ impl Backend for DemoBackend {
             2 => Some("Battle: Jonas vs Mara".into()),
             _ => None,
         }
+    }
+
+    fn battles(&self) -> Vec<BattleView> {
+        self.battle.iter().cloned().collect()
     }
 
     fn results(&self) -> Option<GameResults> {
@@ -1298,4 +1320,51 @@ pub fn demo_report(now: f64) -> SensorsReport {
             it(16.0, At, Log, "Ship built", "Scout 2 at Tethys", Some(Focus::Body(2)), 1),
         ],
     }
+}
+
+/// Scene `battle`: our fleet of three plus a defense platform against two raiders at Vesta (body
+/// 2, ours), with salvos in flight, one of them about to hit our gunship.
+pub fn demo_battle(v: &GameView) -> BattleView {
+    let me = v.me;
+    let foe = v.players.iter().map(|p| p.id).find(|&p| p != me).unwrap_or(2);
+    let ship = |id: ShipId, owner: PlayerId, class: ShipClass, label: &str, pos: [f64; 2], vel: [f64; 2], hp: f32, hp_max: f32, weapon: WeaponKind| BattleUnit {
+        unit: BattleRef::Ship(id),
+        owner,
+        label: label.into(),
+        class: Some(class),
+        fleet: (owner == me).then_some(0x4000_0001),
+        hp,
+        hp_max,
+        fuel: if owner == me { 110.0 } else { 0.0 },
+        fuel_max: if owner == me { 160.0 } else { 0.0 },
+        dv_left: if owner == me { 13.2 } else { 0.0 },
+        pos,
+        vel,
+        weapon,
+        range: if weapon == WeaponKind::Slugs { 4000.0 } else { 8000.0 },
+        thrust: 0.01,
+        stance: Stance::Auto,
+        manual: false,
+        burn_left: [0.0, 0.0],
+        target: None,
+        reload_in: 4.0,
+    };
+    let mut units = vec![
+        ship(301, me, ShipClass::Gunship, "Gunship", [2250.0, 520.0], [-0.05, 0.02], 92.0, 120.0, WeaponKind::Laser),
+        ship(302, me, ShipClass::Gunship, "Gunship", [2420.0, 860.0], [-0.04, 0.03], 120.0, 120.0, WeaponKind::Laser),
+        ship(303, me, ShipClass::Interceptor, "Interceptor", [2050.0, 1150.0], [0.02, 0.06], 31.0, 40.0, WeaponKind::Slugs),
+        ship(401, foe, ShipClass::Bomber, "Bomber", [4150.0, 2350.0], [-0.12, -0.08], 64.0, 80.0, WeaponKind::Slugs),
+        ship(402, foe, ShipClass::Bomber, "Bomber", [4400.0, 2000.0], [-0.1, -0.1], 80.0, 80.0, WeaponKind::Slugs),
+    ];
+    units[2].manual = true;
+    units[2].burn_left = [0.1, -0.15];
+    units.push(BattleUnit { unit: BattleRef::Defense(2), label: "Defenses".into(), class: None, fleet: None, weapon: WeaponKind::Laser, ..ship(0, me, ShipClass::Gunship, "", [0.0, 0.0], [0.0, 0.0], 340.0, 400.0, WeaponKind::Laser) });
+    units.last_mut().unwrap().class = None;
+    let salvos = vec![
+        BattleSalvo { owner: foe, pos: [3000.0, 1100.0], vel: [-21.6, -12.4], aimed_at: BattleRef::Ship(301), threat: Some((BattleRef::Ship(301), 14.0)) },
+        BattleSalvo { owner: foe, pos: [3700.0, 1650.0], vel: [-22.0, -11.0], aimed_at: BattleRef::Ship(302), threat: None },
+        BattleSalvo { owner: me, pos: [2700.0, 1500.0], vel: [21.0, 13.5], aimed_at: BattleRef::Ship(401), threat: None },
+    ];
+    let hits = vec![BattleHit { from: [2420.0, 860.0], to: [4150.0, 2350.0], beam: true, dmg: 2.4, age: 0.3 }, BattleHit { from: [4400.0, 2000.0], to: [2250.0, 520.0], beam: false, dmg: 8.3, age: 0.6 }];
+    BattleView { id: 7, body: Some(2), place: v.body(2).map(|b| b.name.clone()).unwrap_or_else(|| "Vesta".into()), body_radius: 1300.0, start_t: v.now - 412.0, now: v.now, units, salvos, hits, burst: 5.0, lost: vec![0, 0, 1] }
 }

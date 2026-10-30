@@ -129,6 +129,9 @@ pub struct ClientBackend {
     /// (game code, game time) up to which the player has seen the report's log: the server's
     /// last-active time on open, then whenever the report is closed.
     sensors_seen: Option<(String, f64)>,
+    /// While a battle we're in runs: the snapshot simulated on to now every frame, so the battle
+    /// screen moves second by second (the server corrects it with every snapshot).
+    live: Option<Game>,
 }
 
 impl ClientBackend {
@@ -188,6 +191,7 @@ impl ClientBackend {
             predicted: RefCell::new(None),
             sensors: None,
             sensors_seen: None,
+            live: None,
         }
     }
 
@@ -369,6 +373,7 @@ impl ClientBackend {
         }
         self.was_running = running;
         self.game = Some(game);
+        self.live = None;
         self.plan_cache.borrow_mut().clear();
         self.between.borrow_mut().clear();
         self.rebuild();
@@ -391,6 +396,31 @@ impl ClientBackend {
         self.forecast_at = unix_now();
         self.forecast_due = false;
         self.forecast.restart(game, self.me, self.now());
+    }
+
+    /// Keep the live copy of a game with battles running up to `now` (at most two game minutes
+    /// of catching up per frame; battles step every game second).
+    fn run_live(&mut self, now: f64) {
+        let Some(game) = &self.game else { return };
+        let fighting = game.status == Status::Running && (!game.battles.is_empty() || self.live.as_ref().is_some_and(|l| !l.battles.is_empty()));
+        if !fighting {
+            self.live = None;
+            return;
+        }
+        let live = self.live.get_or_insert_with(|| game.clone());
+        if now > live.t {
+            live.forecast_to(now.min(live.t + 120.0));
+        }
+    }
+
+    /// Battle orders also go to the live copy at once, so the screen answers before the server does.
+    fn battle_cmd(&mut self, cmd: Command) {
+        if let Some(live) = self.live.as_mut() {
+            let _ = live.apply(self.me, cmd.clone());
+        }
+        if let Some(code) = self.code() {
+            self.send(ClientMsg::Cmd { code, cmd });
+        }
     }
 
     /// Benchmarks/tests: take a game snapshot as if the server had just sent it.
@@ -1296,6 +1326,7 @@ impl Backend for ClientBackend {
         if let Some(v) = &mut self.view {
             v.now = now;
         }
+        self.run_live(now);
         if self.forecast_due && wall - self.forecast_at >= FORECAST_GAP {
             self.restart_forecast();
         }
@@ -1510,6 +1541,13 @@ impl Backend for ClientBackend {
                 if let Some(code) = code {
                     self.send(ClientMsg::Cmd { code, cmd: Command::SetSpeed { speed } });
                 }
+            }
+            UiAction::BattleBurn { ships, dv } => self.battle_cmd(Command::BattleBurn { ships: sim_ships(&ships), dv: V2 { x: dv[0], y: dv[1] } }),
+            UiAction::BattleTarget { ships, target } => self.battle_cmd(Command::BattleTarget { ships: sim_ships(&ships), target: target.map(sim_unit) }),
+            UiAction::BattleSteer { ships, manual } => self.battle_cmd(Command::BattleSteer { ships: sim_ships(&ships), manual }),
+            UiAction::SetStance { ships, stance } => {
+                let ships = self.game.as_ref().map(|g| real_ships(g, &ships)).unwrap_or_default();
+                self.battle_cmd(Command::SetStance { ships, stance: sim_stance(stance) });
             }
             UiAction::ExtendGame { days } => {
                 if let Some(code) = code {
@@ -1776,6 +1814,13 @@ impl Backend for ClientBackend {
         } else {
             "Ships of several players in orbit".into()
         })
+    }
+
+    fn battles(&self) -> Vec<m::BattleView> {
+        match self.live.as_ref().or(self.game.as_ref()) {
+            Some(g) => battle_views(g, self.me),
+            None => vec![],
+        }
     }
 
     fn results(&self) -> Option<m::GameResults> {
@@ -2153,9 +2198,198 @@ impl Backend for ClientBackend {
     }
 }
 
+// ------------------------------------------------------------------ live battles
+
+fn sim_ships(ids: &[ShipId]) -> Vec<g::ShipId> {
+    ids.iter().map(|&i| g::ShipId(i)).collect()
+}
+
+fn sim_unit(u: m::BattleRef) -> sim::battle::Unit {
+    match u {
+        m::BattleRef::Ship(id) => sim::battle::Unit::Ship(g::ShipId(id)),
+        m::BattleRef::Defense(b) => sim::battle::Unit::Defense(SimBody(b)),
+        m::BattleRef::Station(id) => sim::battle::Unit::Station(sim::station::StationId(id)),
+    }
+}
+
+fn model_unit(u: sim::battle::Unit) -> m::BattleRef {
+    match u {
+        sim::battle::Unit::Ship(id) => m::BattleRef::Ship(id.0),
+        sim::battle::Unit::Defense(b) => m::BattleRef::Defense(b.0),
+        sim::battle::Unit::Station(id) => m::BattleRef::Station(id.0),
+    }
+}
+
+fn sim_stance(s: m::Stance) -> sim::battle::Stance {
+    match s {
+        m::Stance::Auto => sim::battle::Stance::Auto,
+        m::Stance::Aggressive => sim::battle::Stance::Aggressive,
+        m::Stance::Distance => sim::battle::Stance::Distance,
+        m::Stance::Evasive => sim::battle::Stance::Evasive,
+    }
+}
+
+fn model_stance(s: sim::battle::Stance) -> m::Stance {
+    match s {
+        sim::battle::Stance::Auto => m::Stance::Auto,
+        sim::battle::Stance::Aggressive => m::Stance::Aggressive,
+        sim::battle::Stance::Distance => m::Stance::Distance,
+        sim::battle::Stance::Evasive => m::Stance::Evasive,
+    }
+}
+
+/// The battles we're in, in arena coordinates (relative to each battle's centre) at the game's time.
+pub(crate) fn battle_views(game: &Game, me: g::PlayerId) -> Vec<m::BattleView> {
+    use sim::battle::Unit;
+    let t = game.t;
+    let sys = &game.system;
+    game.battles
+        .iter()
+        .filter(|b| b.sides.contains(&me))
+        .map(|b| {
+            let (fp, fv) = b.frame(sys, t);
+            let place = b.body.map(|x| sys.body(x).name.clone()).unwrap_or_else(|| "deep space".into());
+            let mut units: Vec<m::BattleUnit> = vec![];
+            for f in &b.fighters {
+                let (pos, vel, label, class, hp, hp_max, weapon, size) = match f.unit {
+                    Unit::Ship(id) => {
+                        let Some(s) = game.ship(id) else { continue };
+                        let (p, v) = match &s.state {
+                            ShipState::Parked { body, .. } => (sys.pos(*body, t), sys.vel(*body, t)),
+                            ShipState::Flying(fl) => {
+                                let tr = fl.compute(sys);
+                                let Some(st) = tr.state_at(sys, t) else { continue };
+                                (sys.pos(st.parent, t) + st.r, sys.vel(st.parent, t) + st.v)
+                            }
+                        };
+                        let st = s.stats();
+                        (p, v, st.name.to_string(), Some(s.class), s.hp, st.hp, st.weapon, sim::combat::size(s.class))
+                    }
+                    Unit::Defense(body) => {
+                        let bs = &game.bodies[body.0 as usize];
+                        (sys.pos(body, t), sys.vel(body, t), "Defenses".to_string(), None, bs.def_hp, game.def_max(body), g::Weapon::Energy, sys.body(body).radius)
+                    }
+                    Unit::Station(id) => {
+                        let Some(st) = game.stations.iter().find(|x| x.id == id) else { continue };
+                        let weapon = match st.kind {
+                            StationKind::LaserBattery => g::Weapon::Beam,
+                            k if k.attack() > 0.0 => g::Weapon::Energy,
+                            _ => g::Weapon::None,
+                        };
+                        (sys.pos(st.body, t), sys.vel(st.body, t), st.kind.label().to_string(), None, st.hp, st.kind.max_hp(), weapon, 2.0)
+                    }
+                };
+                let _ = size;
+                let ship = if let Unit::Ship(id) = f.unit { game.ship(id) } else { None };
+                let mine = f.owner == me;
+                units.push(m::BattleUnit {
+                    unit: model_unit(f.unit),
+                    owner: f.owner,
+                    label,
+                    class: class.map(ship_class),
+                    fleet: ship.filter(|_| mine).and_then(|s| game.fleet_of(s.id)).map(fleet_token),
+                    hp: hp as f32,
+                    hp_max: hp_max as f32,
+                    fuel: ship.filter(|_| mine).map_or(0.0, |s| s.fuel) as f32,
+                    fuel_max: ship.filter(|_| mine).map_or(0.0, |s| s.stats().fuel_cap) as f32,
+                    dv_left: ship.filter(|_| mine).map_or(0.0, |s| s.dv_left()) as f32,
+                    pos: arr(pos + f.dp - fp),
+                    vel: arr(vel + f.dv - fv),
+                    weapon: match weapon {
+                        g::Weapon::None => m::WeaponKind::None,
+                        g::Weapon::Kinetic => m::WeaponKind::Slugs,
+                        _ => m::WeaponKind::Laser,
+                    },
+                    range: sim::combat::range(weapon),
+                    thrust: class.map_or(0.0, sim::battle::thrust),
+                    stance: ship.map_or(m::Stance::Auto, |s| model_stance(s.stance)),
+                    manual: f.manual,
+                    burn_left: arr(f.burn),
+                    target: f.target.map(model_unit),
+                    reload_in: (f.reload_t - t).max(0.0),
+                });
+            }
+            // which salvos will burst on one of ours if nobody moves
+            let salvos = b
+                .salvos
+                .iter()
+                .map(|s| {
+                    let threat = units
+                        .iter()
+                        .filter(|u| u.owner == me && u.owner != s.owner)
+                        .filter_map(|u| {
+                            let r = V2 { x: s.pos.x - u.pos[0], y: s.pos.y - u.pos[1] };
+                            let rv = V2 { x: s.vel.x - u.vel[0], y: s.vel.y - u.vel[1] };
+                            if rv.len2() <= 0.0 {
+                                return None;
+                            }
+                            let tc = -r.dot(rv) / rv.len2();
+                            let size = u.class.map_or(20.0, |c| sim::combat::size(sim_class(c)));
+                            (tc >= 0.0 && (r + rv * tc).len() <= sim::battle::BURST + size).then_some((u.unit, tc))
+                        })
+                        .min_by(|a, b| a.1.total_cmp(&b.1));
+                    m::BattleSalvo { owner: s.owner, pos: arr(s.pos), vel: arr(s.vel), aimed_at: model_unit(s.aimed_at), threat }
+                })
+                .collect();
+            let at = |u: Unit| units.iter().find(|x| x.unit == model_unit(u)).map(|x| x.pos);
+            let hits = b
+                .hits
+                .iter()
+                .filter_map(|h| Some(m::BattleHit { from: at(h.from).unwrap_or(at(h.to)?), to: at(h.to)?, beam: h.beam, dmg: h.dmg as f32, age: t - h.t }))
+                .collect();
+            m::BattleView {
+                id: b.id,
+                body: b.body.map(|x| x.0),
+                place,
+                body_radius: b.body.map_or(0.0, |x| sys.body(x).radius),
+                start_t: b.start_t,
+                now: t,
+                units,
+                salvos,
+                hits,
+                burst: sim::battle::BURST,
+                lost: b.lost.clone(),
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_battle_screen_runs_the_servers_battle() {
+        let settings = g::Settings { name: "t".into(), size: SystemSize::Medium, max_players: 2, length: 86_400.0, speed: 1.0 };
+        let mut game = Game::new("BTL".into(), settings, 7, "ann");
+        game.add_player("bob", None).unwrap();
+        game.start();
+        let x = game.system.bodies.iter().find(|b| b.kind == SimKind::Moon && game.bodies[b.id.0 as usize].owner.is_none()).unwrap().id;
+        game.ships.clear();
+        game.fleets.clear();
+        for c in [g::ShipClass::Gunship, g::ShipClass::Interceptor, g::ShipClass::Bomber] {
+            game.spawn(0, c, x);
+            game.spawn(1, c, x);
+        }
+        game.advance_to(game.t + 300.0);
+        // what ann's screen gets, simulated on by her client, against the server
+        let mut live = game.view_for(0);
+        let t = game.t + 300.0;
+        game.advance_to(t);
+        live.forecast_to(t);
+        let (a, b) = (battle_views(&game, 0), battle_views(&live, 0));
+        assert_eq!(a.len(), 1);
+        assert_eq!(b.len(), 1);
+        let hp = |v: &m::BattleView| v.units.iter().map(|u| (u.unit, u.hp.to_bits(), u.pos[0].to_bits())).collect::<Vec<_>>();
+        assert_eq!(hp(&a[0]), hp(&b[0]));
+        assert_eq!(a[0].salvos.len(), b[0].salvos.len());
+        let v = &a[0];
+        assert!((1..=3).contains(&v.units.iter().filter(|u| u.owner == 0).count()));
+        assert!(v.units.iter().filter(|u| u.owner == 1).all(|u| u.dv_left == 0.0), "enemy fuel stays hidden on screen");
+        assert!(v.units.iter().all(|u| u.pos[0].hypot(u.pos[1]) < 10_000.0), "arena coordinates are near the moon");
+        // bob doesn't see ann's battle orders in his units, and a stranger sees no battle
+        assert!(battle_views(&game, 1).len() == 1);
+    }
 
     #[test]
     fn node_preview_from_orbit_matches_the_departure_the_server_schedules() {

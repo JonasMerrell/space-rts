@@ -99,6 +99,7 @@ pub fn hud(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameVie
         g.chat_seen = view.chat.len();
     }
     super::report::hud_button(g, inp, be, vec2(bx - 100.0 * s(), top + ch / 2.0));
+    super::battle::hud_button(g, inp, be, vec2(bx - 100.0 * s(), top + ch + 52.0 * s()));
     if widgets::round_button(inp, vec2(bx, top + ch / 2.0), 21.0 * s(), "@menu", ACCENT, 0) {
         g.menu_open = !g.menu_open;
         art::sfx(if g.menu_open { "menu_open" } else { "menu_close" });
@@ -1754,6 +1755,12 @@ pub fn toasts(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
         let t = g.toasts.remove(i);
         if let Some(f) = t.notice.focus {
             g.focus(be, f, view.now + g.scrub);
+        }
+        // a battle we're in: straight to it
+        if t.notice.kind == NoticeKind::Battle {
+            if let Some(b) = be.battles().iter().find(|b| matches!(t.notice.focus, Some(Focus::Body(x)) if b.body == Some(x))) {
+                super::battle::open(g, b.id);
+            }
         }
     }
 }

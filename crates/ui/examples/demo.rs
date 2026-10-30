@@ -1,6 +1,6 @@
 //! Offline UI demo on the fake backend.
 //!   cargo run -p ui --example demo
-//! Screenshot mode: UI_SCENE=<login|menu|create|lobby|lobby_guest|map|body|owned|yard|ship|enemy|gmenu|queue|status|res_energy|detail_up|detail_ship|rock|impact|target|plan|nodes|scrub|chat|toast> UI_SHOT=out.png
+//! Screenshot mode: UI_SCENE=<login|menu|create|lobby|lobby_guest|map|body|owned|yard|ship|enemy|gmenu|queue|status|res_energy|detail_up|detail_ship|rock|impact|target|plan|nodes|scrub|chat|toast|battle|battle_sel|battle_map> UI_SHOT=out.png
 //! sets the scene up, renders a few frames, saves the PNG and exits.
 
 use macroquad::prelude::*;
@@ -118,6 +118,16 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                     });
                 }
                 "rock" => g.selected = Some(Focus::Body(9)),
+                "battle" | "battle_sel" | "battle_map" => {
+                    be.battle = Some(ui::demo::demo_battle(&v));
+                    if scene != "battle_map" {
+                        let mut st = ui::game::battle::BattleScreen::new(7);
+                        if scene == "battle_sel" {
+                            st.sel = vec![BattleRef::Ship(301), BattleRef::Ship(302), BattleRef::Ship(303)];
+                        }
+                        g.battle = Some(st);
+                    }
+                }
                 "dark" => g.selected = Some(Focus::Body(2)),
                 "results" => {
                     be.results = Some(GameResults { winner: Some(1), scores: vec![(1, 7), (3, 5), (2, 3), (4, 1)], ended_at: v.now });

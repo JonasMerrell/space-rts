@@ -818,3 +818,125 @@ pub fn speed_mult(speed: f64, pace: f64) -> f64 {
     let pace = if pace > 0.0 { pace } else { 1.0 };
     if speed > 0.0 { speed / pace } else { 1.0 }
 }
+
+// ---------------------------------------------------------------- live battles (rules 6)
+
+/// Something fighting in a battle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BattleRef {
+    Ship(ShipId),
+    /// a body's planetary defenses
+    Defense(BodyId),
+    Station(u32),
+}
+
+/// What a ship does in a live battle when nobody steers it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Stance {
+    /// the class default: slug ships attack, laser ships keep their distance, unarmed ships evade
+    #[default]
+    Auto,
+    Aggressive,
+    Distance,
+    Evasive,
+}
+
+impl Stance {
+    pub const ALL: [Stance; 4] = [Stance::Auto, Stance::Aggressive, Stance::Distance, Stance::Evasive];
+    pub fn label(self) -> &'static str {
+        match self {
+            Stance::Auto => "AUTO",
+            Stance::Aggressive => "ATTACK",
+            Stance::Distance => "KEEP AWAY",
+            Stance::Evasive => "EVADE",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WeaponKind {
+    None,
+    /// slug salvos (dodgeable)
+    Slugs,
+    /// instant beams
+    Laser,
+}
+
+#[derive(Clone, Debug)]
+pub struct BattleUnit {
+    pub unit: BattleRef,
+    pub owner: PlayerId,
+    /// "Gunship", "Defenses", "Laser battery"...
+    pub label: String,
+    pub class: Option<ShipClass>,
+    /// the fleet token it belongs to (ours), for ordering a whole fleet
+    pub fleet: Option<ShipId>,
+    pub hp: f32,
+    pub hp_max: f32,
+    /// tonnes, and Δv it buys (km/s); unknown for enemies (0)
+    pub fuel: f32,
+    pub fuel_max: f32,
+    pub dv_left: f32,
+    /// arena position (km) and velocity (km/s), relative to the battle's centre
+    pub pos: [f64; 2],
+    pub vel: [f64; 2],
+    pub weapon: WeaponKind,
+    /// weapon reach (km)
+    pub range: f64,
+    /// manoeuvring acceleration (km/s²; 0 = can't move)
+    pub thrust: f64,
+    pub stance: Stance,
+    /// a player is steering it (the autopilot holds)
+    pub manual: bool,
+    /// ordered Δv still to burn (km/s, arena x/y)
+    pub burn_left: [f64; 2],
+    pub target: Option<BattleRef>,
+    /// seconds until it can fire again
+    pub reload_in: f64,
+}
+
+#[derive(Clone, Debug)]
+pub struct BattleSalvo {
+    pub owner: PlayerId,
+    /// arena position (km) and velocity (km/s)
+    pub pos: [f64; 2],
+    pub vel: [f64; 2],
+    pub aimed_at: BattleRef,
+    /// it will burst on one of our units if nobody moves: (which, seconds until it passes)
+    pub threat: Option<(BattleRef, f64)>,
+}
+
+#[derive(Clone, Debug)]
+pub struct BattleHit {
+    pub from: [f64; 2],
+    pub to: [f64; 2],
+    pub beam: bool,
+    pub dmg: f32,
+    /// seconds since it happened
+    pub age: f64,
+}
+
+#[derive(Clone, Debug)]
+pub struct BattleView {
+    pub id: u32,
+    pub body: Option<BodyId>,
+    /// "Andra b" / "deep space"
+    pub place: String,
+    /// radius of the body it's fought at (km, 0 in deep space); it blocks salvos
+    pub body_radius: f64,
+    pub start_t: f64,
+    pub now: f64,
+    pub units: Vec<BattleUnit>,
+    pub salvos: Vec<BattleSalvo>,
+    pub hits: Vec<BattleHit>,
+    /// salvos burst this close to a target (km)
+    pub burst: f64,
+    /// ships each side lost so far, by player id
+    pub lost: Vec<u32>,
+}
+
+impl BattleView {
+    pub fn unit(&self, u: BattleRef) -> Option<&BattleUnit> {
+        self.units.iter().find(|x| x.unit == u)
+    }
+}

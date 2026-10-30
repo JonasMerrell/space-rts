@@ -85,6 +85,15 @@ pub enum UiAction {
     MergeFleets { into: ShipId, from: ShipId },
     RenameFleet { fleet: ShipId, name: String },
     DisbandFleet { fleet: ShipId },
+    /// Live battle: burn `dv` (km/s, arena x/y) as fast as thrust allows; the player steers these
+    /// ships from now on (real ship ids).
+    BattleBurn { ships: Vec<ShipId>, dv: [f64; 2] },
+    /// Live battle: shoot at `target` when in reach (None = the stance picks).
+    BattleTarget { ships: Vec<ShipId>, target: Option<BattleRef> },
+    /// Live battle: `manual` = the player steers (the autopilot holds); false hands them back.
+    BattleSteer { ships: Vec<ShipId>, manual: bool },
+    /// What these ships do in battles when nobody steers them (real ship ids).
+    SetStance { ships: Vec<ShipId>, stance: Stance },
 }
 
 /// Result of polling `Backend::plan_transfer_async`.
@@ -177,6 +186,10 @@ pub trait Backend {
     /// different players are parked there. None = nothing to say.
     fn orbit_status(&self, _body: BodyId) -> Option<String> {
         None
+    }
+    /// Live battles we have something in, as they stand now (rules 6). Default: none.
+    fn battles(&self) -> Vec<BattleView> {
+        vec![]
     }
     /// Final standings once the war has ended (time limit reached); None while it runs.
     fn results(&self) -> Option<GameResults> {

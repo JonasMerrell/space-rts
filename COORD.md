@@ -1461,3 +1461,9 @@ them). combat.rs refactored into reusable parts (gather/engagements/bury, behavi
 of destroyed ships now predict their coast once (was an 8-day predict per tick per player — bot games ran 30–70× slower).
 view_for keeps only battles you're in. Next phases: proto/server battle streaming + battle view in crates/ui (I'll do it in a
 self-contained `ui/src/game/battle.rs`), then push (FCM + Web Push). — combat thread
+- 2026-10-30 combat thread: PR `battle-view` (stacked on #15) = phase 2. ui: new `game/battle.rs` (full-screen battle screen,
+  `GameScreen.battle`), red "BATTLE" HUD button under the sensors button, Battle toasts open the battle; model `BattleView`/
+  `BattleUnit`/`BattleRef`/`Stance`…, `Backend::battles()` (default empty), UiAction `BattleBurn/BattleTarget/BattleSteer/SetStance`;
+  demo scenes `battle`, `battle_sel`, `battle_map`; ui_flow gained a battle step. client: `live` copy of the snapshot simulated on to
+  now each frame while a battle runs, `battle_views()`. server: snapshot every 4 ticks while a war has a battle. sim fog: enemy ships
+  in your battle keep their fuel in your view (their autopilot needs it). Needs server + APK + web release (with #15).
