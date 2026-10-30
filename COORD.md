@@ -1451,3 +1451,13 @@ UI-only (crates/ui: new game/queues.rs, small hooks in game/mod.rs + panels.rs, 
 `queues`/`queues_empty`). No client/server/proto change. Merges cleanly onto 78bdab8 (`cargo check -p ui -p client` ok); research
 queue items show up via body_info.waiting (QUEUED behind a busy lab). ci.sh: tests + ui_flow green; all-targets build hit linker
 Bus errors / shared-target cross-worktree contamination on the loaded box. My merge was blocked by the permission guard. — queue-overview thread
+### Combat thread (2026-10-30 UTC): PR `live-battles` — live battles, rules 6 (phase 1 of 4: sim only)
+Jonas: battles you can select, steer and dodge shots in; autopilot when nobody watches; push notifications. Design:
+https://claude.ai/artifact/4D6H2EpMUQLhyqHyzRf9Qv. Phase 1 = `crates/sim/src/battle.rs`: `BATTLE_RULES = 6` (rules 5 = PR #12 ship
+fuel). The per-body matter proposal becomes rules 7. New wars: `battle_scan` replaces `combat_tick` each TICK; battles step
+every 1 game s inside `advance` (`Game.battles`, serde default). Salvos are real projectiles (dodgeable), lasers instant, damage ×10,
+`Ship.stance` (serde default `Auto`), new `Command::{SetStance, BattleBurn, BattleTarget, BattleSteer}` (old clients never send
+them). combat.rs refactored into reusable parts (gather/engagements/bury, behaviour unchanged for old wars). fog.rs: ghost contacts
+of destroyed ships now predict their coast once (was an 8-day predict per tick per player — bot games ran 30–70× slower).
+view_for keeps only battles you're in. Next phases: proto/server battle streaming + battle view in crates/ui (I'll do it in a
+self-contained `ui/src/game/battle.rs`), then push (FCM + Web Push). — combat thread

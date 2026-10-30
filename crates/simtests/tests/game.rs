@@ -52,6 +52,7 @@ fn put_ship(g: &mut Game, owner: PlayerId, class: ShipClass, at: BodyId) -> Ship
         intercept: None,
         cloak: None,
         mimic: None,
+        stance: Default::default(),
     });
     id
 }
@@ -228,6 +229,7 @@ fn rocket_equation() {
         intercept: None,
         cloak: None,
         mimic: None,
+        stance: Default::default(),
         };
         let dv = full.dv_left();
         assert!((full.fuel_for(dv) - st.fuel_cap).abs() < 1e-9 * st.fuel_cap, "{c:?}");

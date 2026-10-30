@@ -25,6 +25,7 @@ fn ship_at(g: &mut Game, owner: PlayerId, class: ShipClass, at: BodyId) -> ShipI
         intercept: None,
         cloak: None,
         mimic: None,
+        stance: Default::default(),
     });
     id
 }

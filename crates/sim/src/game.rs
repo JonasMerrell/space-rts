@@ -6,6 +6,8 @@ use crate::system::{generate, BodyId, BodyKind, Rng, System, SystemSize};
 use crate::traj::{predict, Burn, End, State, Trajectory};
 use crate::station::{Station, StationKind};
 use crate::tech::{Research, Tech};
+use crate::battle::BATTLE_RULES;
+use crate::battle::BATTLE_DT;
 use crate::v2::V2;
 use serde::{Deserialize, Serialize};
 
@@ -295,6 +297,9 @@ pub struct Ship {
     /// decoys: the class enemy sensors see
     #[serde(default)]
     pub mimic: Option<ShipClass>,
+    /// what it does in a live battle when nobody is steering it (rules 6, see battle.rs)
+    #[serde(default)]
+    pub stance: crate::battle::Stance,
 }
 
 /// `last_burn_t` of a ship that never burned (finite so it survives JSON).
@@ -663,6 +668,11 @@ pub struct Game {
     /// stargate throughput log (see transit.rs)
     #[serde(default)]
     pub gate_uses: Vec<crate::transit::GateUse>,
+    /// live battles being fought (rules 6, see battle.rs)
+    #[serde(default)]
+    pub battles: Vec<crate::battle::Battle>,
+    #[serde(default)]
+    pub next_battle: u32,
 }
 
 /// Commands players send. Applied at the current game time.
@@ -724,6 +734,14 @@ pub enum Command {
     /// New course for ships already in flight (one fleet): burn at `depart_t` towards `to`,
     /// re-planned from these numbers (`reroute::options`).
     Reroute { ships: Vec<ShipId>, to: BodyId, depart_t: f64, aim_t: f64 },
+    /// What these ships do in live battles when nobody steers them (rules 6).
+    SetStance { ships: Vec<ShipId>, stance: crate::battle::Stance },
+    /// Live battle: burn `dv` (km/s, arena x/y) as fast as thrust allows; the player steers them from now on.
+    BattleBurn { ships: Vec<ShipId>, dv: V2 },
+    /// Live battle: shoot at `target` when in reach (None = the stance picks).
+    BattleTarget { ships: Vec<ShipId>, target: Option<crate::battle::Unit> },
+    /// Live battle: `manual` = the player steers (the autopilot holds); false hands them back to it.
+    BattleSteer { ships: Vec<ShipId>, manual: bool },
 }
 
 pub const TICK: f64 = 60.0;
@@ -752,8 +770,8 @@ const NEVER: f64 = 1e300;
 pub const CONSTRUCTOR_POWER: f64 = 1.0;
 /// Current rules revision for new matches. 1: matter yield by body kind and planet size. 2: advanced tech tier.
 /// 3: slower economy (see `ECONOMY_RULES`). 4: faster base pace (see `PACE_RULES`).
-/// 5: ships cost fuel to build (see `SHIP_FUEL_RULES`).
-pub const RULES: u32 = 5;
+/// 5: ships cost fuel to build (see `SHIP_FUEL_RULES`). 6: live battles (see `battle::BATTLE_RULES`).
+pub const RULES: u32 = 6;
 /// Rules 3 (Jonas 2026-10-28): production starts low and grows slowly, early game affords a few interceptors,
 /// and dreadnoughts are a long-term goal. (A cap tying matter output to shipyard capacity was dropped: Jonas 2026-10-29.)
 pub const ECONOMY_RULES: u32 = 3;
@@ -803,6 +821,8 @@ impl Game {
             minefields: vec![],
             station_shots: vec![],
             gate_uses: vec![],
+            battles: vec![],
+            next_battle: 0,
         };
         let _ = g.add_player(host_name, None);
         g
@@ -953,6 +973,7 @@ impl Game {
             intercept: None,
             cloak: None,
             mimic: (class == ShipClass::Decoy).then_some(ShipClass::Gunship),
+            stance: Default::default(),
         });
         self.refit(owner);
         let s = self.ships.last_mut().unwrap();
@@ -1259,6 +1280,18 @@ impl Game {
             Command::Jump { ships, to } => self.jump(player, &ships, to),
             Command::BuildStation { body, kind } => self.build_station(player, body, kind).map(|_| ()),
             Command::FoundOutpost { ship } => self.found_outpost(player, ship).map(|_| ()),
+            Command::SetStance { ships, stance } => self.set_stance(player, &ships, stance),
+            Command::BattleBurn { ships, dv } => self.battle_order(player, &ships, |f| {
+                f.burn = dv;
+                f.manual = true;
+            }),
+            Command::BattleTarget { ships, target } => self.battle_order(player, &ships, |f| f.target = target),
+            Command::BattleSteer { ships, manual } => self.battle_order(player, &ships, |f| {
+                f.manual = manual;
+                if !manual {
+                    f.burn = V2::ZERO;
+                }
+            }),
             Command::SetOrder { ship, order } => {
                 self.own_ship(player, ship)?;
                 for id in self.with_fleetmates(ship) {
@@ -1464,10 +1497,19 @@ impl Game {
         }
         while self.t < t {
             let next_tick = self.last_tick + TICK;
-            let step_end = next_tick.min(t);
+            let mut step_end = next_tick.min(t);
+            // live battles step every second
+            let next_battle_step = (self.t / BATTLE_DT).floor() * BATTLE_DT + BATTLE_DT;
+            let battling = !self.battles.is_empty();
+            if battling {
+                step_end = step_end.min(next_battle_step);
+            }
             self.asteroid_events(step_end);
             self.ship_events(step_end);
             self.t = step_end;
+            if battling && step_end >= next_battle_step {
+                self.battle_steps();
+            }
             if step_end >= next_tick {
                 self.last_tick = next_tick;
                 self.economy(TICK);
@@ -1477,7 +1519,11 @@ impl Game {
                 self.cloak_tick();
                 self.stations_tick(TICK);
                 self.mines_tick(TICK);
-                self.combat_tick(TICK);
+                if self.rules >= BATTLE_RULES {
+                    self.battle_scan();
+                } else {
+                    self.combat_tick(TICK);
+                }
                 self.ordnance_tick();
                 self.fleet_tick(TICK);
                 self.ownership();

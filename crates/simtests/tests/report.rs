@@ -38,6 +38,7 @@ fn put_ship(g: &mut Game, owner: PlayerId, class: ShipClass, at: BodyId) -> Ship
         intercept: None,
         cloak: None,
         mimic: None,
+        stance: Default::default(),
     });
     id
 }

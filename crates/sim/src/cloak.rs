@@ -364,6 +364,9 @@ mod tests {
         g.advance_to(g.t + 120.0);
         assert!(!g.ship(a).unwrap().dark(g.t));
         g.stations.retain(|s| s.id != grav);
+        // (live battles kill an unarmed station in minutes: the gunship goes before the lidar test)
+        g.ships.retain(|s| s.id != a);
+        g.battles.clear();
         // lidar: needs the tech, then sweeps, then recharges
         let sc = put(&mut g, StationKind::Scanner);
         assert!(g.apply(1, Command::LidarSweep { station: sc }).unwrap_err().contains("Lidar"));

@@ -309,10 +309,18 @@ impl Game {
             // ghosts: remember enemy ships we see now; forget the ones we see again, lost ones
             // we were watching, and stale ones
             let mut contacts = std::mem::take(&mut self.players[p].contacts);
-            contacts.retain(|c| {
-                t - c.seen_t < CONTACT_TTL
-                    && v.ships.binary_search(&c.ship.id).is_err()
-                    && (self.ship(c.ship.id).is_some() || !sees_point(&sensors, self.ghost_pos(c, t)))
+            contacts.retain_mut(|c| {
+                if t - c.seen_t >= CONTACT_TTL || v.ships.binary_search(&c.ship.id).is_ok() {
+                    return false;
+                }
+                if self.ship(c.ship.id).is_some() {
+                    return true;
+                }
+                // a ghost's coast arc never changes: predict it once (an 8-day coast is expensive)
+                if let ShipState::Flying(f) = &mut c.ship.state {
+                    f.trajectory(&self.system);
+                }
+                !sees_point(&sensors, self.ghost_pos(c, t))
             });
                 for s in &self.ships {
                 if s.owner != me && v.ships.binary_search(&s.id).is_ok() {
@@ -497,6 +505,7 @@ impl Game {
             g.minefields.clear();
             g.fleets.clear();
             g.drives.clear();
+            g.battles.clear();
             g.bodies = vec![BodyState::default(); g.bodies.len()];
             for pl in g.players.iter_mut() {
                 blank_player(pl);
@@ -514,6 +523,14 @@ impl Game {
             .map(|s| if s.owner == p { s.clone() } else { self.redact(s, see_decoys && s.class == ShipClass::Decoy || v.scanned.binary_search(&s.id).is_ok()) })
             .collect();
         g.next_ship = g.ships.iter().map(|s| s.id.0 + 1).max().unwrap_or(0);
+        // live battles: only the ones you're in, without the ships you can't see
+        g.battles.retain(|b| b.sides.contains(&p));
+        for b in g.battles.iter_mut() {
+            b.fighters.retain(|f| match f.unit {
+                crate::battle::Unit::Ship(id) => g.ships.iter().any(|s| s.id == id),
+                _ => true,
+            });
+        }
         // stations are big: seen whenever their body is
         g.stations.retain(|st| st.owner == p || v.bodies.binary_search(&st.body).is_ok());
         // mines are only seen by their owner and by scanning stations
