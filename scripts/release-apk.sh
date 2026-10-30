@@ -8,6 +8,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 VER="${1:?usage: release-apk.sh <version>}"
 REPO=JonasMerrell/space-rts
+# every release adds a CHANGELOG.md entry on top (the app shows it under PATCH NOTES)
+TOP="$(grep -m1 '^## ' CHANGELOG.md | cut -d' ' -f2)"
+[ "$TOP" = "$VER" ] || { echo "CHANGELOG.md starts with $TOP: add a '## $VER — $(date +%F)' entry first" >&2; exit 1; }
 DIST="$(mktemp -d)"
 # the app compares this with the version the server announces and asks to update when older
 HOHMANN_VERSION="$VER" ABIS=arm64-v8a OUT="$DIST/hohmann-reach.apk" ./build-apk.sh

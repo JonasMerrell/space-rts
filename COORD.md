@@ -1451,3 +1451,9 @@ UI-only (crates/ui: new game/queues.rs, small hooks in game/mod.rs + panels.rs, 
 `queues`/`queues_empty`). No client/server/proto change. Merges cleanly onto 78bdab8 (`cargo check -p ui -p client` ok); research
 queue items show up via body_info.waiting (QUEUED behind a busy lab). ci.sh: tests + ui_flow green; all-targets build hit linker
 Bus errors / shared-target cross-worktree contamination on the loaded box. My merge was blocked by the permission guard. — queue-overview thread
+### Patch notes (2026-10-29, patch-notes thread) — rule: every release adds a CHANGELOG.md entry
+`CHANGELOG.md` (repo root) is player-facing patch notes, newest first: `## X.Y.Z — YYYY-MM-DD` + `- ` bullets, no jargon.
+Bundled into the app (`ui::notes`, include_str!), shown via PATCH NOTES (main menu, game menu) and once as "What's new"
+after a version change (client prefs `notes_seen`, file natively / localStorage on web; not on a fresh install).
+The release scripts refuse a version without a matching top entry. UI touch points (ui thread, restyle freely):
+new `ui/src/notes.rs`, `Ui.notes`/`Ui.whats_new`/`show_whats_new`, PATCH NOTES button beside LOG OUT, row in game menu.

@@ -119,7 +119,7 @@ pub fn hud(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameVie
 
 fn game_menu(g: &mut GameScreen, inp: &mut Input, view: &GameView, at: Rect) {
     let host = view.host == view.me;
-    let items = if host { 9 } else { 5 };
+    let items = if host { 10 } else { 6 };
     let bh = 44.0 * s();
     let pad = 10.0 * s();
     let r = Rect::new(at.x, at.y, at.w, pad + items as f32 * (bh + pad));
@@ -154,6 +154,11 @@ fn game_menu(g: &mut GameScreen, inp: &mut Input, view: &GameView, at: Rect) {
         if released && v != live {
             g.emit(UiAction::SetSpeed { speed: v });
         }
+    }
+    if widgets::button(inp, row(items - if host { 4 } else { 3 }), "PATCH NOTES", Style::Secondary) {
+        crate::notes::request_open();
+        g.menu_open = false;
+        art::sfx("menu_open");
     }
     if widgets::button(inp, row(items - if host { 3 } else { 2 }), "BUG REPORT / IDEA", Style::Secondary) {
         g.feedback = Some(super::endgame::FeedbackForm::new());

@@ -8,6 +8,7 @@ pub mod demo;
 pub mod game;
 pub mod input;
 pub mod model;
+pub mod notes;
 pub mod screens;
 pub mod theme;
 pub mod widgets;
@@ -32,6 +33,10 @@ pub struct Ui {
     pub me: model::PlayerId,
     /// The "update available" card was closed for this version.
     pub update_dismissed: Option<String>,
+    /// The patch notes sheet, when open (over every screen).
+    pub notes: Option<notes::PatchNotes>,
+    /// "What's new" waiting for the player to get past the login screen.
+    pub whats_new: Option<notes::PatchNotes>,
 }
 
 impl Default for Ui {
@@ -44,7 +49,7 @@ impl Ui {
     /// Loads fonts; call after the macroquad window exists.
     pub fn new() -> Self {
         theme::init();
-        Ui { screen: Screen::Login(Login::new()), input: Input::new(), user: String::new(), me: 0, update_dismissed: None }
+        Ui { screen: Screen::Login(Login::new()), input: Input::new(), user: String::new(), me: 0, update_dismissed: None, notes: None, whats_new: None }
     }
 
     pub fn frame(&mut self, be: &mut dyn Backend) {
@@ -56,11 +61,26 @@ impl Ui {
         clear_background(theme::BG);
         cel::backdrop();
         art::music(Some(if matches!(self.screen, Screen::Game(_)) { "orbit" } else { "title" }));
+        if notes::take_request() {
+            self.notes = Some(notes::PatchNotes::new());
+        }
+        if self.notes.is_none() && !matches!(self.screen, Screen::Login(_)) {
+            self.notes = self.whats_new.take();
+        }
+        // the sheet owns the back key while open
+        let notes_back = self.notes.is_some() && self.input.take_back();
         match &mut self.screen {
             Screen::Login(l) => l.draw(&mut self.input, be),
             Screen::Menu(m) => m.draw(&mut self.input, be),
             Screen::Game(g) => {
                 g.draw(&mut self.input, be);
+            }
+        }
+        if let Some(n) = &mut self.notes {
+            self.input.back |= notes_back;
+            if !n.draw(&mut self.input) {
+                self.notes = None;
+                art::sfx("menu_close");
             }
         }
         if !matches!(self.screen, Screen::Login(_)) {
@@ -189,6 +209,12 @@ impl Ui {
         if widgets::button(&mut self.input, later, "LATER", widgets::Style::Secondary) || self.input.take_back() {
             self.update_dismissed = Some(u.latest.clone());
         }
+    }
+
+    /// Open "What's new in `version`" once the player is past the login screen, highlighting
+    /// releases after `seen` (the version they last ran; None = unknown, just the newest).
+    pub fn show_whats_new(&mut self, version: &str, seen: Option<&str>) {
+        self.whats_new = Some(notes::PatchNotes::whats_new(version, seen));
     }
 
     /// Logged out / back to the title screen.

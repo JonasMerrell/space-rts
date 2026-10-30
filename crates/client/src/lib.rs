@@ -76,6 +76,7 @@ async fn main() {
     #[cfg(target_arch = "wasm32")]
     web::loaded();
     let mut ui = ui::Ui::new();
+    whats_new(&mut ui);
     let mut sound = load_sound_prefs();
     ui::art::set_music_on(sound.0);
     ui::art::set_effects_on(sound.1);
@@ -131,28 +132,56 @@ pub fn save_server(addr: &str) {
     let _ = std::fs::write(p, addr);
 }
 
-/// Music / effects / enemy-paths switches, remembered across launches ("music effects paths" as 0/1).
-fn load_sound_prefs() -> (bool, bool, bool) {
+/// A small remembered setting: `<name>.txt` next to server.txt natively, localStorage key `name` on the web.
+fn load_pref(name: &str) -> Option<String> {
     #[cfg(target_arch = "wasm32")]
-    let text = web::store_get("sound");
+    let text = web::store_get(name);
     #[cfg(not(target_arch = "wasm32"))]
-    let text = std::fs::read_to_string(server_file().with_file_name("sound.txt")).ok();
-    let mut it = text.as_deref().unwrap_or("1 1 1").split_whitespace().map(|v| v != "0");
-    (it.next().unwrap_or(true), it.next().unwrap_or(true), it.next().unwrap_or(ui::game::map::enemy_paths()))
+    let text = std::fs::read_to_string(server_file().with_file_name(format!("{name}.txt"))).ok();
+    text
 }
 
-fn save_sound_prefs((music, effects, paths): (bool, bool, bool)) {
-    let v = format!("{} {} {}", music as u8, effects as u8, paths as u8);
+fn save_pref(name: &str, v: &str) {
     #[cfg(target_arch = "wasm32")]
-    web::store_set("sound", &v);
+    web::store_set(name, v);
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let p = server_file().with_file_name("sound.txt");
+        let p = server_file().with_file_name(format!("{name}.txt"));
         if let Some(d) = p.parent() {
             let _ = std::fs::create_dir_all(d);
         }
         let _ = std::fs::write(p, v);
     }
+}
+
+/// First launch of a new release: open "What's new" (once the player is logged in). A fresh install
+/// (no saved login, server or settings) has nothing to compare with and just remembers the version.
+fn whats_new(ui: &mut ui::Ui) {
+    let Some(ver) = update::APP_VERSION else { return };
+    let seen = load_pref("notes_seen").map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    if seen.as_deref() == Some(ver) {
+        return;
+    }
+    #[cfg(target_arch = "wasm32")]
+    let installed_before = load_pref("sound").is_some();
+    #[cfg(not(target_arch = "wasm32"))]
+    let installed_before = load_pref("sound").is_some() || load_pref("server").is_some();
+    let returning = seen.is_some() || installed_before || notify::load().is_some();
+    if returning && seen.as_deref().is_none_or(|s| ui::notes::newer(ver, s)) {
+        ui.show_whats_new(ver, seen.as_deref());
+    }
+    save_pref("notes_seen", ver);
+}
+
+/// Music / effects / enemy-paths switches, remembered across launches ("music effects paths" as 0/1).
+fn load_sound_prefs() -> (bool, bool, bool) {
+    let text = load_pref("sound");
+    let mut it = text.as_deref().unwrap_or("1 1 1").split_whitespace().map(|v| v != "0");
+    (it.next().unwrap_or(true), it.next().unwrap_or(true), it.next().unwrap_or(ui::game::map::enemy_paths()))
+}
+
+fn save_sound_prefs((music, effects, paths): (bool, bool, bool)) {
+    save_pref("sound", &format!("{} {} {}", music as u8, effects as u8, paths as u8));
 }
 
 /// Desktop entry point (the macro-generated `main` is private to this module).
