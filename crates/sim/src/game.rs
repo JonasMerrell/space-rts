@@ -771,19 +771,30 @@ const NEVER: f64 = 1e300;
 /// Power any parked unarmed ship adds in orbit (Jonas: any ship, even a tanker, can claim a body).
 pub const CONSTRUCTOR_POWER: f64 = 1.0;
 /// Current rules revision for new matches. 1: matter yield by body kind and planet size. 2: advanced tech tier.
-/// 3: slower economy (see `ECONOMY_RULES`). 4: system scaled to the number of slots (`SCALED_SYSTEM_RULES`).
-pub const RULES: u32 = 4;
-/// Rules 4: systems for more than four pilots get a planet per extra slot (see `system::generate_for`).
-pub const SCALED_SYSTEM_RULES: u32 = 4;
+/// 3: slower economy (see `ECONOMY_RULES`). 4: faster base pace (see `PACE_RULES`).
+/// 5: ships cost fuel to build (see `SHIP_FUEL_RULES`). 6: system scaled to the number of slots (`SCALED_SYSTEM_RULES`).
+pub const RULES: u32 = 6;
+/// Rules 6: systems for more than four pilots get a planet per extra slot (see `system::generate_for`).
+pub const SCALED_SYSTEM_RULES: u32 = 6;
 /// Rules 3 (Jonas 2026-10-28): production starts low and grows slowly, early game affords a few interceptors,
 /// and dreadnoughts are a long-term goal. (A cap tying matter output to shipyard capacity was dropped: Jonas 2026-10-29.)
 pub const ECONOMY_RULES: u32 = 3;
+/// Rules 4 (Jonas 2026-10-29): the old 2× game speed is the new 1×. Game time runs `PACE` times faster than
+/// real time at the slowest setting; `Settings::speed` stays the true rate (game s per real s) and the
+/// multiplier players see is `speed / pace()`.
+pub const PACE_RULES: u32 = 4;
+pub const PACE: f64 = 2.0;
+/// Jonas (2026-10-29): building a ship burns fuel from the stock where it's built (the body's tanks, then
+/// your fuel depots there), on top of matter and energy. See `Game::ship_fuel_cost`.
+pub const SHIP_FUEL_RULES: u32 = 5;
 const FACTIONS: [&str; 4] = ["vanguard", "hive", "prism", "junker"];
 /// Distinct player colours (the UI palette has one entry per colour).
 pub const COLORS: usize = MAX_PLAYERS;
 
 impl Game {
-    pub fn new(code: String, settings: Settings, seed: u64, host_name: &str) -> Game {
+    /// `settings.speed` is the multiplier the host picked (1 = normal pace); it is stored as the true rate.
+    pub fn new(code: String, mut settings: Settings, seed: u64, host_name: &str) -> Game {
+        settings.speed *= if RULES >= PACE_RULES { PACE } else { 1.0 };
         let system = crate::system::generate_for(seed, settings.size, settings.max_players);
         let bodies = vec![BodyState::default(); system.bodies.len()];
         let end_t = settings.length;
@@ -1001,6 +1012,16 @@ impl Game {
         self.event(None, EventKind::Info, "Game started", "Fleets are fuelled. Good hunting.", None, None);
     }
 
+    /// Game seconds per real second at the 1× setting (rules 4 doubled it; older wars keep 1).
+    pub fn pace(&self) -> f64 {
+        if self.rules >= PACE_RULES { PACE } else { 1.0 }
+    }
+
+    /// The speed multiplier players see and set (1 = normal pace for this war's rules).
+    pub fn speed_mult(&self) -> f64 {
+        self.settings.speed / self.pace()
+    }
+
     /// Game time corresponding to a unix time.
     pub fn time_at(&self, real: f64) -> f64 {
         ((real - self.started_real) * self.settings.speed).max(0.0)
@@ -1208,6 +1229,7 @@ impl Game {
                 let (m, e) = match job.kind {
                     JobKind::Ship(c) => {
                         let (m, e, _) = self.ship_cost(c);
+                        self.refund_build_fuel(player, body, self.ship_fuel_cost(c));
                         (m, e)
                     }
                     JobKind::Upgrade(u) => {
@@ -1235,13 +1257,14 @@ impl Game {
                 if player != self.host {
                     return Err("only the host can change the game speed".into());
                 }
-                let speed = speed.clamp(1.0, 1000.0);
+                let mult = speed.clamp(1.0, 1000.0);
+                let speed = mult * self.pace();
                 // keep game time continuous: real_now = started_real + t / speed for old and new speed
                 if self.started_real > 0.0 {
                     self.started_real += self.t / self.settings.speed - self.t / speed;
                 }
                 self.settings.speed = speed;
-                self.event(None, EventKind::Info, "Game speed", &format!("{speed}× from now on"), None, None);
+                self.event(None, EventKind::Info, "Game speed", &format!("{mult}× from now on"), None, None);
                 Ok(())
             }
             Command::Extend { seconds } => {
@@ -1359,7 +1382,13 @@ impl Game {
                 let b = &self.bodies[body.0 as usize];
                 let busy_until = b.lane_free_at(Lane::Ships(player), self.t);
                 let (m, e, secs) = self.ship_cost(class);
+                let fuel = self.ship_fuel_cost(class);
+                let have = self.build_fuel(player, body);
+                if have + 1e-9 < fuel {
+                    return Err(format!("needs {fuel:.0} fuel here (has {have:.0})"));
+                }
                 self.pay(player, m, e)?;
+                self.take_build_fuel(player, body, fuel);
                 let speed = (1.0 + 0.5 * (yard as f64 - 1.0)) * self.mods(player).build_speed;
                 self.bodies[body.0 as usize].queue.push(Job { kind: JobKind::Ship(class), owner: player, done_t: busy_until + secs / speed, then: None });
                 Ok(())
@@ -1810,6 +1839,63 @@ impl Game {
         (m, e, min * 60.0)
     }
 
+    /// Fuel (tonnes) building `class` takes from the stock where it's built; 0 in wars before rules 5.
+    /// About half its matter price: an early interceptor is 40 t, a third of an hour of a level-1
+    /// refinery, a dreadnought 1000 t, half a level-1 tank farm. The new ship still launches fully fuelled.
+    pub fn ship_fuel_cost(&self, class: ShipClass) -> f64 {
+        use ShipClass::*;
+        if self.rules < SHIP_FUEL_RULES {
+            return 0.0;
+        }
+        match class {
+            Scout => 20.0,
+            Interceptor => 40.0,
+            Gunship => 120.0,
+            Bomber => 120.0,
+            Dreadnought => 1000.0,
+            Tanker => 60.0,
+            Constructor => 80.0,
+            Decoy => 20.0,
+            Torpedo => 80.0,
+            Slug => 0.0,
+        }
+    }
+
+    /// Fuel `p` can spend on ship builds at `body`: the body's stock if it's theirs, plus their fuel depots there.
+    pub fn build_fuel(&self, p: PlayerId, body: BodyId) -> f64 {
+        let Some(b) = self.bodies.get(body.0 as usize) else { return 0.0 };
+        let own = if b.owner == Some(p) { b.fuel } else { 0.0 };
+        own + self.stations_at(body).filter(|s| s.owner == p && s.kind == StationKind::FuelDepot).map(|s| s.fuel).sum::<f64>()
+    }
+
+    /// Spend `amount` of build fuel at `body`: the body's own tanks first, then the depots.
+    fn take_build_fuel(&mut self, p: PlayerId, body: BodyId, mut amount: f64) {
+        let b = &mut self.bodies[body.0 as usize];
+        if b.owner == Some(p) {
+            let take = amount.min(b.fuel);
+            b.fuel -= take;
+            amount -= take;
+        }
+        let t = self.t;
+        for s in self.stations.iter_mut().filter(|s| s.owner == p && s.body == body && s.kind == StationKind::FuelDepot && s.active(t)) {
+            let take = amount.min(s.fuel);
+            s.fuel -= take;
+            amount -= take;
+        }
+    }
+
+    /// A cancelled build's fuel goes back into the body's tanks, or a depot there if the body isn't theirs any more.
+    fn refund_build_fuel(&mut self, p: PlayerId, body: BodyId, amount: f64) {
+        if amount <= 0.0 {
+            return;
+        }
+        if self.bodies[body.0 as usize].owner == Some(p) {
+            self.bodies[body.0 as usize].fuel += amount;
+        } else if let Some(s) = self.stations.iter_mut().find(|s| s.owner == p && s.body == body && s.kind == StationKind::FuelDepot) {
+            s.fuel += amount;
+        }
+    }
+
     /// Player-facing effect of `upgrade` at `level` in this match (production numbers depend on the rules).
     pub fn describe_upgrade(&self, upgrade: Upgrade, level: u8) -> String {
         if self.rules < ECONOMY_RULES {
@@ -2118,6 +2204,69 @@ mod tests {
         // a fresh home makes about one interceptor's matter every two hours, not three an hour
         let home = g.players[0].home.unwrap();
         assert!(g.production(home).0 < im);
+    }
+
+    #[test]
+    fn new_wars_run_at_the_old_double_speed() {
+        let mut g = game();
+        assert_eq!((g.pace(), g.settings.speed, g.speed_mult()), (2.0, 2.0, 1.0));
+        g.started_real = 1_000.0;
+        assert_eq!(g.time_at(1_000.0 + 3600.0), 7200.0);
+        // the host's multiplier is relative to the new 1×
+        g.t = 3600.0;
+        g.apply(0, Command::SetSpeed { speed: 4.0 }).unwrap();
+        assert_eq!((g.settings.speed, g.speed_mult()), (8.0, 4.0));
+        assert!((g.time_at(g.started_real + g.t / g.settings.speed) - g.t).abs() < 1e-6);
+        // a war from before rules 4 keeps its rate and its raw multiplier
+        let mut old = game();
+        old.rules = 3;
+        old.settings.speed = 2.0;
+        assert_eq!((old.pace(), old.speed_mult()), (1.0, 2.0));
+        old.apply(0, Command::SetSpeed { speed: 3.0 }).unwrap();
+        assert_eq!(old.settings.speed, 3.0);
+    }
+
+    #[test]
+    fn ship_builds_burn_fuel_at_the_yard() {
+        let mut g = game();
+        let home = g.players[0].home.unwrap();
+        let need = g.ship_fuel_cost(ShipClass::Interceptor);
+        assert!(need > 0.0);
+        let f0 = g.bodies[home.0 as usize].fuel;
+        g.apply(0, Command::Build { body: home, class: ShipClass::Interceptor }).unwrap();
+        assert!((g.bodies[home.0 as usize].fuel - (f0 - need)).abs() < 1e-9);
+        // cancelling puts it back
+        g.apply(0, Command::CancelJob { body: home, index: 0 }).unwrap();
+        assert!((g.bodies[home.0 as usize].fuel - f0).abs() < 1e-9);
+        // dry tanks: refused, and nothing is charged
+        g.bodies[home.0 as usize].fuel = need - 1.0;
+        let m0 = g.players[0].matter;
+        assert!(g.apply(0, Command::Build { body: home, class: ShipClass::Interceptor }).unwrap_err().contains("fuel"));
+        assert_eq!(g.players[0].matter, m0);
+    }
+
+    #[test]
+    fn ship_fuel_waits_without_blocking_the_queue() {
+        let mut g = game();
+        let home = g.players[0].home.unwrap();
+        g.bodies[home.0 as usize].fuel = 0.0;
+        let wish = crate::waitlist::Wish::Build { body: home, class: ShipClass::Scout };
+        g.apply(0, Command::Wait { wish }).unwrap();
+        assert_eq!(g.players[0].waiting.len(), 1);
+        assert!(g.wish_blocker(0, wish).unwrap().contains("fuel"));
+        // the refinery fills the tanks and the build starts by itself
+        g.advance_to(g.t + 900.0);
+        assert!(g.players[0].waiting.is_empty());
+        assert_eq!(g.bodies[home.0 as usize].queue.len(), 1);
+    }
+
+    #[test]
+    fn old_wars_build_ships_without_fuel() {
+        let mut g = game();
+        g.rules = SHIP_FUEL_RULES - 1;
+        let home = g.players[0].home.unwrap();
+        g.bodies[home.0 as usize].fuel = 0.0;
+        g.apply(0, Command::Build { body: home, class: ShipClass::Interceptor }).unwrap();
     }
 
     #[test]

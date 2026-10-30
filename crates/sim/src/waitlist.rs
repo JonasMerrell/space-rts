@@ -153,6 +153,9 @@ impl Game {
                     Some("needs the body or a shipyard station there".into())
                 } else if yard < class.stats().min_shipyard {
                     Some(format!("needs shipyard level {}", class.stats().min_shipyard))
+                } else if self.build_fuel(p, body) + 1e-9 < self.ship_fuel_cost(class) {
+                    // fuel is local: it waits for the refinery (or a tanker) without holding up the rest
+                    Some(format!("needs {:.0} fuel here", self.ship_fuel_cost(class)))
                 } else {
                     None
                 }

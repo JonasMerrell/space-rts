@@ -191,7 +191,7 @@ impl Menu {
     pub fn new(user: String) -> Self {
         let mut new_name = TextField::new(false);
         new_name.text = format!("{}'s war", user);
-        Menu { join: TextField::code(), creating: false, new_name, length_days: 7, speed: 1.0, bots: vec![], slots: 4, teams: 0, error: None, user, scroll: 0.0 }
+        Menu { join: TextField::code(), creating: false, new_name, length_days: 14, speed: 1.0, bots: vec![], slots: 4, teams: 0, error: None, user, scroll: 0.0 }
     }
 
     pub fn draw(&mut self, inp: &mut Input, be: &mut dyn Backend) {
@@ -291,8 +291,8 @@ impl Menu {
         col.gap(10.0);
         let r = col.row(44.0);
         self.speed = widgets::log_slider(inp, r, self.speed, SPEEDS[0], SPEEDS[SPEEDS.len() - 1], &SPEEDS, true).0;
-        let real_h = self.length_days as f64 * 24.0 / self.speed;
-        let note = if self.speed == 1.0 { "real time".to_string() } else { format!("{} days of game time in {}", self.length_days, real_len(real_h)) };
+        let real_h = self.length_days as f64 * 24.0 / (self.speed * NEW_WAR_PACE);
+        let note = format!("{} days of game time in {}", self.length_days, real_len(real_h));
         text(&note, col.x + 4.0 * s(), col.y, 14.0, MUTED, FontKind::Body, Align::Left);
         col.gap(26.0);
         text("PILOTS", col.x + 4.0 * s(), col.y, 18.0, MUTED, FontKind::Title, Align::Left);
@@ -369,7 +369,10 @@ pub fn safe_bottom() -> f32 {
     if cfg!(target_os = "android") { 20.0 * s() } else { 0.0 }
 }
 
-/// Snap points of the game-speed slider (game seconds per real second).
+/// Game seconds per real second at 1× in a new war (mirrors `sim::game::PACE`, rules 4: the old 2× is the new 1×).
+pub const NEW_WAR_PACE: f64 = 2.0;
+
+/// Snap points of the game-speed slider (multiples of the war's 1× pace).
 pub const SPEEDS: [f64; 7] = [1.0, 2.0, 4.0, 8.0, 24.0, 72.0, 168.0];
 
 /// "42 h" / "3.5 days" for a real-time duration in hours.

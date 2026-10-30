@@ -211,6 +211,16 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                     g.research_open = true;
                     g.research_branch = 2;
                 }
+                "research_queue" => {
+                    // short of energy: research waits in the queue, shown on the card and in the list
+                    if let Some(vw) = be.view.as_mut() {
+                        vw.resources.energy = 25.0;
+                    }
+                    be.act(UiAction::Research { body: 2, tech: "ModularYards".into() });
+                    be.act(UiAction::Research { body: 2, tech: "FireControl".into() });
+                    g.research_open = true;
+                    g.research_branch = 2;
+                }
                 "waiting" | "waiting_yard" => {
                     // broke after two builds: the rest waits for funds
                     for c in [ShipClass::Gunship, ShipClass::Scout] {
@@ -348,6 +358,8 @@ fn add_builders(be: &mut DemoBackend, body: BodyId, n: u32) {
             count: n,
             fuel: 120.0,
             fuel_max: 120.0,
+            hp: 150.0,
+            hp_max: 150.0,
             parked_at: Some(body),
             trajectory: None,
             nodes: vec![],

@@ -202,7 +202,7 @@ pub fn generate(seed: u64, size: SystemSize) -> System {
 
 /// `generate` for a war with `slots` pilots. Up to four it is exactly `generate`; each slot past
 /// four adds a planet and stretches the outer orbit by 15%, so there are homes for everyone at
-/// about the same spacing, half rocky inner worlds and half gas giants (rules 4).
+/// about the same spacing, half rocky inner worlds and half gas giants (rules 6).
 pub fn generate_for(seed: u64, size: SystemSize, slots: usize) -> System {
     let mut rng = Rng::new(seed);
     let (base, outer) = match size {

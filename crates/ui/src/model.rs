@@ -101,6 +101,8 @@ pub struct Cost {
     pub energy: f64,
     /// Build time in seconds.
     pub seconds: f64,
+    /// Fuel taken from the stock where it's built (ships, in newer wars; 0 otherwise).
+    pub fuel: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -125,6 +127,8 @@ pub struct BodyInfo {
     /// Ours waiting for funds at this body (they start by themselves once income covers them).
     pub waiting: Vec<WaitingItem>,
     pub fuel: f64,
+    /// Fuel our ship builds here can draw on (the body's stock if ours + our fuel depots here).
+    pub build_fuel: f64,
     /// Military power in orbit per player.
     pub power: Vec<(PlayerId, f64)>,
     /// Per hour.
@@ -280,6 +284,10 @@ pub struct Ship {
     pub count: u32,
     pub fuel: f32,
     pub fuel_max: f32,
+    /// Hull points left / full hull (a fleet or group: summed over its ships; an enemy: as last
+    /// detected).
+    pub hp: f32,
+    pub hp_max: f32,
     /// Parked in orbit of a body until `trajectory` (if any) departs.
     pub parked_at: Option<BodyId>,
     pub trajectory: Option<Trajectory>,
@@ -302,6 +310,11 @@ impl Ship {
     pub fn is_fleet(&self) -> bool {
         !self.members.is_empty()
     }
+
+    /// Hull left as a fraction of full (1 when unknown).
+    pub fn hp_frac(&self) -> f32 {
+        if self.hp_max > 0.0 { (self.hp / self.hp_max).clamp(0.0, 1.0) } else { 1.0 }
+    }
 }
 
 /// One ship inside a fleet token.
@@ -312,6 +325,8 @@ pub struct FleetMember {
     pub class: ShipClass,
     pub fuel: f32,
     pub fuel_max: f32,
+    pub hp: f32,
+    pub hp_max: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -519,6 +534,8 @@ pub struct LobbyInfo {
     pub length_days: u32,
     /// Game seconds per real second.
     pub speed: f64,
+    /// Game seconds per real second at 1× for this war (2 since rules 4; 0 = unknown, treat as 1).
+    pub pace: f64,
     pub bots: Vec<String>,
     /// number of teams (0 = free-for-all)
     pub teams: usize,
@@ -556,6 +573,8 @@ pub struct GameView {
     pub ends_at: f64,
     /// Game seconds per real second (0 = unknown, treat as 1).
     pub speed: f64,
+    /// Game seconds per real second at 1× (0 = unknown, treat as 1); the multiplier shown is speed / pace.
+    pub pace: f64,
     pub bodies: Vec<Body>,
     pub ships: Vec<Ship>,
     pub players: Vec<Player>,
@@ -593,6 +612,8 @@ pub enum TechState {
     Ready { lab: BodyId },
     /// Can't start yet; human-readable reason ("needs Hardened slugs", "needs lab level 2", ...).
     Locked(String),
+    /// Waiting in our queue at this lab (for energy or a free slot); `wait` goes back in `UiAction::Unwait`.
+    Queued { lab: BodyId, wait: u32, start_t: Option<f64> },
 }
 
 #[derive(Clone, Debug)]
@@ -633,6 +654,8 @@ pub struct ResearchView {
     /// All techs, branch-major, tier order.
     pub techs: Vec<TechInfo>,
     pub labs: Vec<LabInfo>,
+    /// Research waiting in our queue, in the order it gets funded.
+    pub queue: Vec<WaitingItem>,
 }
 
 pub const TECH_BRANCHES: [&str; 5] = ["Weapons", "Engines", "Industry", "Defense", "Scanning"];
@@ -795,4 +818,10 @@ impl SensorsReport {
     pub fn threats(&self) -> usize {
         self.items.iter().filter(|i| i.section == ReportSection::Threats).count()
     }
+}
+
+/// Speed multiplier as players see it: true rate over the war's 1× pace.
+pub fn speed_mult(speed: f64, pace: f64) -> f64 {
+    let pace = if pace > 0.0 { pace } else { 1.0 };
+    if speed > 0.0 { speed / pace } else { 1.0 }
 }
