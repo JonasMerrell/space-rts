@@ -99,6 +99,8 @@ pub fn hud(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameVie
         g.chat_seen = view.chat.len();
     }
     super::report::hud_button(g, inp, be, vec2(bx - 100.0 * s(), top + ch / 2.0));
+    // queues overview: under the menu button (the top row has no room left on phones)
+    super::queues::hud_button(g, inp, vec2(bx, hud_bottom() + 27.0 * s()));
     if widgets::round_button(inp, vec2(bx, top + ch / 2.0), 21.0 * s(), "@menu", ACCENT, 0) {
         g.menu_open = !g.menu_open;
         art::sfx(if g.menu_open { "menu_open" } else { "menu_close" });
@@ -216,7 +218,7 @@ pub fn camera_buttons(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, vie
 }
 
 /// px per km that frames `b` with its moons (or its sphere of influence) in the free map area.
-fn zoom_to_body(view: &GameView, b: &Body) -> f64 {
+pub(super) fn zoom_to_body(view: &GameView, b: &Body) -> f64 {
     let moons = view
         .bodies
         .iter()

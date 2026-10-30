@@ -7,6 +7,7 @@ pub mod windows;
 mod lobby;
 pub mod map;
 mod panels;
+mod queues;
 mod report;
 mod research;
 
@@ -128,6 +129,9 @@ pub struct GameScreen {
     /// Sensors report sheet open, and its state (tab, scroll).
     pub sensors_open: bool,
     pub report: report::ReportState,
+    /// Queues overview open (every build/upgrade/research queue we have), and its scroll (px).
+    pub queues_open: bool,
+    pub queues_scroll: f32,
     /// Fleet sheet (group / split / merge ships parked together).
     pub fleet: Option<fleet::FleetSheet>,
     /// For sound cues: chat length and bodies we owned last frame.
@@ -187,6 +191,8 @@ impl GameScreen {
             station_pick: None,
             sensors_open: false,
             report: Default::default(),
+            queues_open: false,
+            queues_scroll: 0.0,
             fleet: None,
             lobby_roster: true,
             lobby_pilots: 0,
@@ -303,6 +309,8 @@ impl GameScreen {
                 // covers the screen
             } else if self.sensors_open {
                 report::sensors_report(self, inp, be_ref, view);
+            } else if self.queues_open {
+                queues::queues_screen(self, inp, be_ref, view);
             } else if self.research_open {
                 if inp.take_back() {
                     self.research_open = false;
@@ -381,6 +389,7 @@ impl GameScreen {
             && !self.chat_open
             && !self.research_open
             && !self.sensors_open
+            && !self.queues_open
             && self.feedback.is_none()
             && (be.results().is_none() || self.results_hidden);
 
