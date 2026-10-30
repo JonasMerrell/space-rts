@@ -1,5 +1,6 @@
 //! In-game screen: map + HUD + time scrubber + selection sheet + planner/node editor + chat + toasts.
 
+pub mod battle;
 pub mod details;
 pub mod endgame;
 pub mod fleet;
@@ -134,6 +135,8 @@ pub struct GameScreen {
     pub queues_scroll: f32,
     /// Fleet sheet (group / split / merge ships parked together).
     pub fleet: Option<fleet::FleetSheet>,
+    /// Live battle screen, when open.
+    pub battle: Option<battle::BattleScreen>,
     /// For sound cues: chat length and bodies we owned last frame.
     /// Lobby: pilot roster expanded.
     pub lobby_roster: bool,
@@ -194,6 +197,7 @@ impl GameScreen {
             queues_open: false,
             queues_scroll: 0.0,
             fleet: None,
+            battle: None,
             lobby_roster: true,
             lobby_pilots: 0,
             seen_chat: usize::MAX,
@@ -307,6 +311,9 @@ impl GameScreen {
             // the HUD menu button under the research X ate the tap and the screen wouldn't close.
             if endgame::results(self, inp, be_ref, view) || endgame::feedback(self, inp) {
                 // covers the screen
+            } else if self.battle.is_some() {
+                battle::battle_screen(self, inp, be_ref, view);
+                panels::hint(self);
             } else if self.sensors_open {
                 report::sensors_report(self, inp, be_ref, view);
             } else if self.queues_open {
@@ -390,6 +397,7 @@ impl GameScreen {
             && !self.research_open
             && !self.sensors_open
             && !self.queues_open
+            && self.battle.is_none()
             && self.feedback.is_none()
             && (be.results().is_none() || self.results_hidden);
 

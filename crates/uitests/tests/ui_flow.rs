@@ -198,6 +198,39 @@ async fn run() {
     t.shot("08-toast").await;
     t.ok("notice -> toast");
 
+    // -- a live battle: the HUD button opens it, a tap picks our fleet, a drag orders a burn
+    let v = t.be.view().unwrap().clone();
+    t.be.battle = Some(ui::demo::demo_battle(&v));
+    t.shot("08b-battle-hud").await;
+    if let Screen::Game(g) = &mut t.ui.screen {
+        ui::game::battle::open(g, 7);
+    }
+    t.frames(2).await;
+    let at = |t: &T| match &t.ui.screen {
+        Screen::Game(g) => g.battle.as_ref().and_then(|b| b.to_screen(t.be.battle.as_ref().unwrap().unit(BattleRef::Ship(301)).unwrap().pos)),
+        _ => None,
+    };
+    let p = at(&t).expect("battle screen open");
+    t.ui.input.inject_tap(p);
+    t.frames(3).await;
+    let sel = match &t.ui.screen {
+        Screen::Game(g) => g.battle.as_ref().map(|b| b.sel.clone()).unwrap_or_default(),
+        _ => vec![],
+    };
+    assert_eq!(sel.len(), 3, "a tap on one ship picks its whole fleet: {sel:?}");
+    t.shot("08c-battle-picked").await;
+    let p = at(&t).unwrap();
+    t.ui.input.inject_drag(p, p + vec2(0.0, -100.0), 8);
+    t.frames(12).await;
+    let u = t.be.battle.as_ref().unwrap().unit(BattleRef::Ship(301)).unwrap().clone();
+    assert!(u.manual && u.burn_left[1] < -0.1, "the drag ordered a burn: {:?}", u.burn_left);
+    t.ok("battle screen: pick a fleet and order a burn");
+    t.ui.input.inject_back();
+    t.frames(2).await;
+    assert!(matches!(&t.ui.screen, Screen::Game(g) if g.battle.is_none()), "back closes the battle screen");
+    t.be.battle = None;
+    t.ok("battle screen closes with back");
+
     // -- back to menu, then log out
     t.be.act(UiAction::BackToMenu);
     t.frames(2).await;

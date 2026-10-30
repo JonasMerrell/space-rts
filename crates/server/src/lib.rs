@@ -74,6 +74,8 @@ impl Account {
 
 /// Lines queued for a slow client before we give up on it (a State is sent every 20 s at most).
 const SEND_QUEUE: usize = 256;
+/// While a war has a live battle, everyone with it open gets a snapshot every this many ticks (≈ s).
+const BATTLE_BROADCAST: u64 = 4;
 
 struct Conn {
     user: Option<String>,
@@ -183,6 +185,8 @@ pub struct Server {
     dirty: HashSet<String>,
     /// games whose state changed since the last broadcast
     changed: HashSet<String>,
+    /// `tick` calls so far (about one a second)
+    ticks: u64,
     /// feedback reports per user in the current hour (user -> (hour, count))
     feedback: HashMap<String, (u64, u32)>,
     /// `Config::latest_client`
@@ -296,7 +300,7 @@ impl Server {
             }
         }
         eprintln!("loaded {} accounts, {} games from {}", accounts_len(&accounts), games.len(), data.display());
-        Server { data, invites: None, guard: None, accounts, games, conns: HashMap::new(), next_conn: 1, dirty: HashSet::new(), changed: HashSet::new(), feedback: HashMap::new(), latest_client: None, update_url: None }
+        Server { data, invites: None, guard: None, accounts, games, conns: HashMap::new(), next_conn: 1, dirty: HashSet::new(), changed: HashSet::new(), ticks: 0, feedback: HashMap::new(), latest_client: None, update_url: None }
     }
 
     /// The newest client version to announce in the Welcome: `--latest-client`, else the
@@ -669,6 +673,7 @@ impl Server {
     /// Advance running games to the current real time; broadcast and save as needed.
     fn tick(&mut self, broadcast_all: bool) {
         let now = unix_now();
+        self.ticks += 1;
         let codes: Vec<String> = self.games.keys().cloned().collect();
         for code in codes {
             let Some(g) = self.games.get_mut(&code) else { continue };
@@ -681,7 +686,10 @@ impl Server {
                     self.changed.insert(code.clone());
                 }
             }
-            if broadcast_all && g.status == Status::Running {
+            // live battles: a fresh snapshot every few seconds keeps every screen on the server's
+            // battle (orders are re-sent at once anyway)
+            let battling = !g.battles.is_empty() && self.ticks.is_multiple_of(BATTLE_BROADCAST);
+            if (broadcast_all || battling) && g.status == Status::Running {
                 self.changed.insert(code.clone());
             }
         }
