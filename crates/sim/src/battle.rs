@@ -24,7 +24,7 @@ pub const BATTLE_RULES: u32 = 6;
 /// Battle step, game seconds.
 pub const BATTLE_DT: f64 = 1.0;
 /// Damage multiplier against the per-hour attack numbers, so fights take minutes instead of hours.
-pub const DMG_SCALE: f64 = 10.0;
+pub const DMG_SCALE: f64 = 15.0;
 /// A salvo bursts when it passes this close to an enemy (km, plus the target's size).
 pub const BURST: f64 = 5.0;
 /// Aiming spread of a salvo (radians, one sigma) before accuracy research.
