@@ -7,7 +7,7 @@ Every release adds an entry here (a unit test checks the newest one matches the 
 ## 0.11.0 — 2026-10-31
 - Rewind: tap PAST on the time slider and drag back through the war to see where ships were and who held what, as your sensors saw it then.
 - Battle replays: every battle you fought or watched is marked on the rewind bar and the map, and listed under BATTLES. Play it back at 1× to 64×, pause and scrub through it. Only what you could see at the time is shown.
-- History is recorded from this update on, so the rewind reaches back to when your server was updated.
+- History is recorded from this update on: in wars already running, the rewind reaches back to the day of the update.
 
 ## 0.10.0 — 2026-10-30
 - Live battles (new wars): fights play out in real time. Open a battle to steer your ships, watch the shots fly and burn to dodge them; ships you leave alone follow their stance.

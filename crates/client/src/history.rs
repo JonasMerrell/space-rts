@@ -156,7 +156,7 @@ impl Past {
     /// hits of the last few seconds.
     pub fn replay(&self, id: u32, t: f64) -> Option<m::BattleView> {
         let r = self.replays.get(&id)?;
-        let k = r.frames.partition_point(|f| f.t <= t).checked_sub(1).unwrap_or(0);
+        let k = r.frames.partition_point(|f| f.t <= t).saturating_sub(1);
         let f = r.frames.get(k)?;
         let next = r.frames.get(k + 1);
         let at = |fr: &Frame, i: u16| fr.u.iter().find(|x| x.0 == i).map(|x| [x.1 as f64, x.2 as f64]);
