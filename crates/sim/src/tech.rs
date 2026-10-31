@@ -7,6 +7,7 @@
 //! Advanced tier (rules >= 2, Jonas 2026-10-27): 5 more branches × 3 tiers that open once
 //! `ADVANCED_UNLOCK` base techs are done. They unlock new mechanics (cloaks, ordnance, gates...)
 //! rather than plain multipliers, and cost about 500 lab-hours, so few players finish it.
+//! Rules 8 (Jonas 2026-10-31: "the advanced research takes too long") halves that to about 250 lab-hours.
 use crate::game::{Game, PlayerId, Upgrade};
 use crate::system::BodyId;
 use serde::{Deserialize, Serialize};
@@ -65,6 +66,8 @@ pub enum Tech {
 pub const ADVANCED_UNLOCK: usize = 15;
 /// First rules revision with the advanced tier.
 pub const ADVANCED_RULES: u32 = 2;
+/// First rules revision where advanced research takes half as long (see `Game::research_cost`).
+pub const FAST_ADVANCED_RULES: u32 = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Branch {
@@ -416,6 +419,15 @@ pub fn lab_speed(level: u8) -> f64 {
 }
 
 impl Game {
+    /// `Tech::cost` under this war's rules: since rules 8 advanced research takes half the time (same price).
+    pub fn research_cost(&self, tech: Tech) -> (f64, f64, f64) {
+        let (m, e, secs) = tech.cost();
+        if tech.advanced() && self.rules >= FAST_ADVANCED_RULES {
+            return (m, e, secs * 0.5);
+        }
+        (m, e, secs)
+    }
+
     pub fn has_tech(&self, p: PlayerId, t: Tech) -> bool {
         self.players.get(p as usize).is_some_and(|pl| pl.techs.contains(&t))
     }
@@ -471,7 +483,7 @@ impl Game {
         if let Some(why) = self.research_blocker(p, body, tech) {
             return Err(why);
         }
-        let (m, e, secs) = tech.cost();
+        let (m, e, secs) = self.research_cost(tech);
         self.pay(p, m, e)?;
         let speed = lab_speed(self.bodies[body.0 as usize].level(Upgrade::Research));
         let done_t = self.t + secs / speed;
@@ -645,6 +657,12 @@ pub(crate) mod tests {
         // too much for one lab to finish in a war: you pick
         let hours: f64 = Tech::ADVANCED.iter().map(|t| t.cost().2 / 3600.0).sum();
         assert!((450.0..=550.0).contains(&hours), "{hours}");
+        // rules 8 halves the time for new wars only
+        let mut g = game();
+        assert_eq!(g.research_cost(Tech::Stargates).2, Tech::Stargates.cost().2 * 0.5);
+        assert_eq!(g.research_cost(Tech::FusionPlants), Tech::FusionPlants.cost());
+        g.rules = FAST_ADVANCED_RULES - 1;
+        assert_eq!(g.research_cost(Tech::Stargates), Tech::Stargates.cost());
         // every advanced tech parses back from its serde name (the client sends Debug names)
         for t in Tech::every() {
             let json = serde_json::to_string(&t).unwrap();

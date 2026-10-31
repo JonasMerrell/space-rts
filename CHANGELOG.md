@@ -4,6 +4,9 @@ Newest first. The app shows these under PATCH NOTES and once after each update.
 Format: a `## <version> — <YYYY-MM-DD>` line, then `- ` bullets in plain player language.
 Every release adds an entry here (a unit test checks the newest one matches the release version).
 
+## 0.10.1 — 2026-10-31
+- New wars: advanced research takes half as long. Prices are unchanged, and wars already running keep their old times.
+
 ## 0.10.0 — 2026-10-30
 - Live battles (new wars): fights play out in real time. Open a battle to steer your ships, watch the shots fly and burn to dodge them; ships you leave alone follow their stance.
 - Get a browser notification when you're in a battle, and an "Enemies inbound" warning when hostile ships head for your bodies.
