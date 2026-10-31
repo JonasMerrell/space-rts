@@ -60,6 +60,10 @@ pub enum ClientMsg {
     PushSubscribe { sub: PushSub },
     /// Stop pushing to the subscription with this endpoint / token (logging out).
     PushUnsubscribe { id: String },
+    /// Rewind: the war's map history as I saw it, snapshots after game time `since` (a page at a time).
+    History { code: String, since: f64 },
+    /// A finished battle to replay, as I saw it.
+    Replay { code: String, id: u32 },
 }
 
 /// Where the server pushes notifications to (see server/src/push.rs).
@@ -108,6 +112,8 @@ impl ClientMsg {
             ClientMsg::SetFaction { code, faction } => short(code) && short(faction),
             ClientMsg::Cmd { code, .. } => short(code),
             ClientMsg::Events { since } => !since.is_nan(),
+            ClientMsg::History { code, since } => short(code) && !since.is_nan(),
+            ClientMsg::Replay { code, .. } => short(code),
             ClientMsg::Feedback { text, game, client, .. } => text.len() <= 16_000 && game.as_deref().is_none_or(short) && client.len() <= 200,
             ClientMsg::PushSubscribe { sub: PushSub::Web { endpoint, p256dh, auth } } => {
                 endpoint.len() <= 1024 && endpoint.starts_with("https://") && p256dh.len() <= 128 && auth.len() <= 64
@@ -167,6 +173,11 @@ pub enum ServerMsg {
     Pong,
     /// The war you had open was deleted by its host.
     GameDeleted { code: String, name: String },
+    /// Answer to `History`: snapshots in time order, and every finished battle you may replay.
+    /// `more` = ask again from the last snapshot's time for the rest.
+    History { code: String, snaps: Vec<sim::replay::Snap>, battles: Vec<sim::replay::BattleInfo>, more: bool },
+    /// Answer to `Replay`.
+    Replay { code: String, rec: Box<sim::replay::BattleRec> },
 }
 
 /// "v0.8.2" / "0.8.2" / "0.8" → (0, 8, 2); a "-beta"/"+build" suffix is ignored. None if it isn't a version.

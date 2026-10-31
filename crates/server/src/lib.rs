@@ -206,7 +206,12 @@ pub struct Server {
     pushed: HashMap<String, u64>,
     /// pushes per user in the current 10 minutes (user -> (window, count))
     push_rate: HashMap<String, (u64, u32)>,
+    /// war histories read so far (`<data>/history/<code>.jsonl`), kept up to date while loaded
+    history: HashMap<String, Vec<sim::replay::Hist>>,
 }
+
+/// Rewind snapshots per `History` answer.
+const HISTORY_PAGE: usize = 200;
 
 fn legacy_hash(salt: &str, pass: &str) -> String {
     let mut h = Sha256::new();
@@ -313,7 +318,7 @@ impl Server {
             }
         }
         eprintln!("loaded {} accounts, {} games from {}", accounts_len(&accounts), games.len(), data.display());
-        Server { data, invites: None, guard: None, accounts, games, conns: HashMap::new(), next_conn: 1, dirty: HashSet::new(), changed: HashSet::new(), ticks: 0, feedback: HashMap::new(), latest_client: None, update_url: None, pusher: None, pushed: HashMap::new(), push_rate: HashMap::new() }
+        Server { data, invites: None, guard: None, accounts, games, conns: HashMap::new(), next_conn: 1, dirty: HashSet::new(), changed: HashSet::new(), ticks: 0, feedback: HashMap::new(), latest_client: None, update_url: None, pusher: None, pushed: HashMap::new(), push_rate: HashMap::new(), history: HashMap::new() }
     }
 
     /// The newest client version to announce in the Welcome: `--latest-client`, else the
@@ -336,6 +341,53 @@ impl Server {
                 if let Ok(s) = serde_json::to_string(g) {
                     write_atomic(&self.data.join("games").join(format!("{code}.json")), &s);
                 }
+            }
+        }
+    }
+
+    fn history_path(&self, code: &str) -> PathBuf {
+        self.data.join("history").join(format!("{code}.jsonl"))
+    }
+
+    /// Read a war's history file into `history` (once).
+    fn load_history(&mut self, code: &str) {
+        if self.history.contains_key(code) {
+            return;
+        }
+        let text = std::fs::read_to_string(self.history_path(code)).unwrap_or_default();
+        // a line cut short by a crash is skipped
+        let hist = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+        self.history.insert(code.to_string(), hist);
+    }
+
+    /// Append what the running games recorded to their history files.
+    fn save_history(&mut self) {
+        for (code, g) in self.games.iter_mut() {
+            if g.status != Status::Running {
+                continue;
+            }
+            if g.recorder.0.is_none() {
+                g.recorder = sim::replay::Recorder::on();
+            }
+            let new = g.recorder.drain();
+            if new.is_empty() {
+                continue;
+            }
+            let mut text = String::new();
+            for h in &new {
+                if let Ok(l) = serde_json::to_string(h) {
+                    text.push_str(&l);
+                    text.push('\n');
+                }
+            }
+            let path = self.data.join("history").join(format!("{code}.jsonl"));
+            let _ = std::fs::create_dir_all(self.data.join("history"));
+            let res = std::fs::OpenOptions::new().create(true).append(true).open(&path).and_then(|mut f| f.write_all(text.as_bytes()));
+            if let Err(e) = res {
+                eprintln!("HISTORY SAVE FAILED {}: {e}", path.display());
+            }
+            if let Some(h) = self.history.get_mut(code) {
+                h.extend(new);
             }
         }
     }
@@ -594,6 +646,8 @@ impl Server {
                 if let Err(e) = std::fs::remove_file(&path) {
                     eprintln!("delete {}: {e}", path.display());
                 }
+                self.history.remove(&code);
+                let _ = std::fs::remove_file(self.history_path(&code));
                 eprintln!("war {code} deleted by {user}");
                 // everyone in it: close the game if open, then refresh their war list
                 let ids: Vec<(u64, Option<String>, bool)> = self
@@ -676,6 +730,41 @@ impl Server {
                     }
                 }
             }
+            ClientMsg::History { code, since } => {
+                let Some(me) = self.games.get(&code).and_then(|g| g.player_by_name(&user)).map(|p| p.id) else { return err(self, "you're not in that game") };
+                self.load_history(&code);
+                let (g, hist) = (&self.games[&code], &self.history[&code]);
+                let mut known = vec![];
+                let mut snaps = vec![];
+                let mut more = false;
+                for h in hist {
+                    if let sim::replay::Hist::S(sn) = h {
+                        let v = sn.for_player(g, me, &mut known);
+                        if sn.t > since {
+                            if snaps.len() == HISTORY_PAGE {
+                                more = true;
+                                break;
+                            }
+                            snaps.push(v);
+                        }
+                    }
+                }
+                let battles = hist.iter().filter_map(|h| if let sim::replay::Hist::B(b) = h { b.visible_to(g, me).then(|| b.info()) } else { None }).collect();
+                reply(self, ServerMsg::History { code, snaps, battles, more });
+            }
+            ClientMsg::Replay { code, id } => {
+                let Some(me) = self.games.get(&code).and_then(|g| g.player_by_name(&user)).map(|p| p.id) else { return err(self, "you're not in that game") };
+                self.load_history(&code);
+                let g = &self.games[&code];
+                let rec = self.history[&code].iter().find_map(|h| match h {
+                    sim::replay::Hist::B(b) if b.id == id && b.visible_to(g, me) => Some(b.for_player(g, me)),
+                    _ => None,
+                });
+                match rec {
+                    Some(rec) => reply(self, ServerMsg::Replay { code, rec: Box::new(rec) }),
+                    None => err(self, "no replay of that battle"),
+                }
+            }
             ClientMsg::Events { since } => {
                 let u = user.clone();
                 let mut out = vec![];
@@ -754,6 +843,7 @@ impl Server {
             }
         }
         self.push_events();
+        self.save_history();
         let changed: Vec<String> = self.changed.drain().collect();
         for code in changed {
             self.broadcast(&code);
@@ -1072,7 +1162,7 @@ fn client_thread(server: Arc<Mutex<Server>>, guard: Arc<Guard>, cfg: Arc<Config>
         let msg = decode::<ClientMsg>(&line).and_then(|m| m.check().map(|_| m).map_err(String::from));
         let is_heavy = matches!(
             &msg,
-            Ok(ClientMsg::Open { .. } | ClientMsg::JoinGame { .. } | ClientMsg::CreateGame { .. } | ClientMsg::ListGames | ClientMsg::Events { .. })
+            Ok(ClientMsg::Open { .. } | ClientMsg::JoinGame { .. } | ClientMsg::CreateGame { .. } | ClientMsg::ListGames | ClientMsg::Events { .. } | ClientMsg::History { .. } | ClientMsg::Replay { .. })
                 | Ok(ClientMsg::Cmd { cmd: sim::game::Command::Chat { .. }, .. })
         );
         if is_heavy && !heavy.take(l.heavy_rate, l.heavy_burst) {
@@ -1301,5 +1391,75 @@ mod save_tests {
         let hp = old.replacen("\"hp\":100.0", "\"hp\":null", 1);
         let (_, n) = parse_game(&hp).unwrap();
         assert_eq!(n, 1);
+    }
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+    use sim::game::ShipClass;
+
+    #[test]
+    fn history_is_saved_and_each_player_gets_what_they_saw() {
+        let dir = std::env::temp_dir().join(format!("server-hist-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut s = Server::load(dir.clone());
+        let mut rxs = vec![];
+        for (id, user) in [(1u64, "ann"), (2, "bob")] {
+            let (tx, r) = sync_channel(1 << 16);
+            rxs.push(r);
+            s.conns.insert(id, Conn { user: Some(user.into()), open: None, tx, sock: None, ip: "203.0.113.9".parse().unwrap() });
+            s.accounts.insert(user.into(), Account::default());
+        }
+        s.handle(1, ClientMsg::CreateGame { name: "War".into(), size: sim::system::SystemSize::Small, length_days: 7.0, speed: 1.0, max_players: 2, bots: vec![], teams: 0 });
+        let code = s.games.keys().next().cloned().unwrap();
+        s.handle(2, ClientMsg::JoinGame { code: code.clone() });
+        s.handle(1, ClientMsg::StartGame { code: code.clone() });
+        // a fight at a free moon: 3 vs 3 interceptors
+        {
+            let g = s.games.get_mut(&code).unwrap();
+            let x = g.system.bodies.iter().find(|b| b.kind == sim::system::BodyKind::Moon && g.bodies[b.id.0 as usize].owner.is_none()).unwrap().id;
+            for _ in 0..3 {
+                g.spawn(0, ShipClass::Interceptor, x);
+                g.spawn(1, ShipClass::Interceptor, x);
+            }
+        }
+        s.save_history(); // turns the recorder on
+        for _ in 0..(3 * 3600 / 60) {
+            let g = s.games.get_mut(&code).unwrap();
+            let t = g.t + 60.0;
+            g.advance_to(t);
+            s.save_history();
+        }
+        let text = std::fs::read_to_string(s.history_path(&code)).unwrap();
+        assert!(text.lines().count() > 10);
+        let read = |rx: &Receiver<String>| rx.try_iter().filter_map(|l| decode::<ServerMsg>(&l).ok()).collect::<Vec<_>>();
+        for r in &rxs {
+            read(r);
+        }
+        // a fresh server reads the file
+        let games = std::mem::take(&mut s.games);
+        let conns = std::mem::take(&mut s.conns);
+        let mut s = Server::load(dir.clone());
+        s.games = games;
+        s.conns = conns;
+        s.handle(1, ClientMsg::History { code: code.clone(), since: f64::NEG_INFINITY });
+        let got = read(&rxs[0]);
+        let Some(ServerMsg::History { snaps, battles, more, .. }) = got.into_iter().find(|m| matches!(m, ServerMsg::History { .. })) else { panic!("no History") };
+        assert!(!more && snaps.len() >= 15, "{} snaps", snaps.len());
+        assert!(snaps.iter().all(|sn| sn.owner_seen.is_empty() && sn.ships.iter().all(|x| x.seen == 0)), "masks stay on the server");
+        assert_eq!(battles.len(), 1);
+        let since = snaps[snaps.len() - 3].t;
+        s.handle(1, ClientMsg::History { code: code.clone(), since });
+        let Some(ServerMsg::History { snaps: tail, .. }) = read(&rxs[0]).into_iter().find(|m| matches!(m, ServerMsg::History { .. })) else { panic!() };
+        assert_eq!(tail.len(), 2);
+        s.handle(2, ClientMsg::Replay { code: code.clone(), id: battles[0].id });
+        let Some(ServerMsg::Replay { rec, .. }) = read(&rxs[1]).into_iter().find(|m| matches!(m, ServerMsg::Replay { .. })) else { panic!("no Replay") };
+        assert!(rec.frames.len() > 100);
+        s.handle(2, ClientMsg::Replay { code: code.clone(), id: 9999 });
+        assert!(read(&rxs[1]).iter().any(|m| matches!(m, ServerMsg::Error { .. })));
+        s.handle(1, ClientMsg::DeleteGame { code: code.clone() });
+        assert!(!s.history_path(&code).exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
