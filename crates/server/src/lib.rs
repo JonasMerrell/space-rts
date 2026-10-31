@@ -1443,7 +1443,7 @@ mod history_tests {
         let mut s = Server::load(dir.clone());
         s.games = games;
         s.conns = conns;
-        s.handle(1, ClientMsg::History { code: code.clone(), since: f64::NEG_INFINITY });
+        s.handle(1, ClientMsg::History { code: code.clone(), since: -1.0 });
         let got = read(&rxs[0]);
         let Some(ServerMsg::History { snaps, battles, more, .. }) = got.into_iter().find(|m| matches!(m, ServerMsg::History { .. })) else { panic!("no History") };
         assert!(!more && snaps.len() >= 15, "{} snaps", snaps.len());

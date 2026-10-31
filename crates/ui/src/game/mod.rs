@@ -9,8 +9,10 @@ mod lobby;
 pub mod map;
 mod panels;
 mod queues;
+pub mod replay;
 mod report;
 mod research;
+pub mod rewind;
 
 use crate::backend::{Backend, UiAction};
 use crate::input::Input;
@@ -137,6 +139,10 @@ pub struct GameScreen {
     pub fleet: Option<fleet::FleetSheet>,
     /// Live battle screen, when open.
     pub battle: Option<battle::BattleScreen>,
+    /// Rewind (the scrubber's PAST mode), when on.
+    pub rewind: Option<rewind::RewindState>,
+    /// Battle replay screen, when open.
+    pub replay: Option<replay::ReplayScreen>,
     /// For sound cues: chat length and bodies we owned last frame.
     /// Lobby: pilot roster expanded.
     pub lobby_roster: bool,
@@ -198,6 +204,8 @@ impl GameScreen {
             queues_scroll: 0.0,
             fleet: None,
             battle: None,
+            rewind: None,
+            replay: None,
             lobby_roster: true,
             lobby_pilots: 0,
             seen_chat: usize::MAX,
@@ -259,17 +267,26 @@ impl GameScreen {
                     panels::chat(self, inp, view);
                 }
             } else {
-            let t = view.now + self.scrub;
             self.sound_cues(view);
             self.run_pending_plan(be_ref, view.now);
             self.run_pending_between(be_ref);
             self.run_pending_intercept(be_ref);
             self.run_pending_impact(be_ref);
+            rewind::update(self, be_ref, view.now);
+            // Rewound: the map as we saw it then (the live map until the history has loaded).
+            let back = self.rewind.as_ref().map(|r| r.back);
+            let past = back.and_then(|b| be_ref.past(view.now - b));
+            let t = match back {
+                Some(b) if past.is_some() => view.now - b,
+                Some(_) => view.now,
+                None => view.now + self.scrub,
+            };
             // Scrubbed ahead: draw the forecast (sim run forward from what we know) instead of the
             // live view. `now` stays the real now.
-            let predicted = if self.scrub > 1.0 { be_ref.predicted(t) } else { None };
-            let simulating = self.scrub > 1.0 && predicted.is_none() && t > be_ref.forecast_until();
-            let view: &GameView = predicted.as_deref().unwrap_or(view);
+            let ahead = back.is_none() && self.scrub > 1.0;
+            let predicted = if ahead { be_ref.predicted(t) } else { None };
+            let simulating = ahead && predicted.is_none() && t > be_ref.forecast_until();
+            let view: &GameView = past.as_deref().or(predicted.as_deref()).unwrap_or(view);
             // Keep whatever is selected in the middle while scrubbing.
             if self.scrub != self.last_scrub {
                 if let Some(f) = self.selected {
@@ -280,6 +297,10 @@ impl GameScreen {
 
             // Overlays are drawn after the map but must win the input, so they register their
             // rects (Input::block) and the map only handles gestures that started elsewhere.
+            if back.is_some() {
+                let cam = self.cam.unwrap();
+                rewind::map_marks(self, inp, be_ref, &cam, t, false);
+            }
             self.handle_map_input(inp, be_ref, view, t);
             self.follow_selection(be_ref, t);
 
@@ -302,7 +323,11 @@ impl GameScreen {
             }
             prof("labels", || map::draw_labels(be_ref, view, &cam, t));
             self.draw_mode_overlay(be_ref, view, &cam, t);
-            if self.scrub > 1.0 {
+            if let Some(b) = back {
+                rewind::map_marks(self, inp, be_ref, &cam, t, true);
+                let h = be_ref.history().unwrap_or_default();
+                rewind::banner(b, t, h.loading, past.is_none());
+            } else if self.scrub > 1.0 {
                 panels::prediction_banner(self.scrub, simulating);
             }
 
@@ -311,6 +336,8 @@ impl GameScreen {
             // the HUD menu button under the research X ate the tap and the screen wouldn't close.
             if endgame::results(self, inp, be_ref, view) || endgame::feedback(self, inp) {
                 // covers the screen
+            } else if self.replay.is_some() {
+                replay::replay_screen(self, inp, be_ref, view);
             } else if self.battle.is_some() {
                 battle::battle_screen(self, inp, be_ref, view);
                 panels::hint(self);
@@ -329,7 +356,9 @@ impl GameScreen {
                 self.handle_back(inp);
                 prof("hud", || panels::hud(self, inp, be_ref, view));
                 // phone: the chat covers the sheet area, so don't run (or hit-test) what's under it
-                if !(self.chat_open && !wide()) {
+                if self.rewind.is_some() {
+                    rewind::list(self, inp, be_ref, view);
+                } else if !(self.chat_open && !wide()) {
                     prof("sheet", || panels::sheet(self, inp, be_ref, view));
                 }
                 prof("scrubber", || panels::scrubber(self, inp, be_ref, view));

@@ -165,6 +165,20 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                         g.battle = Some(st);
                     }
                 }
+                "rewind" | "rewind_list" | "replay" => {
+                    ui::game::rewind::enter(g);
+                    if let Some(r) = g.rewind.as_mut() {
+                        r.back = 30.0 * 3600.0 - 600.0;
+                        r.list_open = scene == "rewind_list";
+                    }
+                    if scene == "replay" {
+                        ui::game::replay::open(g, 7);
+                        if let Some(r) = g.replay.as_mut() {
+                            r.t = Some(v.now - 9.0 * 3600.0 + 412.0);
+                            r.playing = false;
+                        }
+                    }
+                }
                 "dark" => g.selected = Some(Focus::Body(2)),
                 "results" => {
                     be.results = Some(GameResults { winner: Some(1), winning_team: None, scores: vec![(1, 7), (3, 5), (2, 3), (4, 1)], ended_at: v.now });

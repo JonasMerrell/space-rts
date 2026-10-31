@@ -80,6 +80,10 @@ fn size_of(u: &BattleUnit) -> f32 {
 }
 
 /// Frame every unit (and the body) with some room around them.
+pub(super) fn fit_view(b: &BattleView) -> Camera {
+    fit(b)
+}
+
 fn fit(b: &BattleView) -> Camera {
     let mut lo = [-b.body_radius.max(500.0), -b.body_radius.max(500.0)];
     let mut hi = [b.body_radius.max(500.0), b.body_radius.max(500.0)];
@@ -112,7 +116,6 @@ pub fn battle_screen(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view
     let cam0 = *st.cam.get_or_insert_with(|| fit(b));
     let mut cam = cam0;
     let me = view.me;
-    let team_of = |o: PlayerId| team(view.color_of(Some(o))).0;
 
     // ---- layout: top bar, bottom sheet, the arena in between
     let top = safe_top() + 8.0 * s();
@@ -185,113 +188,7 @@ pub fn battle_screen(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view
     }
     st.cam = Some(cam);
 
-    // ---- the arena
-    cel::backdrop();
-    let t_anim = get_time() as f32;
-    // scale rings around the centre, every 1000 km
-    let c0 = cam.to_screen([0.0, 0.0]);
-    for k in 1..=12 {
-        let r = (k as f64 * 1000.0 * cam.zoom) as f32;
-        if r > 20.0 * s() && r < screen_width().max(screen_height()) * 1.5 {
-            draw_circle_lines(c0.x, c0.y, r, 1.0, Color::new(1.0, 1.0, 1.0, if k % 5 == 0 { 0.10 } else { 0.05 }));
-        }
-    }
-    if b.body_radius > 0.0 {
-        let r = (b.body_radius * cam.zoom) as f32;
-        let (l, d) = match b.body.and_then(|x| view.body(x)) {
-            Some(body) => team(view.color_of(body.owner)),
-            None => (Color::new(0.6, 0.6, 0.7, 1.0), Color::new(0.3, 0.3, 0.4, 1.0)),
-        };
-        cel::body(c0, r.max(6.0 * s()), alpha(l, 0.9), alpha(d, 0.9));
-    }
-    // weapon reach of what we picked
-    for u in st.sel.iter().filter_map(|u| b.unit(*u)) {
-        if u.weapon != WeaponKind::None {
-            let p = cam.to_screen(u.pos);
-            let ring: Vec<Vec2> = (0..=64).map(|i| p + Vec2::from_angle(i as f32 / 64.0 * std::f32::consts::TAU) * (u.range * cam.zoom) as f32).collect();
-            cel::dashed_path(&ring, 1.5 * s(), 6.0 * s(), alpha(ACCENT, 0.35));
-        }
-    }
-    // salvos: a dot and where it'll be in 20 s; red with a countdown when it will burst on us
-    for sv in &b.salvos {
-        let p = cam.to_screen(sv.pos);
-        let ahead = cam.to_screen([sv.pos[0] + sv.vel[0] * 20.0, sv.pos[1] + sv.vel[1] * 20.0]);
-        let col = if sv.threat.is_some() { DANGER } else if sv.owner == me { alpha(PAPER, 0.8) } else { alpha(team_of(sv.owner), 0.9) };
-        draw_line(p.x, p.y, ahead.x, ahead.y, 1.5 * s(), alpha(col, 0.35));
-        draw_circle(p.x, p.y, 3.5 * s(), INK);
-        draw_circle(p.x, p.y, 2.5 * s(), col);
-    }
-    // laser shots and salvo bursts of the last few seconds
-    for h in &b.hits {
-        let a = (1.0 - h.age / 1.5).clamp(0.0, 1.0) as f32;
-        let (p, q) = (cam.to_screen(h.from), cam.to_screen(h.to));
-        if h.beam {
-            draw_line(p.x, p.y, q.x, q.y, 3.0 * s(), alpha(WHITE, 0.5 * a));
-            draw_line(p.x, p.y, q.x, q.y, 1.5 * s(), alpha(ACCENT, a));
-        } else if a > 0.0 {
-            cel::burst(q, (10.0 + 10.0 * (1.0 - a)) * s(), 8, alpha(ACCENT, a), t_anim * 3.0);
-        }
-        let k = (h.age / 2.5).clamp(0.0, 1.0) as f32;
-        if k < 1.0 {
-            inked(&format!("-{}", widgets::hp_num(h.dmg)), q.x, q.y - 18.0 * s() - 24.0 * s() * k, 14.0, alpha(DANGER, 1.0 - k), Align::Center);
-        }
-    }
-    // units
-    for u in &b.units {
-        let p = cam.to_screen(u.pos);
-        let size = size_of(u);
-        let picked = st.sel.contains(&u.unit);
-        if picked {
-            let pulse = 1.0 + 0.1 * (t_anim * 6.0).sin();
-            draw_circle_lines(p.x, p.y, (size + 9.0 * s()) * pulse, 3.0 * s(), ACCENT);
-        }
-        let l = team_of(u.owner);
-        match (u.unit, u.class) {
-            (BattleRef::Ship(_), Some(class)) => {
-                let v = vec2(u.vel[0] as f32, u.vel[1] as f32);
-                let dir = match u.target.and_then(|t| b.unit(t)) {
-                    Some(t) => vec2((t.pos[0] - u.pos[0]) as f32, (t.pos[1] - u.pos[1]) as f32),
-                    None if v.length() > 1e-3 => v,
-                    None => vec2(if u.owner == me { 1.0 } else { -1.0 }, 0.0),
-                };
-                let player = view.player(u.owner);
-                let skin = player.map(|p| art::skin_of(&p.faction)).unwrap_or("vanguard");
-                match art::ship_tex(class, skin, player.map(|p| p.color)) {
-                    Some(t) => art::draw_centered(&t, p, vec2(size, size) * 2.8, dir.y.atan2(dir.x), WHITE),
-                    None => cel::ship(p, dir, size, if u.owner == me { PAPER } else { l }),
-                }
-                // where it's drifting (30 s ahead) and the burn still to come
-                let drift = cam.to_screen([u.pos[0] + u.vel[0] * 30.0, u.pos[1] + u.vel[1] * 30.0]);
-                if drift.distance(p) > 3.0 * s() {
-                    draw_line(p.x, p.y, drift.x, drift.y, 1.5 * s(), alpha(l, 0.5));
-                }
-                let bl = vec2(u.burn_left[0] as f32, u.burn_left[1] as f32);
-                if bl.length() > 1e-3 {
-                    cel::arrow(p, p + bl / DV_PER_PX as f32 * s(), 3.0 * s(), alpha(ACCENT, 0.8));
-                }
-                if u.manual && u.owner == me {
-                    text("M", p.x - size - 4.0 * s(), p.y - size, 12.0, ACCENT, FontKind::Title, Align::Center);
-                }
-            }
-            (BattleRef::Station(_), _) => cel::diamond(p, size, if u.owner == me { PAPER } else { l }),
-            _ => {
-                // planetary guns: a ring of turrets on the surface
-                draw_circle_lines(p.x, p.y, (b.body_radius * cam.zoom) as f32 + 4.0 * s(), 3.0 * s(), alpha(l, 0.8));
-            }
-        }
-        let bar_at = if matches!(u.unit, BattleRef::Defense(_)) { p + vec2(0.0, (b.body_radius * cam.zoom) as f32 + 14.0 * s()) } else { p + vec2(0.0, size + 8.0 * s()) };
-        mini_bar(bar_at, (u.hp / u.hp_max.max(1e-3)).clamp(0.0, 1.0));
-    }
-    // seconds until each threatening salvo passes, over the ship it's coming for
-    for sv in &b.salvos {
-        let Some((u, dt)) = sv.threat else { continue };
-        let Some(unit) = b.unit(u) else { continue };
-        let p = cam.to_screen(unit.pos);
-        let r = size_of(unit) + 16.0 * s();
-        let k = 0.5 + 0.5 * (t_anim * 8.0).sin();
-        draw_circle_lines(p.x, p.y, r, 2.0 * s(), alpha(DANGER, 0.5 + 0.4 * k));
-        inked(&format!("{:.0}s", dt.max(0.0)), p.x + r, p.y - r, 14.0, DANGER, Align::Center);
-    }
+    draw_arena(b, view, &cam, &st.sel);
     // the burn being aimed
     if let (Some(a), Some(v)) = (st.aim, aim_vec) {
         let len = (v.length() / s()) as f64 * DV_PER_PX;
@@ -419,6 +316,119 @@ pub fn battle_screen(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view
         art::sfx("menu_close");
     } else {
         g.battle = Some(std::mem::replace(st, BattleScreen::new(0)));
+    }
+}
+
+/// The arena: scale rings, the body, weapon reach of `sel`, salvos, recent hits and the units (the
+/// live battle screen and replays).
+pub(super) fn draw_arena(b: &BattleView, view: &GameView, cam: &Camera, sel: &[BattleRef]) {
+    let me = view.me;
+    let team_of = |o: PlayerId| team(view.color_of(Some(o))).0;
+    cel::backdrop();
+    let t_anim = get_time() as f32;
+    // scale rings around the centre, every 1000 km
+    let c0 = cam.to_screen([0.0, 0.0]);
+    for k in 1..=12 {
+        let r = (k as f64 * 1000.0 * cam.zoom) as f32;
+        if r > 20.0 * s() && r < screen_width().max(screen_height()) * 1.5 {
+            draw_circle_lines(c0.x, c0.y, r, 1.0, Color::new(1.0, 1.0, 1.0, if k % 5 == 0 { 0.10 } else { 0.05 }));
+        }
+    }
+    if b.body_radius > 0.0 {
+        let r = (b.body_radius * cam.zoom) as f32;
+        let (l, d) = match b.body.and_then(|x| view.body(x)) {
+            Some(body) => team(view.color_of(body.owner)),
+            None => (Color::new(0.6, 0.6, 0.7, 1.0), Color::new(0.3, 0.3, 0.4, 1.0)),
+        };
+        cel::body(c0, r.max(6.0 * s()), alpha(l, 0.9), alpha(d, 0.9));
+    }
+    // weapon reach of what we picked
+    for u in sel.iter().filter_map(|u| b.unit(*u)) {
+        if u.weapon != WeaponKind::None {
+            let p = cam.to_screen(u.pos);
+            let ring: Vec<Vec2> = (0..=64).map(|i| p + Vec2::from_angle(i as f32 / 64.0 * std::f32::consts::TAU) * (u.range * cam.zoom) as f32).collect();
+            cel::dashed_path(&ring, 1.5 * s(), 6.0 * s(), alpha(ACCENT, 0.35));
+        }
+    }
+    // salvos: a dot and where it'll be in 20 s; red with a countdown when it will burst on us
+    for sv in &b.salvos {
+        let p = cam.to_screen(sv.pos);
+        let ahead = cam.to_screen([sv.pos[0] + sv.vel[0] * 20.0, sv.pos[1] + sv.vel[1] * 20.0]);
+        let col = if sv.threat.is_some() { DANGER } else if sv.owner == me { alpha(PAPER, 0.8) } else { alpha(team_of(sv.owner), 0.9) };
+        draw_line(p.x, p.y, ahead.x, ahead.y, 1.5 * s(), alpha(col, 0.35));
+        draw_circle(p.x, p.y, 3.5 * s(), INK);
+        draw_circle(p.x, p.y, 2.5 * s(), col);
+    }
+    // laser shots and salvo bursts of the last few seconds
+    for h in &b.hits {
+        let a = (1.0 - h.age / 1.5).clamp(0.0, 1.0) as f32;
+        let (p, q) = (cam.to_screen(h.from), cam.to_screen(h.to));
+        if h.beam {
+            draw_line(p.x, p.y, q.x, q.y, 3.0 * s(), alpha(WHITE, 0.5 * a));
+            draw_line(p.x, p.y, q.x, q.y, 1.5 * s(), alpha(ACCENT, a));
+        } else if a > 0.0 {
+            cel::burst(q, (10.0 + 10.0 * (1.0 - a)) * s(), 8, alpha(ACCENT, a), t_anim * 3.0);
+        }
+        let k = (h.age / 2.5).clamp(0.0, 1.0) as f32;
+        if k < 1.0 {
+            inked(&format!("-{}", widgets::hp_num(h.dmg)), q.x, q.y - 18.0 * s() - 24.0 * s() * k, 14.0, alpha(DANGER, 1.0 - k), Align::Center);
+        }
+    }
+    // units
+    for u in &b.units {
+        let p = cam.to_screen(u.pos);
+        let size = size_of(u);
+        let picked = sel.contains(&u.unit);
+        if picked {
+            let pulse = 1.0 + 0.1 * (t_anim * 6.0).sin();
+            draw_circle_lines(p.x, p.y, (size + 9.0 * s()) * pulse, 3.0 * s(), ACCENT);
+        }
+        let l = team_of(u.owner);
+        match (u.unit, u.class) {
+            (BattleRef::Ship(_), Some(class)) => {
+                let v = vec2(u.vel[0] as f32, u.vel[1] as f32);
+                let dir = match u.target.and_then(|t| b.unit(t)) {
+                    Some(t) => vec2((t.pos[0] - u.pos[0]) as f32, (t.pos[1] - u.pos[1]) as f32),
+                    None if v.length() > 1e-3 => v,
+                    None => vec2(if u.owner == me { 1.0 } else { -1.0 }, 0.0),
+                };
+                let player = view.player(u.owner);
+                let skin = player.map(|p| art::skin_of(&p.faction)).unwrap_or("vanguard");
+                match art::ship_tex(class, skin, player.map(|p| p.color)) {
+                    Some(t) => art::draw_centered(&t, p, vec2(size, size) * 2.8, dir.y.atan2(dir.x), WHITE),
+                    None => cel::ship(p, dir, size, if u.owner == me { PAPER } else { l }),
+                }
+                // where it's drifting (30 s ahead) and the burn still to come
+                let drift = cam.to_screen([u.pos[0] + u.vel[0] * 30.0, u.pos[1] + u.vel[1] * 30.0]);
+                if drift.distance(p) > 3.0 * s() {
+                    draw_line(p.x, p.y, drift.x, drift.y, 1.5 * s(), alpha(l, 0.5));
+                }
+                let bl = vec2(u.burn_left[0] as f32, u.burn_left[1] as f32);
+                if bl.length() > 1e-3 {
+                    cel::arrow(p, p + bl / DV_PER_PX as f32 * s(), 3.0 * s(), alpha(ACCENT, 0.8));
+                }
+                if u.manual && u.owner == me {
+                    text("M", p.x - size - 4.0 * s(), p.y - size, 12.0, ACCENT, FontKind::Title, Align::Center);
+                }
+            }
+            (BattleRef::Station(_), _) => cel::diamond(p, size, if u.owner == me { PAPER } else { l }),
+            _ => {
+                // planetary guns: a ring of turrets on the surface
+                draw_circle_lines(p.x, p.y, (b.body_radius * cam.zoom) as f32 + 4.0 * s(), 3.0 * s(), alpha(l, 0.8));
+            }
+        }
+        let bar_at = if matches!(u.unit, BattleRef::Defense(_)) { p + vec2(0.0, (b.body_radius * cam.zoom) as f32 + 14.0 * s()) } else { p + vec2(0.0, size + 8.0 * s()) };
+        mini_bar(bar_at, (u.hp / u.hp_max.max(1e-3)).clamp(0.0, 1.0));
+    }
+    // seconds until each threatening salvo passes, over the ship it's coming for
+    for sv in &b.salvos {
+        let Some((u, dt)) = sv.threat else { continue };
+        let Some(unit) = b.unit(u) else { continue };
+        let p = cam.to_screen(unit.pos);
+        let r = size_of(unit) + 16.0 * s();
+        let k = 0.5 + 0.5 * (t_anim * 8.0).sin();
+        draw_circle_lines(p.x, p.y, r, 2.0 * s(), alpha(DANGER, 0.5 + 0.4 * k));
+        inked(&format!("{:.0}s", dt.max(0.0)), p.x + r, p.y - r, 14.0, DANGER, Align::Center);
     }
 }
 

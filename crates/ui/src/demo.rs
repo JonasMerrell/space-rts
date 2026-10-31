@@ -529,7 +529,7 @@ impl Backend for DemoBackend {
                     None => self.dark.push(ship),
                 }
             }
-            UiAction::ShipAbility { .. } | UiAction::StationAbility { .. } => {}
+            UiAction::ShipAbility { .. } | UiAction::StationAbility { .. } | UiAction::LoadHistory | UiAction::LoadReplay { .. } => {}
             UiAction::Unwait { id } => self.waiting.retain(|w| w.0 != id),
             UiAction::MoveWait { id, to } => {
                 if let Some(i) = self.waiting.iter().position(|w| w.0 == id) {
@@ -1067,6 +1067,55 @@ impl Backend for DemoBackend {
 
     fn battles(&self) -> Vec<BattleView> {
         self.battle.iter().cloned().collect()
+    }
+
+    fn history(&self) -> Option<HistoryView> {
+        let v = self.view.as_ref()?;
+        let now = v.now;
+        let foe = v.players.iter().map(|p| p.id).find(|&p| p != v.me).unwrap_or(2);
+        let at = |id: BodyId, start_t: f64, n: u32, lost: Vec<u32>| PastBattle {
+            id: n,
+            place: v.body(id).map(|b| b.name.clone()).unwrap_or_default(),
+            body: Some(id),
+            pos: self.pos(id, start_t),
+            start_t,
+            end_t: start_t + 1260.0,
+            sides: vec![v.me, foe],
+            lost,
+        };
+        Some(HistoryView { start: Some(now - 2.0 * 86_400.0), end: Some(now), loading: false, battles: vec![at(3, now - 30.0 * 3600.0, 6, vec![0, 2, 1]), at(2, now - 9.0 * 3600.0, 7, vec![0, 1, 3])] })
+    }
+
+    fn past(&self, t: f64) -> Option<std::rc::Rc<GameView>> {
+        let mut v = self.view.clone()?;
+        // a day ago Tethys was still Mara's
+        if t < v.now - 20.0 * 3600.0 {
+            if let Some(b) = v.bodies.iter_mut().find(|b| b.id == 2) {
+                b.owner = Some(2);
+            }
+        }
+        v.ships.retain(|s| s.planned.is_none() && s.seen_at.is_none());
+        Some(std::rc::Rc::new(v))
+    }
+
+    fn replay(&self, id: u32, t: f64) -> Option<BattleView> {
+        let h = self.history()?;
+        let pb = h.battles.iter().find(|b| b.id == id)?;
+        let mut b = demo_battle(self.view.as_ref()?);
+        let dt = t - pb.start_t - 412.0;
+        for u in b.units.iter_mut().filter(|u| matches!(u.unit, BattleRef::Ship(_))) {
+            u.pos = [u.pos[0] + u.vel[0] * dt, u.pos[1] + u.vel[1] * dt];
+            u.burn_left = [0.0, 0.0];
+            u.manual = false;
+        }
+        for sv in b.salvos.iter_mut() {
+            sv.threat = None;
+        }
+        b.id = id;
+        b.start_t = pb.start_t;
+        b.now = t;
+        b.lost = pb.lost.clone();
+        Some(b)
     }
 
     fn results(&self) -> Option<GameResults> {

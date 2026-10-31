@@ -942,6 +942,35 @@ pub struct BattleView {
     pub lost: Vec<u32>,
 }
 
+/// A finished battle the rewind can replay.
+#[derive(Clone, Debug)]
+pub struct PastBattle {
+    pub id: u32,
+    /// "Vesper" / "deep space"
+    pub place: String,
+    pub body: Option<BodyId>,
+    /// where on the map (km, at the start)
+    pub pos: [f64; 2],
+    pub start_t: f64,
+    pub end_t: f64,
+    pub sides: Vec<PlayerId>,
+    /// ships each side lost, by player id
+    pub lost: Vec<u32>,
+}
+
+/// What's loaded of the war's history for the rewind.
+#[derive(Clone, Debug, Default)]
+pub struct HistoryView {
+    /// earliest time the map can be rewound to (None = nothing recorded yet)
+    pub start: Option<f64>,
+    /// latest snapshot loaded
+    pub end: Option<f64>,
+    /// a page is on its way
+    pub loading: bool,
+    /// oldest first
+    pub battles: Vec<PastBattle>,
+}
+
 impl BattleView {
     pub fn unit(&self, u: BattleRef) -> Option<&BattleUnit> {
         self.units.iter().find(|x| x.unit == u)

@@ -13,18 +13,18 @@ use crate::theme::*;
 use crate::widgets::{self, Style};
 use macroquad::prelude::*;
 
-const SCRUB_H: f32 = 74.0;
+pub(super) const SCRUB_H: f32 = 74.0;
 const HUD_H: f32 = 86.0;
 
-fn margin() -> f32 {
+pub(super) fn margin() -> f32 {
     12.0 * s()
 }
 
-fn hud_bottom() -> f32 {
+pub(super) fn hud_bottom() -> f32 {
     safe_top() + HUD_H * s()
 }
 
-fn scrub_top() -> f32 {
+pub(super) fn scrub_top() -> f32 {
     screen_height() - safe_bottom() - SCRUB_H * s()
 }
 
@@ -239,13 +239,23 @@ pub(super) fn zoom_to_body(view: &GameView, b: &Body) -> f64 {
 }
 
 pub fn scrubber(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &GameView) {
+    if g.rewind.is_some() {
+        return super::rewind::bar(g, inp, be, view);
+    }
     let w = screen_width();
     let span = g.scrub_span;
     let r = Rect::new(margin(), scrub_top(), w - 2.0 * margin(), SCRUB_H * s() - margin());
     inp.block(r);
     cel::panel(r, PANEL);
     let btn_w = 54.0 * s();
-    let track = Rect::new(r.x + 14.0 * s(), r.y + r.h * 0.42, r.w - 2.0 * btn_w - 40.0 * s(), 8.0 * s());
+    // PAST: rewind the map through the war so far (backends with a history)
+    let has_past = be.history().is_some();
+    let left = if has_past { btn_w + 26.0 * s() } else { 14.0 * s() };
+    if has_past && widgets::button(inp, Rect::new(r.x + 8.0 * s(), r.y + 9.0 * s(), btn_w, r.h - 18.0 * s()), "PAST", Style::Ghost) {
+        super::rewind::enter(g);
+        return;
+    }
+    let track = Rect::new(r.x + left, r.y + r.h * 0.42, r.w - 2.0 * btn_w - 26.0 * s() - left, 8.0 * s());
     let x_of = |dt: f64| track.x + track.w * (dt / span).clamp(0.0, 1.0) as f32;
     let (tick, label_every) = scrub_ticks(span);
 

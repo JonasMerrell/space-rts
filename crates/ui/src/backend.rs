@@ -18,6 +18,10 @@ pub enum BackendEvent {
 /// Commands from the UI. Fire-and-forget; results arrive as `BackendEvent`s or a changed view.
 #[derive(Clone, Debug)]
 pub enum UiAction {
+    /// Rewind opened: fetch the war's history recorded since what we have.
+    LoadHistory,
+    /// Fetch a finished battle's replay.
+    LoadReplay { id: u32 },
     /// The sensors report was looked at: its log items so far are no longer new.
     SensorsSeen,
     /// `invite`: code for invite-only servers when registering ("" = none)
@@ -241,6 +245,21 @@ pub trait Backend {
         None
     }
     /// Game time up to which `predicted` is available (the forecast fills in in the background).
+    /// Rewind: what's loaded of the war's history (None = this backend has none).
+    fn history(&self) -> Option<HistoryView> {
+        None
+    }
+
+    /// Rewind: the map at past game time `t`, as we saw it then.
+    fn past(&self, _t: f64) -> Option<std::rc::Rc<GameView>> {
+        None
+    }
+
+    /// A finished battle replayed at game time `t` (None while it loads, see `UiAction::LoadReplay`).
+    fn replay(&self, _id: u32, _t: f64) -> Option<BattleView> {
+        None
+    }
+
     fn forecast_until(&self) -> f64 {
         f64::INFINITY
     }

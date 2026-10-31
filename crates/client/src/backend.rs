@@ -132,6 +132,8 @@ pub struct ClientBackend {
     /// While a battle we're in runs: the snapshot simulated on to now every frame, so the battle
     /// screen moves second by second (the server corrects it with every snapshot).
     live: Option<Game>,
+    /// Rewind: the open war's history and the battle replays fetched so far.
+    past: crate::history::Past,
 }
 
 impl ClientBackend {
@@ -192,6 +194,7 @@ impl ClientBackend {
             sensors: None,
             sensors_seen: None,
             live: None,
+            past: Default::default(),
         }
     }
 
@@ -323,6 +326,18 @@ impl ClientBackend {
                 }
             }
             ServerMsg::Events(_) | ServerMsg::Pong => {}
+            ServerMsg::History { code, snaps, battles, more } => {
+                if code == self.past.code && self.past.add(snaps, battles, more) {
+                    let since = self.past.since();
+                    self.send(ClientMsg::History { code, since });
+                }
+            }
+            ServerMsg::Replay { code, rec } => {
+                if code == self.past.code {
+                    self.past.replay_wait.remove(&rec.id);
+                    self.past.replays.insert(rec.id, *rec);
+                }
+            }
             ServerMsg::GameDeleted { code, name } => {
                 if self.code().as_deref() == Some(code.as_str()) {
                     self.game = None;
@@ -908,7 +923,7 @@ fn player_model(game: &Game, p: &g::Player) -> m::Player {
     m::Player { id: p.id, name: p.name.clone(), color: p.color, faction: p.faction.clone(), online: p.bot.is_none(), team }
 }
 
-fn ship_class(c: g::ShipClass) -> m::ShipClass {
+pub(crate) fn ship_class(c: g::ShipClass) -> m::ShipClass {
     match c {
         g::ShipClass::Scout => m::ShipClass::Scout,
         g::ShipClass::Interceptor => m::ShipClass::Interceptor,
@@ -950,7 +965,7 @@ fn station_by_name(name: &str) -> Option<StationKind> {
     StationKind::ALL.into_iter().find(|k| format!("{k:?}") == name)
 }
 
-fn arr(v: V2) -> [f64; 2] {
+pub(crate) fn arr(v: V2) -> [f64; 2] {
     [v.x, v.y]
 }
 
@@ -1486,6 +1501,24 @@ impl Backend for ClientBackend {
                     self.send(ClientMsg::Cmd { code, cmd: Command::CancelDeparture { ship: self.lead(ship) } });
                 }
             }
+            UiAction::LoadHistory => {
+                if let Some(code) = self.code() {
+                    if self.past.code != code {
+                        self.past = crate::history::Past::for_code(&code);
+                    }
+                    if !self.past.waiting {
+                        self.past.waiting = true;
+                        self.send(ClientMsg::History { code, since: self.past.since() });
+                    }
+                }
+            }
+            UiAction::LoadReplay { id } => {
+                if let Some(code) = self.code().filter(|c| *c == self.past.code) {
+                    if !self.past.replays.contains_key(&id) && self.past.replay_wait.insert(id) {
+                        self.send(ClientMsg::Replay { code, id });
+                    }
+                }
+            }
             UiAction::SensorsSeen => {
                 if let Some(code) = self.code() {
                     self.sensors_seen = Some((code, self.now()));
@@ -1628,6 +1661,12 @@ impl Backend for ClientBackend {
 
     fn ship_pos(&self, id: ShipId, t: f64) -> Option<[f64; 2]> {
         let g = self.game.as_ref()?;
+        // rewound: where it was then
+        if t < self.now() - 1.0 && self.past.code == g.code {
+            if let Some(p) = self.past.ship_pos(&g.system, id, t) {
+                return Some(p);
+            }
+        }
         let id = lead(g, id).0;
         if let Some((_, _, f)) = self.frame_at(t) {
             // ghosts (last sightings) aren't in the forecast; they keep coasting below
@@ -1799,6 +1838,21 @@ impl Backend for ClientBackend {
 
     fn forecast_until(&self) -> f64 {
         self.forecast.shared.lock().unwrap().until()
+    }
+
+    fn history(&self) -> Option<m::HistoryView> {
+        let code = self.code()?;
+        Some(if code == self.past.code { self.past.info() } else { m::HistoryView::default() })
+    }
+
+    fn past(&self, t: f64) -> Option<Rc<m::GameView>> {
+        let g = self.game.as_ref().filter(|g| g.code == self.past.code)?;
+        self.past.view(self.view.as_ref()?, &g.system, t)
+    }
+
+    fn replay(&self, id: u32, t: f64) -> Option<m::BattleView> {
+        self.code().filter(|c| *c == self.past.code)?;
+        self.past.replay(id, t)
     }
 
     fn orbit_status(&self, body: BodyId) -> Option<String> {
@@ -2220,7 +2274,7 @@ fn sim_unit(u: m::BattleRef) -> sim::battle::Unit {
     }
 }
 
-fn model_unit(u: sim::battle::Unit) -> m::BattleRef {
+pub(crate) fn model_unit(u: sim::battle::Unit) -> m::BattleRef {
     match u {
         sim::battle::Unit::Ship(id) => m::BattleRef::Ship(id.0),
         sim::battle::Unit::Defense(b) => m::BattleRef::Defense(b.0),
