@@ -696,6 +696,9 @@ pub struct Game {
     pub battles: Vec<crate::battle::Battle>,
     #[serde(default)]
     pub next_battle: u32,
+    /// war history for rewinds and battle replays (server only, see replay.rs)
+    #[serde(skip)]
+    pub recorder: crate::replay::Recorder,
 }
 
 /// Commands players send. Applied at the current game time.
@@ -852,6 +855,7 @@ impl Game {
             gate_uses: vec![],
             battles: vec![],
             next_battle: 0,
+            recorder: Default::default(),
         };
         let _ = g.add_player(host_name, None);
         g
@@ -1608,6 +1612,7 @@ impl Game {
             self.t = step_end;
             if battling && step_end >= next_battle_step {
                 self.battle_steps();
+                self.record_battles();
             }
             if step_end >= next_tick {
                 self.last_tick = next_tick;
@@ -1631,6 +1636,7 @@ impl Game {
                 if self.rules >= BATTLE_RULES {
                     self.inbound_warnings();
                 }
+                self.record_snap();
                 self.intercept_tick();
                 if bots {
                     crate::bot::think_all(self);
