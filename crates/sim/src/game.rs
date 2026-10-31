@@ -797,8 +797,9 @@ pub const CONSTRUCTOR_POWER: f64 = 1.0;
 /// Current rules revision for new matches. 1: matter yield by body kind and planet size. 2: advanced tech tier.
 /// 3: slower economy (see `ECONOMY_RULES`). 4: faster base pace (see `PACE_RULES`).
 /// 5: ships cost fuel to build (see `SHIP_FUEL_RULES`). 6: live battles (see `battle::BATTLE_RULES`).
-/// 7: system scaled to the number of slots (`SCALED_SYSTEM_RULES`).
-pub const RULES: u32 = 7;
+/// 7: system scaled to the number of slots (`SCALED_SYSTEM_RULES`). 8: advanced research twice as fast
+/// (`tech::FAST_ADVANCED_RULES`).
+pub const RULES: u32 = 8;
 /// Rules 7: systems for more than four pilots get a planet per extra slot (see `system::generate_for`).
 pub const SCALED_SYSTEM_RULES: u32 = 7;
 /// Rules 3 (Jonas 2026-10-28): production starts low and grows slowly, early game affords a few interceptors,

@@ -2054,7 +2054,7 @@ impl Backend for ClientBackend {
                         None => m::TechState::Locked(why),
                     }
                 };
-                let (matter, energy, seconds) = t.cost();
+                let (matter, energy, seconds) = g.research_cost(t);
                 m::TechInfo {
                     id: format!("{t:?}"),
                     name: t.label().to_string(),

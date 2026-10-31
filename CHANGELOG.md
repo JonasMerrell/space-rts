@@ -9,6 +9,9 @@ Every release adds an entry here (a unit test checks the newest one matches the 
 - Battle replays: every battle you fought or watched is marked on the rewind bar and the map, and listed under BATTLES. Play it back at 1× to 64×, pause and scrub through it. Only what you could see at the time is shown.
 - History is recorded from this update on: in wars already running, the rewind reaches back to the day of the update.
 
+## 0.10.1 — 2026-10-31
+- New wars: advanced research takes half as long. Prices are unchanged, and wars already running keep their old times.
+
 ## 0.10.0 — 2026-10-30
 - Live battles (new wars): fights play out in real time. Open a battle to steer your ships, watch the shots fly and burn to dodge them; ships you leave alone follow their stance.
 - Get a browser notification when you're in a battle, and an "Enemies inbound" warning when hostile ships head for your bodies.
