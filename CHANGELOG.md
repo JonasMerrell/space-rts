@@ -4,6 +4,9 @@ Newest first. The app shows these under PATCH NOTES and once after each update.
 Format: a `## <version> — <YYYY-MM-DD>` line, then `- ` bullets in plain player language.
 Every release adds an entry here (a unit test checks the newest one matches the release version).
 
+## 0.12.1 — 2026-11-02
+- Fixed: a fleet in flight that fought a battle broke up into single ships afterwards. Its ships now leave the battle together on one course and stay one fleet.
+
 ## 0.12.0 — 2026-11-02
 - Bigger maps: new wars get about four planets per pilot (three in a Small system, five in a Large one), so an 8-pilot Medium war has 32 planets. Planets now share orbits, spread evenly around them, so the outer years stay as short as before. Rocky worlds are still on the inside and gas giants on the outside.
 - Wars already running keep their map.

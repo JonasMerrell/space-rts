@@ -850,9 +850,7 @@ impl Game {
         }
         b.fighters = kept;
         b.rng = rng.0;
-        for f in &left {
-            self.leave_battle(f);
-        }
+        self.leave_battle_together(&left, &b.fighters);
         self.battles[bi] = b;
         if !fighting {
             let b = self.battles.remove(bi);
@@ -863,11 +861,55 @@ impl Game {
         }
     }
 
+    /// Fighters leave their battle. A fleet in flight stays one fleet: members leaving together
+    /// share one course (the members' mean battle drift), and a member leaving after its fleetmates
+    /// rejoins the course they already fly. Without this every member kept its own course and the
+    /// fleet broke up into single ships (Jonas 2026-11-02).
+    fn leave_battle_together(&mut self, left: &[Fighter], staying: &[Fighter]) {
+        let fighting = |g: &Game, id: ShipId| staying.iter().any(|f| f.unit == Unit::Ship(id)) || g.battle_of(Unit::Ship(id)).is_some();
+        let flying = |g: &Game, id: ShipId| g.ship(id).is_some_and(|s| matches!(s.state, ShipState::Flying(_)));
+        let mut done: Vec<ShipId> = vec![];
+        for f in left {
+            let Unit::Ship(id) = f.unit else { continue };
+            if done.contains(&id) {
+                continue;
+            }
+            if self.fleet_of(id).is_none() || !flying(self, id) {
+                self.leave_battle(f.unit, f.dp, f.dv);
+                done.push(id);
+                continue;
+            }
+            let mates = self.with_fleetmates(id);
+            let leaving: Vec<&Fighter> = left.iter().filter(|o| matches!(o.unit, Unit::Ship(m) if mates.contains(&m) && flying(self, m))).collect();
+            // a fleetmate already out of the battle: everyone leaving now takes its course
+            let out = mates.iter().copied().find(|&m| flying(self, m) && !fighting(self, m) && !leaving.iter().any(|o| o.unit == Unit::Ship(m)));
+            let course = out.and_then(|m| match &self.ship(m)?.state {
+                ShipState::Flying(fl) => Some(fl.clone()),
+                _ => None,
+            });
+            let n = leaving.len() as f64;
+            let dp = leaving.iter().fold(V2::ZERO, |a, o| a + o.dp) / n;
+            let dv = leaving.iter().fold(V2::ZERO, |a, o| a + o.dv) / n;
+            for o in leaving {
+                let Unit::Ship(m) = o.unit else { continue };
+                match &course {
+                    Some(c) => {
+                        if let Some(s) = self.ship_mut(m) {
+                            s.state = ShipState::Flying(c.clone());
+                        }
+                    }
+                    None => self.leave_battle(o.unit, dp, dv),
+                }
+                done.push(m);
+            }
+        }
+    }
+
     /// A fighter leaves its battle: a ship in flight keeps the course its battle burns gave it; a
     /// parked ship settles back into its parking orbit.
-    fn leave_battle(&mut self, f: &Fighter) {
-        let Unit::Ship(id) = f.unit else { return };
-        if f.dp == V2::ZERO && f.dv == V2::ZERO {
+    fn leave_battle(&mut self, unit: Unit, dp: V2, dv: V2) {
+        let Unit::Ship(id) = unit else { return };
+        if dp == V2::ZERO && dv == V2::ZERO {
             return;
         }
         let t = self.t;
@@ -875,7 +917,7 @@ impl Game {
         let Some(s) = self.ships.iter_mut().find(|s| s.id == id) else { return };
         if let ShipState::Flying(fl) = &mut s.state {
             let Some(st) = fl.trajectory(sys).state_at(sys, t) else { return };
-            fl.start = State { r: st.r + f.dp, v: st.v + f.dv, ..st };
+            fl.start = State { r: st.r + dp, v: st.v + dv, ..st };
             fl.burns.retain(|b| b.t > t);
             fl.cache = None;
         }
@@ -1198,6 +1240,43 @@ pub(crate) mod tests {
         if let Some(s) = g.ship(gs) {
             assert!(matches!(s.state, ShipState::Flying(_)), "it should still be on its way");
         }
+    }
+
+    #[test]
+    fn a_fleet_flying_through_a_battle_stays_one_fleet() {
+        let (mut g, x) = arena();
+        for _ in 0..2 {
+            g.spawn(1, ShipClass::Interceptor, x);
+        }
+        // alice's mixed fleet coasts past the moon: every member fights (and dodges) on its own
+        let ships = vec![g.spawn(0, ShipClass::Gunship, x), g.spawn(0, ShipClass::Interceptor, x), g.spawn(0, ShipClass::Scout, x), g.spawn(0, ShipClass::Tanker, x)];
+        g.apply(0, Command::Fleet(crate::fleet::FleetCommand::Form { ships: ships.clone(), name: "Red".into() })).unwrap();
+        let parent = g.system.body(x).parent.unwrap();
+        let (r, v) = g.system.rel_state(x, g.t);
+        let along = v.norm();
+        let start = crate::traj::State { parent, t: g.t, r: r - along * 9_000.0 + along.perp() * 300.0, v: v + along * 4.0 };
+        for &s in &ships {
+            g.ship_mut(s).unwrap().state = ShipState::Flying(Flight { start, burns: vec![], dest: None, cache: None });
+        }
+        let mut joined = false;
+        for _ in 0..3600 {
+            g.advance_to(g.t + 1.0);
+            joined |= !g.battles.is_empty();
+            let alive: Vec<ShipId> = ships.iter().copied().filter(|&s| g.ship(s).is_some()).collect();
+            if alive.len() >= 2 {
+                let f = g.fleet_of(alive[0]).unwrap_or_else(|| panic!("the fleet broke up at t {}", g.t));
+                assert_eq!(f.ships.len(), alive.len(), "members lost at t {}", g.t);
+            }
+            if joined && g.battles.is_empty() {
+                break;
+            }
+        }
+        assert!(joined, "the flyby never became a battle");
+        assert!(g.battles.is_empty(), "the battle never ended");
+        g.advance_to(g.t + 600.0);
+        let alive: Vec<ShipId> = ships.iter().copied().filter(|&s| g.ship(s).is_some()).collect();
+        assert!(alive.len() >= 2, "too few survived to test with");
+        assert_eq!(g.fleet_of(alive[0]).map(|f| f.ships.len()), Some(alive.len()), "survivors should still fly as one fleet");
     }
 
     #[test]
