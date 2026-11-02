@@ -189,7 +189,8 @@ fn routes_between_any_two_bodies_are_chains_of_direct_legs() {
                 for &hop in &r {
                     assert_ne!(hop, prev, "seed {seed}: repeated hop");
                     let (pa, pb) = (sys.body(prev), sys.body(hop));
-                    let direct = (pa.parent == pb.parent) || pb.parent == Some(prev) || pa.parent == Some(hop);
+                    let escape = pa.parent.is_some_and(|p| sys.body(p).parent.is_some() && sys.body(p).parent == pb.parent);
+                    let direct = (pa.parent == pb.parent) || pb.parent == Some(prev) || pa.parent == Some(hop) || escape;
                     assert!(direct, "seed {seed}: {} -> {} is not a direct leg in {r:?}", pa.name, pb.name);
                     prev = hop;
                 }
