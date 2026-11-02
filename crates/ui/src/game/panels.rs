@@ -961,10 +961,8 @@ fn target_bar(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
         g.mode = Mode::Nodes(NodeEdit {
             ship: sh.id,
             nodes: if sh.nodes.is_empty() { vec![ManeuverNode { t: view.now + 1800.0, prograde: 0.0, radial: 0.0 }] } else { sh.nodes.clone() },
-            sel: 0,
-            preview: None,
             dirty: true,
-            drag: None,
+            ..Default::default()
         });
     }
     if widgets::button(inp, b(1), "DETAILS", Style::Secondary) {
@@ -1100,10 +1098,8 @@ fn ship_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
             g.mode = Mode::Nodes(NodeEdit {
                 ship: sh.id,
                 nodes: if sh.nodes.is_empty() { vec![ManeuverNode { t: view.now + 1800.0, prograde: 0.0, radial: 0.0 }] } else { sh.nodes.clone() },
-                sel: 0,
-                preview: None,
                 dirty: true,
-                drag: None,
+                ..Default::default()
             });
         }
         let flying = sh.trajectory.is_some();
@@ -1417,8 +1413,6 @@ struct NodeFrame {
     pos: Vec2,
     pro: Vec2,
     rad: Vec2,
-    /// km/s per dp of handle drag.
-    k: f64,
 }
 
 fn node_frame(ne: &NodeEdit, be: &dyn Backend, cam: &Camera) -> Option<NodeFrame> {
@@ -1435,8 +1429,44 @@ fn node_frame(ne: &NodeEdit, be: &dyn Backend, cam: &Camera) -> Option<NodeFrame
     if rad.dot(pos - cam.to_screen([0.0, 0.0])) < 0.0 {
         rad = -rad;
     }
-    let speed = (p[0] - q[0]).hypot(p[1] - q[1]) / 120.0;
-    Some(NodeFrame { pos, pro, rad, k: (speed * 0.002).max(0.001) })
+    Some(NodeFrame { pos, pro, rad })
+}
+
+/// Node editor precision steps (km/s per −/+ press), with the burn-time nudge that goes with each.
+/// (Laps around a planet take minutes, transfers days: the PE/AP snaps cover the long jumps.)
+const NODE_STEPS: [(f64, &str, f64); 3] = [(0.01, "0.01", 60.0), (0.1, "0.1", 600.0), (1.0, "1", 3600.0)];
+
+/// dp of handle pull per step: one step every 18 dp, so a 0.1 step gives ~0.55 km/s per 100 dp.
+const DP_PER_STEP: f32 = 18.0;
+
+fn snap(v: f64, step: f64) -> f64 {
+    let r = (v / step).round() * step;
+    if r.abs() < step * 0.5 {
+        0.0
+    } else {
+        r
+    }
+}
+
+fn time_step(step: f64) -> f64 {
+    NODE_STEPS.iter().find(|x| (x.0 - step).abs() < 1e-9).map(|x| x.2).unwrap_or(3600.0)
+}
+
+/// The burn's amount along a handle's direction (0 when it points the other way).
+fn handle_amount(n: &ManeuverNode, h: Handle) -> f64 {
+    match h {
+        Handle::Prograde => n.prograde.max(0.0),
+        Handle::Retrograde => (-n.prograde).max(0.0),
+        Handle::RadialOut => n.radial.max(0.0),
+        Handle::RadialIn => (-n.radial).max(0.0),
+        Handle::Time => 0.0,
+    }
+}
+
+/// Where a handle's knob is drawn: further out the bigger the burn that way (touch uses the same spot).
+fn handle_tip(f: &NodeFrame, n: &ManeuverNode, h: Handle) -> Vec2 {
+    let stretch = (handle_amount(n, h) / 3.0).min(1.0) as f32 * 30.0 * s();
+    f.pos + handle_dir(f, h) * (handle_len() + stretch)
 }
 
 fn handle_len() -> f32 {
@@ -1562,15 +1592,7 @@ pub fn node_handles(ne: &NodeEdit, be: &dyn Backend, _view: &GameView, cam: &Cam
     let n = ne.nodes[ne.sel];
     for (h, col, label) in HANDLES {
         let d = handle_dir(&f, h);
-        let amount = match h {
-            Handle::Prograde => n.prograde.max(0.0),
-            Handle::Retrograde => (-n.prograde).max(0.0),
-            Handle::RadialOut => n.radial.max(0.0),
-            Handle::RadialIn => (-n.radial).max(0.0),
-            Handle::Time => 0.0,
-        };
-        let stretch = (amount / f.k / 60.0).min(1.0) as f32 * 30.0 * s();
-        let tip = f.pos + d * (handle_len() + stretch);
+        let tip = handle_tip(&f, &n, h);
         let active = ne.drag == Some(h);
         cel::arrow(f.pos + d * 16.0 * s(), tip, if active { 6.0 } else { 4.5 } * s(), col);
         draw_circle(tip.x, tip.y, 12.0 * s(), INK);
@@ -1578,28 +1600,131 @@ pub fn node_handles(ne: &NodeEdit, be: &dyn Backend, _view: &GameView, cam: &Cam
         text(label, tip.x + d.x * 26.0 * s(), tip.y + d.y * 20.0 * s(), 12.0, PAPER, FontKind::Title, Align::Center);
     }
     cel::diamond(f.pos, 11.0 * s(), ACCENT);
+    // While pulling a handle, show the value by the finger.
+    if let Some(h @ (Handle::Prograde | Handle::Retrograde | Handle::RadialOut | Handle::RadialIn)) = ne.drag {
+        let (label, v) = if matches!(h, Handle::Prograde | Handle::Retrograde) { ("PRO", n.prograde) } else { ("RAD", n.radial) };
+        let tip = handle_tip(&f, &n, h) + handle_dir(&f, h) * 44.0 * s();
+        let t = format!("{label} {v:+.2}");
+        let w = measure(&t, FontKind::Title, 14.0).x + 16.0 * s();
+        let r = Rect::new(tip.x - w / 2.0, tip.y - 12.0 * s(), w, 24.0 * s());
+        cel::round_rect(r, r.h / 2.0, alpha(PANEL, 0.92));
+        text(&t, r.center().x, r.center().y + s(), 14.0, ACCENT, FontKind::Title, Align::Center);
+    }
+}
+
+/// A tap on the planned path (away from the existing burns) while editing: the time to add a burn at.
+pub fn path_tap(ne: &NodeEdit, view: &GameView, cam: &Camera, p: Vec2) -> Option<f64> {
+    let tr = ne.preview.as_ref()?;
+    let fut: Vec<_> = tr.points.iter().copied().filter(|q| q.0 >= view.now + 120.0).collect();
+    let t = map::nearest_on(&fut, cam, p, 22.0 * s())?;
+    // not on top of (or within two minutes of) a burn we already have
+    let near = ne.nodes.iter().any(|n| (n.t - t).abs() < 120.0 || tr.sample(n.t).is_some_and(|q| cam.to_screen(q).distance(p) < 26.0 * s()));
+    (!near).then_some(t)
+}
+
+/// The next periapsis (or apoapsis) after the selected burn, on the path the ship flies up to that
+/// burn (the burn itself left out), between its neighbours. Wraps to the first one in that span.
+/// None when there is none, or the orbit is too round for it to mean anything.
+fn next_apsis(ne: &NodeEdit, be: &dyn Backend, view: &GameView, peri: bool) -> Option<f64> {
+    let cur = ne.nodes.get(ne.sel)?.t;
+    let mut base: Vec<ManeuverNode> = ne.nodes[..=ne.sel].to_vec();
+    base[ne.sel].prograde = 0.0;
+    base[ne.sel].radial = 0.0;
+    let tr = be.preview_nodes(ne.ship, &base)?;
+    let lo = if ne.sel > 0 { ne.nodes[ne.sel - 1].t + 60.0 } else { view.now + 60.0 };
+    let hi = ne.nodes.get(ne.sel + 1).map(|n| n.t - 60.0).unwrap_or(f64::MAX);
+    // what it orbits at the burn: the smallest SOI it's inside, else the star
+    let here = tr.sample(cur)?;
+    let parent = view
+        .bodies
+        .iter()
+        .filter(|b| b.kind != BodyKind::Star)
+        .filter(|b| {
+            let c = be.body_pos(b.id, cur);
+            (here[0] - c[0]).hypot(here[1] - c[1]) < b.soi
+        })
+        .min_by(|a, b| a.soi.total_cmp(&b.soi))
+        .or_else(|| view.bodies.iter().find(|b| b.kind == BodyKind::Star))?;
+    let pts: Vec<(f64, f64)> = tr
+        .points
+        .iter()
+        .filter(|q| q.0 >= lo && q.0 <= hi)
+        .map(|&(t, p)| {
+            let c = be.body_pos(parent.id, t);
+            (t, (p[0] - c[0]).hypot(p[1] - c[1]))
+        })
+        .collect();
+    let limit = (parent.kind != BodyKind::Star).then_some(parent.soi);
+    let found = apsides(&pts, peri, limit);
+    // a near-circular orbit has no apsis worth snapping to
+    let (rmin, rmax) = pts.iter().fold((f64::MAX, 0.0f64), |(a, b), q| (a.min(q.1), b.max(q.1)));
+    if found.is_empty() || (rmax - rmin) < 0.004 * rmax {
+        return None;
+    }
+    found.iter().copied().find(|&t| t > cur + 120.0).or(found.first().copied()).map(|t| t.max(lo))
+}
+
+/// Times of the periapses (or apoapses) in a (time, distance from the parent) series, refined
+/// with a parabola through the three samples around each. Stops where the distance passes
+/// `limit` again after being inside it (leaving the parent's SOI: what comes after isn't this orbit).
+pub(crate) fn apsides(pts: &[(f64, f64)], peri: bool, limit: Option<f64>) -> Vec<f64> {
+    // paths repeat the sample where one leg ends and the next begins: a flat pair isn't an apsis
+    let mut pts = pts.to_vec();
+    pts.dedup_by(|b, a| b.0 - a.0 < 1e-3);
+    let mut found = vec![];
+    let mut inside = false;
+    for w in pts.windows(3) {
+        let ((t0, r0), (t1, r1), (t2, r2)) = (w[0], w[1], w[2]);
+        if limit.is_some_and(|l| r1 > l) {
+            // not there yet (arriving later), or gone
+            if inside {
+                break;
+            }
+            continue;
+        }
+        inside = true;
+        let ext = if peri { r1 < r0 && r1 < r2 } else { r1 > r0 && r1 > r2 };
+        if !ext {
+            continue;
+        }
+        // vertex of the parabola through the three samples (times taken relative to the middle one)
+        let (t0, t1, t2, mid) = (t0 - t1, 0.0, t2 - t1, t1);
+        let den = (t0 - t1) * (t0 - t2) * (t1 - t2);
+        let a = (t2 * (r1 - r0) + t1 * (r0 - r2) + t0 * (r2 - r1)) / den;
+        let b = (t2 * t2 * (r0 - r1) + t1 * t1 * (r2 - r0) + t0 * t0 * (r1 - r2)) / den;
+        let te = if den.abs() > 0.0 && a.abs() > 0.0 { (-b / (2.0 * a)).clamp(t0, t2) } else { t1 };
+        found.push(mid + te);
+    }
+    found
 }
 
 /// Handle/diamond drags. Returns true while a node drag owns the gesture.
-pub fn node_drag(ne: &mut NodeEdit, inp: &Input, be: &dyn Backend, view: &GameView, cam: &Camera, _t: f64) -> bool {
+pub fn node_drag(ne: &mut NodeEdit, inp: &Input, be: &dyn Backend, view: &GameView, cam: &Camera, _t: f64, step: f64) -> bool {
     let Some(f) = node_frame(ne, be, cam) else { return false };
     if let Some(p) = inp.pressed {
         ne.drag = None;
         if p.distance(f.pos) < 22.0 * s() {
             ne.drag = Some(Handle::Time);
         }
+        let n = ne.nodes[ne.sel];
+        let mut best = 30.0 * s();
         for (h, _, _) in HANDLES {
-            let tip = f.pos + handle_dir(&f, h) * handle_len();
-            if p.distance(tip) < 30.0 * s() {
+            let d = p.distance(handle_tip(&f, &n, h));
+            if d < best {
+                best = d;
                 ne.drag = Some(h);
+                ne.drag_from = if matches!(h, Handle::Prograde | Handle::Retrograde) { n.prograde } else { n.radial };
+                ne.drag_along = 0.0;
             }
         }
         // Tapping another node's diamond selects it.
-        for (i, n) in ne.nodes.iter().enumerate() {
-            if let Some(q) = ne.preview.as_ref().and_then(|tr| tr.sample(n.t)) {
-                if i != ne.sel && cam.to_screen(q).distance(p) < 18.0 * s() {
-                    ne.sel = i;
-                    ne.drag = Some(Handle::Time);
+        if ne.drag.is_none() {
+            for (i, n) in ne.nodes.iter().enumerate() {
+                if let Some(q) = ne.preview.as_ref().and_then(|tr| tr.sample(n.t)) {
+                    if i != ne.sel && cam.to_screen(q).distance(p) < 18.0 * s() {
+                        ne.sel = i;
+                        ne.drag = Some(Handle::Time);
+                    }
                 }
             }
         }
@@ -1624,18 +1749,15 @@ pub fn node_drag(ne: &mut NodeEdit, inp: &Input, be: &dyn Backend, view: &GameVi
         }
         return true;
     }
-    if let Some(d) = inp.drag.or(Some(Vec2::ZERO)) {
-        let along = d.dot(handle_dir(&f, h)) / s();
-        let dv = along as f64 * f.k;
+    if let Some(d) = inp.drag {
+        // the pull along the handle, from where the drag began; one step per DP_PER_STEP dp
+        ne.drag_along += d.dot(handle_dir(&f, h)) / s();
+        let sign = if matches!(h, Handle::Prograde | Handle::RadialOut) { 1.0 } else { -1.0 };
+        let v = snap(ne.drag_from + sign * (ne.drag_along / DP_PER_STEP) as f64 * step, step);
         let n = &mut ne.nodes[ne.sel];
-        match h {
-            Handle::Prograde => n.prograde += dv,
-            Handle::Retrograde => n.prograde -= dv,
-            Handle::RadialOut => n.radial += dv,
-            Handle::RadialIn => n.radial -= dv,
-            Handle::Time => {}
-        }
-        if dv != 0.0 {
+        let slot = if matches!(h, Handle::Prograde | Handle::Retrograde) { &mut n.prograde } else { &mut n.radial };
+        if *slot != v {
+            *slot = v;
             ne.dirty = true;
         }
     }
@@ -1655,49 +1777,103 @@ fn node_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
         });
         g.node_outcome = o.map(|o| (ne.ship, ne.nodes.clone(), o));
     }
-    let r = sheet_rect(222.0);
+    let r = sheet_rect(300.0);
     inp.block(r);
     cel::panel(r, PANEL);
     let Some(n) = ne.nodes.get(ne.sel).copied() else {
         g.mode = Mode::Idle;
         return;
     };
+    let step = g.node_step;
     inked(&format!("NODE {}/{}", ne.sel + 1, ne.nodes.len()), r.x + 16.0 * s(), r.y + 24.0 * s(), 22.0, ACCENT, Align::Left);
     text(&format!("burn in {}", fmt_dur(n.t - view.now)), r.x + 130.0 * s(), r.y + 25.0 * s(), 15.0, MUTED, FontKind::Body, Align::Left);
     let total: f64 = ne.nodes.iter().map(|n| n.dv()).sum();
     text(&format!("TOTAL DV {:.2} km/s", total), r.x + r.w - 16.0 * s(), r.y + 25.0 * s(), 14.0, PAPER, FontKind::Title, Align::Right);
 
-    let k = node_frame(&ne, be, g.cam.as_ref().unwrap()).map(|f| f.k * 10.0).unwrap_or(0.1);
-    if let Some((_, _, o)) = &g.node_outcome {
-        let (line, col) = outcome_line(o, view);
-        text(&line, r.x + 16.0 * s(), r.y + 146.0 * s(), 13.0, col, FontKind::Body, Align::Left);
+    // Precision: the step for −/+ (and how fast the arrows pull), plus a reset for this burn.
+    let cy = r.y + 46.0 * s();
+    let ch = 30.0 * s();
+    text("STEP", r.x + 16.0 * s(), cy + ch / 2.0, 13.0, MUTED, FontKind::Title, Align::Left);
+    let cw = 54.0 * s();
+    for (i, (v, label, _)) in NODE_STEPS.iter().enumerate() {
+        let cr = Rect::new(r.x + 62.0 * s() + i as f32 * (cw + 6.0 * s()), cy, cw, ch);
+        if widgets::chip(inp, cr, label, (step - v).abs() < 1e-9, ACCENT) {
+            g.node_step = *v;
+            art::sfx("ui_tap");
+        }
     }
+    let zr = Rect::new(r.x + r.w - 16.0 * s() - 70.0 * s(), cy, 70.0 * s(), ch);
+    if widgets::chip(inp, zr, "ZERO", false, ACCENT) && n.dv() > 0.0 {
+        ne.nodes[ne.sel].prograde = 0.0;
+        ne.nodes[ne.sel].radial = 0.0;
+        ne.dirty = true;
+    }
+
+    let bw = 44.0 * s();
+    let minus_plus = |y: f32| {
+        (
+            Rect::new(r.x + r.w - 16.0 * s() - 2.0 * bw - 10.0 * s(), y, bw, 38.0 * s()),
+            Rect::new(r.x + r.w - 16.0 * s() - bw, y, bw, 38.0 * s()),
+        )
+    };
     let rows = [("PROGRADE", n.prograde, hex(0x80ed99)), ("RADIAL", n.radial, hex(0x4cc9f0))];
     for (i, (label, v, col)) in rows.iter().enumerate() {
-        let y = r.y + 46.0 * s() + i as f32 * 46.0 * s();
+        let y = r.y + 86.0 * s() + i as f32 * 46.0 * s();
         text(label, r.x + 16.0 * s(), y + 19.0 * s(), 15.0, *col, FontKind::Title, Align::Left);
         inked(&format!("{:+.2}", v), r.x + 160.0 * s(), y + 19.0 * s(), 20.0, PAPER, Align::Center);
-        let bw = 44.0 * s();
-        let minus = Rect::new(r.x + r.w - 16.0 * s() - 2.0 * bw - 10.0 * s(), y, bw, 38.0 * s());
-        let plus = Rect::new(r.x + r.w - 16.0 * s() - bw, y, bw, 38.0 * s());
+        let (minus, plus) = minus_plus(y);
         let mut delta = 0.0;
-        if widgets::button(inp, minus, "-", Style::Secondary) {
-            delta = -k;
+        if widgets::repeat_button(inp, minus, "-", Style::Secondary) {
+            delta = -step;
         }
-        if widgets::button(inp, plus, "+", Style::Secondary) {
-            delta = k;
+        if widgets::repeat_button(inp, plus, "+", Style::Secondary) {
+            delta = step;
         }
         if delta != 0.0 {
             let node = &mut ne.nodes[ne.sel];
-            if i == 0 {
-                node.prograde += delta;
-            } else {
-                node.radial += delta;
-            }
+            let slot = if i == 0 { &mut node.prograde } else { &mut node.radial };
+            // step onto the grid first, so 1.37 with a 0.1 step goes to 1.4, not 1.47
+            *slot = snap(snap(*slot, step) + delta, step);
             ne.dirty = true;
         }
     }
-    let by = r.y + r.h - 56.0 * s();
+
+    // Burn time: nudge, or snap to the next periapsis / apoapsis.
+    let y = r.y + 178.0 * s();
+    text("TIME", r.x + 16.0 * s(), y + 19.0 * s(), 15.0, PAPER, FontKind::Title, Align::Left);
+    let pw = 56.0 * s();
+    let mut snap_to = None;
+    for (i, (label, peri)) in [("PERI", true), ("APO", false)].iter().enumerate() {
+        let cr = Rect::new(r.x + 70.0 * s() + i as f32 * (pw + 8.0 * s()), y + 4.0 * s(), pw, ch);
+        if widgets::chip(inp, cr, label, false, ACCENT) {
+            match next_apsis(&ne, be, view, *peri) {
+                Some(t) => snap_to = Some(t),
+                None => g.say(if *peri { "No periapsis to snap to on this stretch" } else { "No apoapsis to snap to on this stretch" }),
+            }
+        }
+    }
+    let (minus, plus) = minus_plus(y);
+    let ts = time_step(step);
+    if widgets::repeat_button(inp, minus, "-", Style::Secondary) {
+        snap_to = Some(n.t - ts);
+    }
+    if widgets::repeat_button(inp, plus, "+", Style::Secondary) {
+        snap_to = Some(n.t + ts);
+    }
+    let ts_label = if ts >= 3600.0 { format!("±{:.0}h", ts / 3600.0) } else { format!("±{}", fmt_dur(ts)) };
+    text(&ts_label, minus.x - 8.0 * s(), y + 19.0 * s(), 12.0, MUTED, FontKind::Body, Align::Right);
+    if let Some(t) = snap_to {
+        let lo = if ne.sel > 0 { ne.nodes[ne.sel - 1].t + 60.0 } else { view.now + 60.0 };
+        let hi = ne.nodes.get(ne.sel + 1).map(|n| n.t - 60.0).unwrap_or(f64::MAX);
+        ne.nodes[ne.sel].t = t.clamp(lo, hi.max(lo));
+        ne.dirty = true;
+    }
+
+    if let Some((_, _, o)) = &g.node_outcome {
+        let (line, col) = outcome_line(o, view);
+        text(&line, r.x + 16.0 * s(), r.y + 236.0 * s(), 13.0, col, FontKind::Body, Align::Left);
+    }
+    let by = r.y + r.h - 54.0 * s();
     let bw = (r.w - 5.0 * 10.0 * s()) / 4.0;
     let b = |i: usize| Rect::new(r.x + 10.0 * s() + i as f32 * (bw + 10.0 * s()), by, bw, 44.0 * s());
     let mut close = false;
@@ -1706,6 +1882,7 @@ fn node_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
         ne.nodes.push(ManeuverNode { t: last + 3.0 * 3600.0, prograde: 0.0, radial: 0.0 });
         ne.sel = ne.nodes.len() - 1;
         ne.dirty = true;
+        g.say("Tip: tap the green path to add a burn right there");
     }
     if widgets::button(inp, b(1), "DELETE", Style::Danger) {
         ne.nodes.remove(ne.sel);
@@ -1886,4 +2063,41 @@ pub fn chat(g: &mut GameScreen, inp: &mut Input, view: &GameView) {
         g.emit(UiAction::Chat(msg.trim().to_string()));
     }
     g.chat_seen = view.chat.len();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apsides;
+
+    /// An ellipse sampled coarsely: periapses and apoapses land within a few seconds.
+    #[test]
+    fn apsides_of_an_ellipse() {
+        let (a, e, period) = (1.0e6_f64, 0.3_f64, 86_400.0_f64);
+        let n = std::f64::consts::TAU / period;
+        // r(t) by solving Kepler's equation; periapsis at t = 1000 + k * period
+        let r = |t: f64| {
+            let m = n * (t - 1000.0);
+            let mut ea = m;
+            for _ in 0..50 {
+                ea -= (ea - e * ea.sin() - m) / (1.0 - e * ea.cos());
+            }
+            a * (1.0 - e * ea.cos())
+        };
+        let pts: Vec<(f64, f64)> = (0..400).map(|i| 300_000.0 + i as f64 * 1234.5).map(|t| (t, r(t))).collect();
+        let pe = apsides(&pts, true, None);
+        let ap = apsides(&pts, false, None);
+        assert!(!pe.is_empty() && !ap.is_empty());
+        for t in pe {
+            let k = ((t - 1000.0) / period).round();
+            assert!((t - (1000.0 + k * period)).abs() < 60.0, "pe at {t}");
+        }
+        for t in ap {
+            let k = ((t - 1000.0 - period / 2.0) / period).round();
+            assert!((t - (1000.0 + period / 2.0 + k * period)).abs() < 60.0, "ap at {t}");
+        }
+        // leaving the SOI stops the search
+        // past the SOI there's no apoapsis, and only the first pass's periapsis counts
+        assert!(apsides(&pts, false, Some(a * 1.1)).is_empty());
+        assert_eq!(apsides(&pts, true, Some(a * 1.1)).len(), 1);
+    }
 }

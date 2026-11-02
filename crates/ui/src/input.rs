@@ -83,6 +83,9 @@ pub struct Input {
     script_back: bool,
     /// Frozen clock for scripted long-presses (seconds added to get_time()).
     script_clock: f64,
+    /// Clock this frame and last frame (for hold-to-repeat buttons).
+    clock: f64,
+    prev_clock: f64,
 }
 
 impl Input {
@@ -145,6 +148,8 @@ impl Input {
         }
 
         let now = get_time() + self.script_clock;
+        self.prev_clock = self.clock;
+        self.clock = now;
         let was_down = !self.prev_pointers.is_empty();
         let is_down = !self.pointers.is_empty();
 
@@ -439,6 +444,16 @@ impl Input {
     /// Mouse is over `r` and no button is held (hover highlight).
     pub fn hovering(&self, r: Rect) -> bool {
         self.held.is_none() && self.hover.is_some_and(|p| r.contains(p) && !self.occluded(p))
+    }
+
+    /// Seconds the finger has been held down in `r` since the gesture began there (and, with the
+    /// previous frame's value, for hold-to-repeat): `(now, last frame)`.
+    pub fn hold_time(&self, r: Rect) -> Option<(f64, f64)> {
+        let (sp, st) = self.start?;
+        if !self.holding(r) || !r.contains(sp) || self.moved {
+            return None;
+        }
+        Some((self.clock - st, self.prev_clock - st))
     }
 
     pub fn holding(&self, r: Rect) -> bool {
