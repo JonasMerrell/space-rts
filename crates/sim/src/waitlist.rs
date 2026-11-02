@@ -84,7 +84,7 @@ impl Game {
         }
         if pl.waiting.is_empty() && self.wish_blocker(p, wish).is_none() {
             let (m, e) = self.wish_cost(p, wish, 0);
-            if pl.matter >= m && pl.energy >= e {
+            if self.can_pay(p, m, e) {
                 return self.apply(p, wish.command());
             }
         }
@@ -207,8 +207,7 @@ impl Game {
                     continue;
                 }
                 let (m, e) = self.wish_cost(p, w.wish, 0);
-                let pl = &self.players[p as usize];
-                if pl.matter < m || pl.energy < e {
+                if !self.can_pay(p, m, e) {
                     break; // saving up for this one
                 }
                 if self.apply(p, w.wish.command()).is_ok() {
