@@ -1,0 +1,10 @@
+[package]
+name = "warsim"
+edition.workspace = true
+version.workspace = true
+description = "Headless bot-vs-bot war simulator for balance tuning"
+
+[dependencies]
+sim = { path = "../sim" }
+serde = { workspace = true }
+serde_json = { workspace = true }
