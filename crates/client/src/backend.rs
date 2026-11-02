@@ -683,7 +683,9 @@ fn compute_plan(g: &Game, now: f64, ship: ShipId, target: BodyId, after: f64) ->
     let budget = g.with_fleetmates(s.id).iter().filter_map(|&id| g.ship(id)).map(|m| m.dv_left()).fold(s.dv_left(), f64::min);
     let opts = sim::plan::tradeoff(&g.system, from, first, now, depart, budget);
     if opts.is_empty() {
-        return None;
+        // no straight course out of a moon to that planet: offer the trip to the moon's own planet
+        let home = sim::plan::stopover(&g.system, from, first)?;
+        return compute_plan(g, now, ship, home.0, after);
     }
     let span = sim::plan::search_span(&g.system, from, first);
     let windows: Vec<f64> = sim::plan::windows(&g.system, from, first, now, span).into_iter().map(|w| w.depart_t).collect();

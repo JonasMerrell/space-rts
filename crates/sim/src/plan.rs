@@ -75,6 +75,9 @@ pub(crate) enum Rel {
     Child,
     /// `from` orbits `to`
     Parent,
+    /// `from` is a moon of the given planet and `to` orbits the same body as that planet: climb out
+    /// of the moon's and the planet's wells in one go (Lambert leg in the planet's parent's frame)
+    Escape(BodyId),
 }
 
 fn relation(sys: &System, from: BodyId, to: BodyId) -> Option<Rel> {
@@ -86,7 +89,106 @@ fn relation(sys: &System, from: BodyId, to: BodyId) -> Option<Rel> {
     } else if bf.parent == Some(to) {
         Some(Rel::Parent)
     } else {
-        None
+        bf.parent.filter(|&p| sys.body(p).parent.is_some() && sys.body(p).parent == bt.parent).map(Rel::Escape)
+    }
+}
+
+/// Climbing out of a body's well (gravity `mu`) from `r` so that the ship crosses the SOI radius
+/// `soi` with velocity `vout` (both relative to the body). Returns the velocity needed at `r`, the
+/// time to the SOI edge and where on it the ship leaves. Of the possible paths the one closest to
+/// `v_ref` (what the ship already moves at) is taken; ones that swing through periapsis below
+/// `min_rp` on the way are skipped.
+pub(crate) fn escape_through(mu: f64, r: V2, vout: V2, v_ref: V2, min_rp: f64, soi: f64) -> Option<(V2, f64, V2)> {
+    let (rm, w) = (r.len(), vout.len());
+    if w < 1e-6 || rm >= soi {
+        return None;
+    }
+    let energy = w * w / 2.0 - mu / soi;
+    let v_rm2 = 2.0 * (energy + mu / rm);
+    if v_rm2 <= 0.0 {
+        return None;
+    }
+    let h_max = (rm * v_rm2.sqrt()).min(soi * w);
+    let wrap = |a: f64| (a + PI).rem_euclid(2.0 * PI) - PI;
+    // for angular momentum h (sign = sense of motion) and the branch at r (outbound / inbound):
+    // (angle error at r, velocity at r, exit point)
+    let solve = |h: f64, inbound: bool| -> Option<(f64, V2, V2)> {
+        let s = h.signum();
+        let h = h.abs();
+        let p = h * h / mu;
+        let e = (1.0 + 2.0 * energy * h * h / (mu * mu)).max(0.0).sqrt();
+        if e < 1e-9 {
+            return None;
+        }
+        let (cs, cm) = ((p / soi - 1.0) / e, (p / rm - 1.0) / e);
+        if cs.abs() > 1.0 || cm.abs() > 1.0 {
+            return None;
+        }
+        let nu_s = cs.acos();
+        let nu_m = if inbound { -cm.acos() } else { cm.acos() };
+        if nu_m > nu_s || (inbound && p / (1.0 + e) < min_rp) {
+            return None;
+        }
+        let vel = |nu: f64| crate::v2::v2(-nu.sin(), e + nu.cos()) * (mu / h);
+        let flip = |v: V2| crate::v2::v2(v.x, s * v.y);
+        let om = vout.angle() - flip(vel(nu_s)).angle();
+        let err = wrap(om + s * nu_m - r.angle());
+        let exit = V2::from_angle(om + s * nu_s) * soi;
+        Some((err, flip(vel(nu_m)).rotate(om), exit))
+    };
+    let mut best: Option<(V2, V2)> = None;
+    const N: usize = 64;
+    for s in [1.0, -1.0] {
+        for inbound in [false, true] {
+            let hs: Vec<f64> = (1..N).map(|i| s * h_max * i as f64 / N as f64).collect();
+            for k in 0..hs.len() - 1 {
+                let (Some(a), Some(b)) = (solve(hs[k], inbound), solve(hs[k + 1], inbound)) else { continue };
+                if a.0.signum() == b.0.signum() || (a.0 - b.0).abs() > 1.0 {
+                    continue;
+                }
+                let (mut lo, mut hi, flo) = (hs[k], hs[k + 1], a.0);
+                for _ in 0..60 {
+                    let m = 0.5 * (lo + hi);
+                    match solve(m, inbound) {
+                        Some(x) if x.0.signum() == flo.signum() => lo = m,
+                        Some(_) => hi = m,
+                        None => break,
+                    }
+                }
+                let Some((_, v, exit)) = solve(0.5 * (lo + hi), inbound) else { continue };
+                if best.is_none_or(|b| (v - v_ref).len() < (b.0 - v_ref).len()) {
+                    best = Some((v, exit));
+                }
+            }
+        }
+    }
+    let (v, exit) = best?;
+    // time out to the SOI edge
+    let mut hi = 60.0;
+    while crate::kepler::propagate(mu, r, v, hi).0.len() < soi {
+        hi *= 2.0;
+        if hi > 1e8 {
+            return None;
+        }
+    }
+    let mut lo = 0.0;
+    for _ in 0..50 {
+        let m = 0.5 * (lo + hi);
+        if crate::kepler::propagate(mu, r, v, m).0.len() < soi {
+            lo = m
+        } else {
+            hi = m
+        }
+    }
+    Some((v, hi, exit))
+}
+
+/// When the leg `from` → `to` climbs straight out of a moon's planet (`Rel::Escape`): that planet,
+/// the stop-over to fall back on if the direct course won't close.
+pub fn stopover(sys: &System, from: BodyId, to: BodyId) -> Option<BodyId> {
+    match relation(sys, from, to) {
+        Some(Rel::Escape(p)) => Some(p),
+        _ => None,
     }
 }
 
@@ -203,6 +305,43 @@ fn leg(sys: &System, from: BodyId, to: BodyId, rel: Rel, td: f64, tof: f64) -> O
                 arrive_t: ta,
             })
         }
+        Rel::Escape(p) => {
+            let bp = sys.body(p);
+            let f = bp.parent?;
+            let mu = sys.body(f).mu;
+            let (rm, vm) = (sys.pos_in(from, p, td), sys.vel_in(from, p, td));
+            // the Lambert leg starts where the ship leaves the planet's SOI: iterate on that time
+            let (mut t_out, mut exit) = (0.0, V2::default());
+            let mut v_p = vm;
+            let mut v2 = V2::default();
+            for _ in 0..3 {
+                let t1 = td + t_out;
+                if ta - t1 < tof * 0.2 {
+                    return None;
+                }
+                let r1 = sys.pos_in(p, f, t1) + exit;
+                let r2 = sys.pos_in(to, f, ta);
+                let (v1, a2) = lambert(mu, r1, r2, ta - t1, true)?;
+                if dips_below(mu, r1, v1, ta - t1, sys.body(f).radius * 1.2) {
+                    return None;
+                }
+                let vout = v1 - sys.vel_in(p, f, t1);
+                let (v, dt, x) = escape_through(bp.mu, rm, vout, vm, bp.radius * 1.2, bp.soi)?;
+                v_p = v;
+                v2 = a2;
+                t_out = dt;
+                exit = x;
+            }
+            let vinf_d = v_p - vm;
+            let vinf_a = v2 - sys.vel_in(to, f, ta);
+            let (r, v) = ejection(bf.mu, bf.park_radius(), vinf_d);
+            Some(Leg {
+                depart: State { parent: from, t: td, r, v },
+                dep_dv: oberth_dv(bf.mu, bf.park_radius(), vinf_d.len()),
+                cap_dv: oberth_dv(bt.mu, bt.park_radius(), vinf_a.len()),
+                arrive_t: ta,
+            })
+        }
     }
 }
 
@@ -211,6 +350,7 @@ pub(crate) fn hohmann_tof(sys: &System, from: BodyId, to: BodyId, rel: Rel) -> f
         Rel::Sibling(f) => (f, sys.body(from).orbit.unwrap().a, sys.body(to).orbit.unwrap().a),
         Rel::Child => (from, sys.body(from).park_radius(), sys.body(to).orbit.unwrap().a),
         Rel::Parent => (to, sys.body(from).orbit.unwrap().a, sys.body(to).park_radius()),
+        Rel::Escape(p) => (sys.body(p).parent.unwrap(), sys.body(p).orbit.unwrap().a, sys.body(to).orbit.unwrap().a),
     };
     let a = 0.5 * (r1 + r2);
     PI * (a * a * a / sys.body(frame).mu).sqrt()
@@ -244,6 +384,10 @@ pub fn search_span(sys: &System, from: BodyId, to: BodyId) -> f64 {
         }
         Some(Rel::Child) => p(to),
         Some(Rel::Parent) => p(from),
+        Some(Rel::Escape(pl)) => {
+            let (a, b) = (p(pl), p(to));
+            (1.0 / (1.0 / a - 1.0 / b).abs()).min(a.max(b) * 1.5)
+        }
         None => 86_400.0,
     };
     span.clamp(3600.0, 6.0 * 86_400.0)
@@ -655,6 +799,67 @@ pub fn between(sys: &System, from: BodyId, to: BodyId, a: Rung, b: Rung, f: f64)
     })
 }
 
+/// Departure tweak (rotation, speed scale) that brings the coasting path to `to` at about time `t_arr`:
+/// a damped Newton iteration on the miss distance. Stops once the path reaches `to`'s SOI.
+/// Nelder–Mead simplex size and stopping spread for courses climbing out of a moon (`Rel::Escape`).
+const ESC_SCALE: f64 = 0.1;
+const ESC_TOL: f64 = 1e-4;
+fn aim(sys: &System, to: BodyId, t_arr: f64, horizon: f64, make: &dyn Fn(&[f64; 3]) -> State) -> [f64; 3] {
+    let soi = sys.body(to).soi;
+    // (reached the target, miss vector at the arrival time)
+    let miss = |p: &[f64; 3]| -> Option<(bool, V2)> {
+        let tr = predict(sys, make(p), &[], Some(to), horizon);
+        if tr.segs.iter().any(|s| s.parent == to) {
+            return Some((true, V2::default()));
+        }
+        let t = t_arr.min(tr.end.t());
+        Some((false, tr.abs_pos(sys, t)? - sys.pos(to, t)))
+    };
+    let mut p = [0.0; 3];
+    let Some((mut done, mut m)) = miss(&p) else { return p };
+    for _ in 0..10 {
+        if done {
+            break;
+        }
+        let h = [1e-5, 1e-5];
+        let mut jac = [[0.0; 2]; 2];
+        for k in 0..2 {
+            let mut q = p;
+            q[k] += h[k];
+            let Some((_, mq)) = miss(&q) else { return p };
+            jac[0][k] = (mq.x - m.x) / h[k];
+            jac[1][k] = (mq.y - m.y) / h[k];
+        }
+        let det = jac[0][0] * jac[1][1] - jac[0][1] * jac[1][0];
+        if det.abs() < 1e-12 {
+            break;
+        }
+        let mut step = [(-m.x * jac[1][1] + m.y * jac[0][1]) / det, (m.x * jac[1][0] - m.y * jac[0][0]) / det];
+        // keep the steps small: the problem is far from linear
+        let big = (step[0].abs() / 0.05).max(step[1].abs() / 0.05);
+        if big > 1.0 {
+            step = [step[0] / big, step[1] / big];
+        }
+        // halve the step until the miss shrinks
+        let mut moved = false;
+        for _ in 0..6 {
+            let q = [p[0] + step[0], p[1] + step[1], 0.0];
+            if let Some((dq, mq)) = miss(&q) {
+                if dq || mq.len() < m.len() {
+                    (p, done, m) = (q, dq, mq);
+                    moved = true;
+                    break;
+                }
+            }
+            step = [step[0] * 0.5, step[1] * 0.5];
+        }
+        if !moved || m.len() < soi * 0.3 {
+            break;
+        }
+    }
+    p
+}
+
 /// Correct the Lambert estimate against the real patched-conic path with a Nelder–Mead search over
 /// (rotation of the departure point, speed scale, radial kick).
 fn shoot(sys: &System, from: BodyId, to: BodyId, l: &Leg, tof: f64, scale: f64) -> TransferPlan {
@@ -688,13 +893,21 @@ fn shoot(sys: &System, from: BodyId, to: BodyId, l: &Leg, tof: f64, scale: f64) 
         };
         (err, tr)
     };
+    // climbing out of a moon and its planet magnifies every error of the estimate: steer the
+    // path into the target's SOI first (Newton on the miss at the planned arrival time)
+    let escape = matches!(relation(sys, from, to), Some(Rel::Escape(_)));
+    let p0 = if escape { aim(sys, to, l.arrive_t, horizon, &make) } else { [0.0; 3] };
+    // and the path is that much more sensitive to the departure: a smaller simplex
+    let scale = if escape { scale * ESC_SCALE } else { scale };
+    let tol = if escape { ESC_TOL } else { 1e-6 };
     let mut pts: Vec<([f64; 3], f64)> = Vec::new();
-    for p in [[0.0, 0.0, 0.0], [0.03 * scale, 0.0, 0.0], [0.0, 0.01 * scale, 0.0], [0.0, 0.0, 0.02 * scale * l.depart.v.len()]] {
+    for d in [[0.0, 0.0, 0.0], [0.03 * scale, 0.0, 0.0], [0.0, 0.01 * scale, 0.0], [0.0, 0.0, 0.02 * scale * l.depart.v.len()]] {
+        let p = [p0[0] + d[0], p0[1] + d[1], p0[2] + d[2]];
         pts.push((p, eval(&p).0));
     }
     for _ in 0..140 {
         pts.sort_by(|a, b| a.1.total_cmp(&b.1));
-        if (pts[pts.len() - 1].1 - pts[0].1).abs() < 1e-6 {
+        if (pts[pts.len() - 1].1 - pts[0].1).abs() < tol {
             break;
         }
         let n = pts.len() - 1;
@@ -841,12 +1054,48 @@ mod tests {
     }
 
     #[test]
+    fn moons_escape_straight_to_other_planets() {
+        // leaving a moon for another planet used to stop at (dive down to) the moon's own planet first
+        // (every moon to every planet of seeds 7, 11 and 23 converged when this was written; a
+        // sample keeps the test quick)
+        for seed in [7u64, 23] {
+            let sys = generate(seed, SystemSize::Medium);
+            let mut n = 0;
+            let mut fails = vec![];
+            for m in sys.bodies.iter().filter(|b| b.kind == BodyKind::Moon).step_by(2) {
+                let home = m.parent.unwrap();
+                for &to in planets(&sys).iter().filter(|&&p| p != home).step_by(3) {
+                    assert_eq!(route(&sys, m.id, to), vec![to]);
+                    assert_eq!(stopover(&sys, m.id, to), Some(home));
+                    let t0 = std::time::Instant::now();
+                    let plan = plan_leg(&sys, m.id, to, 0.0, None).unwrap();
+                    n += 1;
+                    let parents: Vec<BodyId> = plan.traj.segs.iter().map(|s| s.parent).collect();
+                    println!("seed {seed} {} -> {}: {:.2}+{:.2} conv {} {:?} via {parents:?} ({:?})", m.name, sys.body(to).name, plan.depart_dv, plan.capture_dv, plan.converged, plan.traj.end, t0.elapsed());
+                    // never captured or crashed at the moon's own planet
+                    assert!(!matches!(plan.traj.end, End::Capture { body, .. } | End::Impact { body, .. } if body == home));
+                    if !plan.converged {
+                        fails.push((m.name.clone(), sys.body(to).name.clone()));
+                        continue;
+                    }
+                    assert!(matches!(plan.traj.end, End::Capture { body, .. } if body == to));
+                    assert_eq!(parents[0], m.id);
+                    assert!(plan.total_dv() < 30.0, "{:.1} km/s", plan.total_dv());
+                }
+            }
+            println!("seed {seed}: {} of {n} failed: {fails:?}", fails.len());
+            assert!(fails.len() * 20 <= n, "seed {seed}: {fails:?}");
+        }
+    }
+
+    #[test]
     fn routes() {
         let sys = generate(7, SystemSize::Medium);
         let moons: Vec<_> = sys.bodies.iter().filter(|b| b.kind == BodyKind::Moon).collect();
         let a = moons[0];
         let b = moons.iter().find(|m| m.parent != a.parent).unwrap();
         let r = route(&sys, a.id, b.id);
-        assert_eq!(r, vec![a.parent.unwrap(), b.parent.unwrap(), b.id]);
+        // a moon climbs straight out of its planet's well towards the other planet (no stop at its own)
+        assert_eq!(r, vec![b.parent.unwrap(), b.id]);
     }
 }

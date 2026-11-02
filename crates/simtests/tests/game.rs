@@ -560,3 +560,39 @@ fn asteroid_impact_energy_scales_with_mass_and_velocity_squared() {
         panic!("expected the biggest asteroid to wipe a home planet, severity {}", imp.severity);
     }
 }
+
+/// Leaving a moon for another planet climbs straight out of the moon's planet's well: no stop at
+/// (or fall into) that planet on the way.
+#[test]
+fn ships_leave_a_moon_straight_for_another_planet() {
+    let mut g = Game::new("MOON".into(), settings(2), 11, "ann");
+    g.add_player("bob", None).unwrap();
+    g.start();
+    let homes: Vec<BodyId> = g.players.iter().filter_map(|p| p.home).collect();
+    let free = |g: &Game, b: BodyId| g.bodies[b.0 as usize].owner.is_none() && !homes.contains(&b) && !homes.iter().any(|&h| g.system.body(h).parent == Some(b));
+    let moon = g.system.bodies.iter().find(|b| b.kind == BodyKind::Moon && free(&g, b.id) && free(&g, b.parent.unwrap())).expect("a free moon").id;
+    let planet = g.system.body(moon).parent.unwrap();
+    let to = g
+        .system
+        .bodies
+        .iter()
+        .find(|b| matches!(b.kind, BodyKind::Planet | BodyKind::GasGiant) && b.id != planet && free(&g, b.id) && !g.system.children(b.id).any(|c| homes.contains(&c.id)))
+        .expect("a free planet")
+        .id;
+    let ship = put_ship(&mut g, 0, ShipClass::Gunship, moon);
+    g.apply(0, Command::Transfer { ships: vec![ship], to, depart_t: None }).unwrap();
+    let s = g.ship(ship).unwrap();
+    assert!(s.route.is_empty(), "no extra hops: {:?}", s.route);
+    let ShipState::Parked { departure: Some(d), .. } = &s.state else { panic!("no departure") };
+    assert_eq!(d.to, to);
+    let t0 = g.t;
+    for k in 1..=4 * 24 * 6 {
+        g.advance_to(t0 + k as f64 * 600.0);
+        let s = g.ship(ship).expect("ship lost");
+        assert_ne!(s.parked_at(), Some(planet), "stopped at the moon's planet");
+        if s.parked_at() == Some(to) {
+            return;
+        }
+    }
+    panic!("didn't arrive: {:?}", g.events.iter().rev().take(3).collect::<Vec<_>>());
+}
