@@ -1860,7 +1860,7 @@ fn node_sheet(g: &mut GameScreen, inp: &mut Input, be: &dyn Backend, view: &Game
     if widgets::repeat_button(inp, plus, "+", Style::Secondary) {
         snap_to = Some(n.t + ts);
     }
-    let ts_label = if ts >= 3600.0 { format!("±{:.0}h", ts / 3600.0) } else { format!("±{}", fmt_dur(ts)) };
+    let ts_label = if ts >= 3600.0 { format!("{:.0}h", ts / 3600.0) } else { fmt_dur(ts) };
     text(&ts_label, minus.x - 8.0 * s(), y + 19.0 * s(), 12.0, MUTED, FontKind::Body, Align::Right);
     if let Some(t) = snap_to {
         let lo = if ne.sel > 0 { ne.nodes[ne.sel - 1].t + 60.0 } else { view.now + 60.0 };

@@ -5,7 +5,7 @@ Format: a `## <version> — <YYYY-MM-DD>` line, then `- ` bullets in plain playe
 Every release adds an entry here (a unit test checks the newest one matches the release version).
 
 ## 0.11.1 — 2026-11-02
-- Maneuver nodes are easier to fine-tune: pick a STEP of 0.01, 0.1 or 1 km/s for the −/+ buttons and the arrows, and hold −/+ to keep going. ZERO clears a burn.
+- Maneuver nodes are easier to fine-tune: pick a STEP of 0.01, 0.1 or 1 km/s for the - and + buttons and the arrows, and hold a button to keep going. ZERO clears a burn.
 - New TIME row in the node editor: nudge the burn earlier or later, or jump it to the next PERI or APO of your orbit.
 - While editing, tap your planned (green) path to add a burn right there.
 - The burn arrows are easier to grab after a big burn, and show the value by your finger while you drag.
