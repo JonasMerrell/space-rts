@@ -1891,9 +1891,10 @@ impl Game {
         }
     }
 
-    /// Matter each mining level adds, as a fraction of the body's base: rules 3 halved it, rules 10 restores it.
+    /// Matter each mining level adds, as a fraction of the body's base. Rules 3 halved it; since 0.12.2 every
+    /// war is back to the full base (`EQUAL_MATTER_RULES`).
     pub fn per_mine(&self) -> f64 {
-        if self.rules >= ECONOMY_RULES && self.rules < EQUAL_MATTER_RULES { 0.5 } else { 1.0 }
+        1.0
     }
 
     /// Production per hour for a body (matter, energy, fuel) given its upgrades.
