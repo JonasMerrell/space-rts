@@ -798,8 +798,16 @@ pub const CONSTRUCTOR_POWER: f64 = 1.0;
 /// 3: slower economy (see `ECONOMY_RULES`). 4: faster base pace (see `PACE_RULES`).
 /// 5: ships cost fuel to build (see `SHIP_FUEL_RULES`). 6: live battles (see `battle::BATTLE_RULES`).
 /// 7: system scaled to the number of slots (`SCALED_SYSTEM_RULES`). 8: advanced research twice as fast
-/// (`tech::FAST_ADVANCED_RULES`). 9: about four planets per pilot (`system::PLANETS_PER_PILOT_RULES`).
-pub const RULES: u32 = 9;
+/// (`tech::FAST_ADVANCED_RULES`). 9: about four planets per pilot (`system::PLANETS_PER_PILOT_RULES`). 10: every planet has the same matter
+/// base and mining levels add the full base (`EQUAL_MATTER_RULES`).
+pub const RULES: u32 = 10;
+/// Rules 10 (Jonas 2026-11-02): every planet, rocky or gas giant, yields the same 24 matter/h base (no more size
+/// scaling), and each mining level adds the whole base again (×2 / ×3 / ×4) instead of half of it.
+pub const EQUAL_MATTER_RULES: u32 = 10;
+/// Matter base of every planet and gas giant under `EQUAL_MATTER_RULES`.
+pub const PLANET_MATTER: f64 = 24.0;
+/// Rounding slack when checking a price against a stockpile.
+const PAY_EPS: f64 = 1e-6;
 /// Rules 7: systems for more than four pilots get a planet per extra slot (see `system::generate_for`).
 pub const SCALED_SYSTEM_RULES: u32 = 7;
 /// Rules 3 (Jonas 2026-10-28): production starts low and grows slowly, early game affords a few interceptors,
@@ -1496,13 +1504,20 @@ impl Game {
         Ok(s)
     }
 
+    /// Whether `player` can pay `m` matter and `e` energy, forgiving float rounding in the income sums
+    /// (48/h for 3000 s comes to 39.99999…, not 40).
+    pub(crate) fn can_pay(&self, player: PlayerId, m: f64, e: f64) -> bool {
+        let p = &self.players[player as usize];
+        p.matter + PAY_EPS >= m && p.energy + PAY_EPS >= e
+    }
+
     pub(crate) fn pay(&mut self, player: PlayerId, m: f64, e: f64) -> Result<(), String> {
-        let p = &mut self.players[player as usize];
-        if p.matter < m || p.energy < e {
+        if !self.can_pay(player, m, e) {
             return Err(format!("needs {m:.0} matter and {e:.0} energy"));
         }
-        p.matter -= m;
-        p.energy -= e;
+        let p = &mut self.players[player as usize];
+        p.matter = (p.matter - m).max(0.0);
+        p.energy = (p.energy - e).max(0.0);
         Ok(())
     }
 
@@ -1846,14 +1861,18 @@ impl Game {
     /// 40 energy, moons 30, asteroids 15; every body also gives 20 energy.
     /// Rules 3: about a quarter of that (planets 24 × size, gas giants 15 + 30 energy); moons 12 and asteroids 8
     /// matter (Jonas 2026-10-29, was 8 and 5).
+    /// Rules 10: every planet and gas giant 24 matter whatever its size (energy unchanged).
     pub fn base_yield(&self, body: BodyId) -> (f64, f64) {
         let b = self.system.body(body);
         if self.rules == 0 {
             return (if b.kind == BodyKind::Star { 0.0 } else { 60.0 }, 20.0);
         }
         if self.rules >= ECONOMY_RULES {
+            let equal = self.rules >= EQUAL_MATTER_RULES;
             return match b.kind {
                 BodyKind::Star => (0.0, 10.0),
+                BodyKind::Planet if equal => (PLANET_MATTER, 15.0),
+                BodyKind::GasGiant if equal => (PLANET_MATTER, 30.0),
                 BodyKind::Planet => (24.0 * (b.radius / 1100.0).clamp(0.6, 1.8), 15.0),
                 BodyKind::GasGiant => (15.0, 30.0),
                 BodyKind::Moon => (12.0, 8.0),
@@ -1871,6 +1890,11 @@ impl Game {
         }
     }
 
+    /// Matter each mining level adds, as a fraction of the body's base: rules 3 halved it, rules 10 restores it.
+    pub fn per_mine(&self) -> f64 {
+        if self.rules >= ECONOMY_RULES && self.rules < EQUAL_MATTER_RULES { 0.5 } else { 1.0 }
+    }
+
     /// Production per hour for a body (matter, energy, fuel) given its upgrades.
     pub fn production(&self, body: BodyId) -> (f64, f64, f64) {
         let b = &self.bodies[body.0 as usize];
@@ -1879,7 +1903,7 @@ impl Game {
         }
         let (base_m, base_e) = self.base_yield(body);
         // rules 3: each mining level adds half the base instead of all of it, and power plants give half
-        let (per_mine, per_plant) = if self.rules >= ECONOMY_RULES { (0.5, 30.0) } else { (1.0, 60.0) };
+        let (per_mine, per_plant) = if self.rules >= ECONOMY_RULES { (self.per_mine(), 30.0) } else { (1.0, 60.0) };
         let matter = base_m * (1.0 + per_mine * b.level(Upgrade::Mining) as f64);
         let energy = base_e + per_plant * b.level(Upgrade::Solar) as f64 * self.solar_factor(body) + per_plant * b.level(Upgrade::Reactor) as f64;
         let fuel = 120.0 * b.level(Upgrade::Refinery) as f64;
@@ -1974,7 +1998,7 @@ impl Game {
         }
         let l = level as f64;
         match upgrade {
-            Upgrade::Mining => format!("Matter output ×{:.1} of the body's base.", 1.0 + 0.5 * l),
+            Upgrade::Mining => format!("Matter output ×{:.1} of the body's base.", 1.0 + self.per_mine() * l),
             Upgrade::Solar => format!("+{:.0} energy/h at 1 AU-equivalent; falls off with distance² from the star.", 30.0 * l),
             Upgrade::Reactor => format!("+{:.0} energy/h anywhere. Costs the same as solar.", 30.0 * l),
             _ => upgrade.describe(level),
@@ -2276,6 +2300,31 @@ mod tests {
         // a fresh home makes about one interceptor's matter every two hours, not three an hour
         let home = g.players[0].home.unwrap();
         assert!(g.production(home).0 < im);
+    }
+
+    #[test]
+    fn rules10_planets_share_a_matter_base_and_mining_doubles() {
+        let mut g = game();
+        assert!(g.rules >= EQUAL_MATTER_RULES);
+        let planets: Vec<BodyId> = (0..g.system.bodies.len() as u32)
+            .map(BodyId)
+            .filter(|&b| matches!(g.system.body(b).kind, BodyKind::Planet | BodyKind::GasGiant))
+            .collect();
+        assert!(planets.len() >= 2);
+        for &b in &planets {
+            assert_eq!(g.base_yield(b).0, PLANET_MATTER);
+        }
+        // each mining level adds the whole base: home starts at level 1, so ×2
+        let home = g.players[0].home.unwrap();
+        let m = g.mods(0).matter;
+        assert!((g.production(home).0 - 2.0 * PLANET_MATTER * m).abs() < 1e-9);
+        g.bodies[home.0 as usize].levels[Upgrade::Mining.index()] = 3;
+        assert!((g.production(home).0 - 4.0 * PLANET_MATTER * m).abs() < 1e-9);
+        assert!(g.describe_upgrade(Upgrade::Mining, 3).contains("×4.0"));
+        // wars from before rules 10 keep size scaling and half-base mining
+        g.rules = 9;
+        assert!((g.production(home).0 - 2.5 * g.base_yield(home).0 * m).abs() < 1e-9);
+        assert!(g.describe_upgrade(Upgrade::Mining, 3).contains("×2.5"));
     }
 
     #[test]

@@ -380,7 +380,7 @@ fn setup(scene: &str, ui: &mut Ui, be: &mut DemoBackend) {
                     let nodes = vec![ManeuverNode { t, prograde: 1.4, radial: -0.6 }];
                     let preview = be.preview_nodes(4, &nodes);
                     g.selected = Some(Focus::Ship(4));
-                    g.mode = Mode::Nodes(NodeEdit { ship: 4, nodes, sel: 0, preview, dirty: false, drag: None });
+                    g.mode = Mode::Nodes(NodeEdit { ship: 4, nodes, sel: 0, preview, ..Default::default() });
                 }
                 "chat" => g.chat_open = true,
                 "chat_long" => {
