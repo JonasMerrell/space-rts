@@ -298,7 +298,13 @@ fn scan_segment(sys: &System, st: &State, dest: Option<BodyId>, t_lim: f64, step
     }
     // marching search for SOI exit / child entry before t_end
     let can_exit = body.parent.is_some() && conic.apoapsis() > body.soi;
-    let children: Vec<_> = sys.children(st.parent).collect();
+    // only children whose orbit band (plus SOI) overlaps the ship's [periapsis, apoapsis] can be entered;
+    // the rest are skipped (big systems have dozens of them and they also shrink the steps for nothing)
+    let (r_lo, r_hi) = (conic.rp * 0.99, conic.apoapsis() * 1.01);
+    let children: Vec<_> = sys
+        .children(st.parent)
+        .filter(|c| c.orbit.is_none_or(|o| o.a * (1.0 + o.e) + c.soi >= r_lo && o.a * (1.0 - o.e) - c.soi <= r_hi))
+        .collect();
     if !can_exit && children.is_empty() {
         return (ev, t_end);
     }

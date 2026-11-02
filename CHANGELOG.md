@@ -5,6 +5,9 @@ Format: a `## <version> — <YYYY-MM-DD>` line, then `- ` bullets in plain playe
 Every release adds an entry here (a unit test checks the newest one matches the release version).
 
 ## 0.12.0 — 2026-11-02
+- Bigger maps: new wars get about four planets per pilot (three in a Small system, five in a Large one), so an 8-pilot Medium war has 32 planets. Planets now share orbits, spread evenly around them, so the outer years stay as short as before. Rocky worlds are still on the inside and gas giants on the outside.
+- Wars already running keep their map.
+- Faster flight planning in big systems.
 - New wars: every planet and gas giant gives the same 24 matter an hour, whatever its size.
 - New wars: mining upgrades are twice as strong. Each level adds the planet's full base again (×2, ×3, ×4 at level 3, was ×1.5, ×2, ×2.5). Wars already running keep the old numbers.
 

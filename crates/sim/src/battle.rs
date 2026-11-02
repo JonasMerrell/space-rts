@@ -988,7 +988,7 @@ pub(crate) mod tests {
     /// Three players, everything cleared, and a free moon to fight over.
     pub(crate) fn arena() -> (Game, BodyId) {
         let settings = Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 14.0 * 86_400.0, speed: 1.0, teams: 0 };
-        let mut g = Game::new("T".into(), settings, 7, "a");
+        let mut g = Game::new("T".into(), settings, 7, "a").with_old_map();
         g.add_player("b", None).unwrap();
         g.add_player("c", None).unwrap();
         g.start();
