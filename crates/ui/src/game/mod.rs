@@ -24,7 +24,7 @@ use map::Camera;
 /// Scrubber ranges the player can pick (seconds ahead, label).
 pub const SCRUB_RANGES: [(f64, &str); 5] = [(3600.0, "1H"), (36_000.0, "10H"), (86_400.0, "1D"), (3.0 * 86_400.0, "3D"), (7.0 * 86_400.0, "1W")];
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct NodeEdit {
     pub ship: ShipId,
     pub nodes: Vec<ManeuverNode>,
@@ -32,6 +32,10 @@ pub struct NodeEdit {
     pub preview: Option<Trajectory>,
     pub dirty: bool,
     pub drag: Option<Handle>,
+    /// The dragged component's value when the drag began, and how far (dp) the finger has pulled
+    /// along the handle since: the value is recomputed from these and snapped to the step.
+    pub drag_from: f64,
+    pub drag_along: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -100,6 +104,8 @@ pub struct GameScreen {
     pub detail: Option<details::Detail>,
     /// Node-editor projection for (ship, nodes) — recomputed when the nodes change.
     pub node_outcome: Option<(ShipId, Vec<ManeuverNode>, NodeOutcome)>,
+    /// Node editor precision: km/s per −/+ press (0.01 / 0.1 / 1), also sets the drag rate.
+    pub node_step: f64,
     /// Camera follows the selection; a manual pan turns it off, a new selection or RE-CENTRE turns it on.
     pub follow: bool,
     /// Camera animation: zoom level to ease to (ZOOM TO / SYSTEM VIEW), and whether the centre is
@@ -194,6 +200,7 @@ impl GameScreen {
             system_view: false,
             follow: true,
             node_outcome: None,
+            node_step: 0.1,
             research_open: false,
             research_branch: 0,
             stations_for: None,
@@ -432,7 +439,7 @@ impl GameScreen {
 
         // Node handles get first dibs on drags.
         let node_dragging = if let Mode::Nodes(ne) = &mut self.mode {
-            on_map && panels::node_drag(ne, inp, be, view, &cam, t)
+            on_map && panels::node_drag(ne, inp, be, view, &cam, t, self.node_step)
         } else {
             false
         };
@@ -515,7 +522,19 @@ impl GameScreen {
             }
             (Mode::Aim(_), Some(_)) => self.say("Pick a planet or moon"),
             (Mode::Aim(_), None) | (Mode::Impact(_), _) => self.mode = Mode::Idle,
-            (Mode::Nodes(_), _) | (Mode::Planning { .. }, _) | (Mode::Intercepting { .. }, _) | (Mode::Impacting { .. }, _) => {}
+            (Mode::Nodes(ne), _) => {
+                // a tap on the planned path drops a new burn there
+                if let Some(nt) = panels::path_tap(ne, view, cam, p) {
+                    let ne = if let Mode::Nodes(ne) = &mut self.mode { ne } else { unreachable!() };
+                    ne.nodes.push(ManeuverNode { t: nt, prograde: 0.0, radial: 0.0 });
+                    ne.nodes.sort_by(|a, b| a.t.total_cmp(&b.t));
+                    ne.sel = ne.nodes.iter().position(|n| n.t == nt).unwrap_or(0);
+                    ne.dirty = true;
+                    crate::art::sfx("ui_tap");
+                    self.say("New burn added: drag its arrows");
+                }
+            }
+            (Mode::Planning { .. }, _) | (Mode::Intercepting { .. }, _) | (Mode::Impacting { .. }, _) => {}
             // a tap on a body plans a course there (like picking a target), elsewhere closes it
             (Mode::Windows(w), Some(Focus::Body(b))) => {
                 let ship = w.ship;
@@ -677,7 +696,7 @@ impl GameScreen {
         };
         let preview = be.preview_nodes(ship, &nodes);
         self.selected = Some(Focus::Ship(ship));
-        self.mode = Mode::Nodes(NodeEdit { ship, nodes, sel, preview, dirty: false, drag: None });
+        self.mode = Mode::Nodes(NodeEdit { ship, nodes, sel, preview, ..Default::default() });
         self.say("Drag the arrows to plan a burn");
     }
 

@@ -48,6 +48,26 @@ pub fn button(inp: &mut Input, r: Rect, label: &str, st: Style) -> bool {
     hit
 }
 
+/// Button that fires on tap, and keeps firing while held (after a short pause, then faster).
+pub fn repeat_button(inp: &mut Input, r: Rect, label: &str, st: Style) -> bool {
+    let held = inp.hold_time(r);
+    if button(inp, r, label, st) {
+        return true;
+    }
+    let Some((now, prev)) = held else { return false };
+    // first repeat at 0.5 s (when a release stops counting as a tap), then every 0.12 s, every 0.05 s after 2 s
+    let ticks = |t: f64| -> i64 {
+        if t < 0.5 {
+            -1
+        } else if t < 2.0 {
+            ((t - 0.5) / 0.12) as i64
+        } else {
+            ((2.0 - 0.5) / 0.12) as i64 + ((t - 2.0) / 0.05) as i64 + 1
+        }
+    };
+    ticks(now) > ticks(prev)
+}
+
 /// Round button with a short label or an "@icon" name. `fill` tints the ring when not plain.
 pub fn round_button(inp: &mut Input, c: Vec2, rad: f32, label: &str, fill: Color, badge: usize) -> bool {
     // Touch target is at least 48dp across even when the button is drawn smaller.
