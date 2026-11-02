@@ -8,6 +8,12 @@ Every release adds an entry here (a unit test checks the newest one matches the 
 - New wars: every planet and gas giant gives the same 24 matter an hour, whatever its size.
 - New wars: mining upgrades are twice as strong. Each level adds the planet's full base again (×2, ×3, ×4 at level 3, was ×1.5, ×2, ×2.5). Wars already running keep the old numbers.
 
+## 0.11.1 — 2026-11-02
+- Maneuver nodes are easier to fine-tune: pick a STEP of 0.01, 0.1 or 1 km/s for the - and + buttons and the arrows, and hold a button to keep going. ZERO clears a burn.
+- New TIME row in the node editor: nudge the burn earlier or later, or jump it to the next PERI or APO of your orbit.
+- While editing, tap your planned (green) path to add a burn right there.
+- The burn arrows are easier to grab after a big burn, and show the value by your finger while you drag.
+
 ## 0.11.0 — 2026-10-31
 - Rewind: tap PAST on the time slider and drag back through the war to see where ships were and who held what, as your sensors saw it then.
 - Battle replays: every battle you fought or watched is marked on the rewind bar and the map, and listed under BATTLES. Play it back at 1× to 64×, pause and scrub through it. Only what you could see at the time is shown.
