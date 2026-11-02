@@ -202,17 +202,33 @@ pub fn generate(seed: u64, size: SystemSize) -> System {
 
 /// `generate` for a war with `slots` pilots. Up to four it is exactly `generate`; each slot past
 /// four adds a planet and stretches the outer orbit by 15%, so there are homes for everyone at
-/// about the same spacing, half rocky inner worlds and half gas giants (rules 6).
+/// about the same spacing, half rocky inner worlds and half gas giants (rules 7-8).
 pub fn generate_for(seed: u64, size: SystemSize, slots: usize) -> System {
+    generate_rules(seed, size, slots, 8)
+}
+
+/// Rules 9 (Jonas 2026-11-02): about four planets per pilot (three in a Small system, five in a Large
+/// one). The orbits are laid out as in rules 7, one ring per planet of the old layout, and the extra
+/// planets share those rings, evenly spaced around them (same orbit, so they never meet). That keeps
+/// the outer years as short as before and the inner rocky / outer gas giant split.
+pub const PLANETS_PER_PILOT_RULES: u32 = 9;
+
+/// The system for a new war under `rules` (see `PLANETS_PER_PILOT_RULES`; older rules = `generate_for`).
+pub fn generate_rules(seed: u64, size: SystemSize, slots: usize, rules: u32) -> System {
     let mut rng = Rng::new(seed);
-    let (base, outer) = match size {
-        SystemSize::Small => (5, 9.0e5),
-        SystemSize::Medium => (7, 1.4e6),
-        SystemSize::Large => (9, 2.0e6),
+    let (base, outer, per_pilot) = match size {
+        SystemSize::Small => (5, 9.0e5, 3),
+        SystemSize::Medium => (7, 1.4e6, 4),
+        SystemSize::Large => (9, 2.0e6, 5),
     };
     let extra = slots.saturating_sub(4) as i32;
-    let n_planets = base + extra;
+    let n_shells = base + extra;
     let outer = outer * (1.0 + 0.15 * extra as f64);
+    let rings = rules >= PLANETS_PER_PILOT_RULES;
+    // planets on each orbit ring: one each before rules 9, then the per-pilot count spread evenly
+    let n_planets = if rings { (per_pilot * slots as i32).max(n_shells) } else { n_shells };
+    let per_shell: Vec<usize> =
+        (0..n_shells).map(|i| (((i + 1) * n_planets) / n_shells - (i * n_planets) / n_shells) as usize).collect();
     let mut bodies = vec![Body {
         id: BodyId(0),
         name: name(&mut rng),
@@ -225,44 +241,64 @@ pub fn generate_for(seed: u64, size: SystemSize, slots: usize) -> System {
         look: rng.below(4),
     }];
     let inner = 1.4e5;
-    let ratio = (outer / inner as f64).powf(1.0 / (n_planets - 1) as f64);
-    let belt_after = (n_planets / 2) as usize; // asteroid belt between two middle planets
+    let ratio = (outer / inner as f64).powf(1.0 / (n_shells - 1) as f64);
+    let belt_after = (n_shells / 2) as usize; // asteroid belt between two middle rings
     // first pass: planet orbits and masses, so SOIs can be clamped against both neighbours
     struct P {
+        shell: usize,
         a: f64,
         e: f64,
         giant: bool,
         radius: f64,
         mu: f64,
         soi: f64,
+        /// rules 9: argument of periapsis and starting mean anomaly (shared ring, spread phases)
+        place: Option<(f64, f64)>,
     }
-    let mut ps: Vec<P> = (0..n_planets)
-        .map(|i| {
-            // inner system: small rocky worlds close together; outer system: gas giants far apart
-            let giant = i > n_planets / 2;
-            // balance: outer years were very long, so pull planets in until the outermost one
-            // orbits 2x faster (T ∝ a^1.5, so a shrinks by k^-2/3), ramping from 1x at the innermost
-            let k = 1.0 + i as f64 / (n_planets - 1) as f64;
-            let a = inner * ratio.powi(i) * k.powf(-2.0 / 3.0) * rng.range(0.93, 1.07);
+    let mut ps: Vec<P> = vec![];
+    for (i, &count) in per_shell.iter().enumerate() {
+        // inner system: small rocky worlds close together; outer system: gas giants far apart
+        let giant = i as i32 > n_shells / 2;
+        // balance: outer years were very long, so pull planets in until the outermost one
+        // orbits 2x faster (T ∝ a^1.5, so a shrinks by k^-2/3), ramping from 1x at the innermost
+        let k = 1.0 + i as f64 / (n_shells - 1) as f64;
+        let a = inner * ratio.powi(i as i32) * k.powf(-2.0 / 3.0) * rng.range(0.93, 1.07);
+        let ring = if rings {
+            let e = rng.range(0.0, 0.06);
+            Some((e, rng.range(0.0, TAU), rng.range(0.0, TAU)))
+        } else {
+            None
+        };
+        for j in 0..count {
             // The system is time-compressed (years of hours/days), so bodies are small and dense to
             // keep their spheres of influence comfortably larger than the bodies themselves.
             // rocky planets grow outward (bigger = richer: see Game::base_yield), offsetting the slower,
             // costlier outer orbits
-            let grow = 1.0 + 0.6 * i as f64 / (n_planets - 1) as f64;
+            let grow = 1.0 + 0.6 * i as f64 / (n_shells - 1) as f64;
             let radius = if giant { rng.range(2800.0, 4500.0) } else { rng.range(700.0, 1500.0) * grow };
             let mu = if giant { 3.0e4 * (radius / 1000.0).powi(3) } else { 1.6e5 * (radius / 1000.0).powi(3) };
-            let e = rng.range(0.0, 0.06);
-            P { a, e, giant, radius, mu, soi: a * (mu / STAR_MU).powf(0.4) }
-        })
-        .collect();
+            let (e, place) = match ring {
+                Some((e, w, m0)) => (e, Some((w, m0 + TAU * j as f64 / count as f64))),
+                None => (rng.range(0.0, 0.06), None),
+            };
+            ps.push(P { shell: i, a, e, giant, radius, mu, soi: a * (mu / STAR_MU).powf(0.4), place });
+        }
+    }
+    // each ring's orbit, for the neighbour clamps below
+    let ring_ae: Vec<(f64, f64)> =
+        (0..n_shells as usize).map(|r| ps.iter().find(|p| p.shell == r).map(|p| (p.a, p.e)).unwrap()).collect();
     for i in 0..ps.len() {
         // neighbouring SOIs must never touch, even at closest approach (apoapsis vs periapsis)
+        // (planets sharing a ring are a fraction of a turn apart, far beyond any SOI)
         let mut cap = f64::INFINITY;
-        if i > 0 {
-            cap = cap.min(0.45 * (ps[i].a * (1.0 - ps[i].e) - ps[i - 1].a * (1.0 + ps[i - 1].e)));
+        let r = ps[i].shell;
+        if r > 0 {
+            let (a0, e0) = ring_ae[r - 1];
+            cap = cap.min(0.45 * (ps[i].a * (1.0 - ps[i].e) - a0 * (1.0 + e0)));
         }
-        if i + 1 < ps.len() {
-            cap = cap.min(0.45 * (ps[i + 1].a * (1.0 - ps[i + 1].e) - ps[i].a * (1.0 + ps[i].e)));
+        if r + 1 < ring_ae.len() {
+            let (a1, e1) = ring_ae[r + 1];
+            cap = cap.min(0.45 * (a1 * (1.0 - e1) - ps[i].a * (1.0 + ps[i].e)));
         }
         ps[i].soi = ps[i].soi.min(cap);
         // a tightly packed planet must still leave room to park inside its SOI: shrink it (same density)
@@ -275,7 +311,11 @@ pub fn generate_for(seed: u64, size: SystemSize, slots: usize) -> System {
     }
     for (i, p) in ps.iter().enumerate() {
         let (a_i, giant, radius, mu, soi) = (p.a, p.giant, p.radius, p.mu, p.soi);
-        let orbit = Orbit::new(STAR_MU, a_i, p.e, rng.range(0.0, TAU), rng.range(0.0, TAU));
+        let (w, m0) = match p.place {
+            Some(wm) => wm,
+            None => (rng.range(0.0, TAU), rng.range(0.0, TAU)),
+        };
+        let orbit = Orbit::new(STAR_MU, a_i, p.e, w, m0);
         let pid = BodyId(bodies.len() as u32);
         let pname = name(&mut rng);
         bodies.push(Body {
@@ -291,7 +331,8 @@ pub fn generate_for(seed: u64, size: SystemSize, slots: usize) -> System {
         });
         // moons
         // gas giants carry big moon systems; inner rocky planets have at most one moon
-        let n_moons = if giant { 2 + rng.below(3) } else { rng.below(2) };
+        // (rules 9 has several giants per ring: fewer moons each)
+        let n_moons = if !giant { rng.below(2) } else if rings { 1 + rng.below(3) } else { 2 + rng.below(3) };
         let mut mr = radius * if giant { 2.4 } else { 3.5 };
         let mut prev_outer = radius * 1.6;
         for k in 0..n_moons {
@@ -319,10 +360,12 @@ pub fn generate_for(seed: u64, size: SystemSize, slots: usize) -> System {
             });
             mr = (r_m + msoi) * if giant { 1.2 } else { 1.5 };
         }
-        if i + 1 == belt_after {
-            // belt sits in the middle of the gap between this planet's SOI and the next one's
-            let lo = a_i * (1.0 + p.e) + soi;
-            let hi = ps[i + 1].a * (1.0 - ps[i + 1].e) - ps[i + 1].soi;
+        if p.shell + 1 == belt_after && ps.get(i + 1).is_some_and(|q| q.shell == belt_after) {
+            // belt sits in the middle of the gap between this ring's SOIs and the next ring's
+            let ring_soi = |r: usize| ps.iter().filter(|q| q.shell == r).map(|q| q.soi).fold(0.0, f64::max);
+            let lo = a_i * (1.0 + p.e) + ring_soi(p.shell);
+            let next = &ps[i + 1];
+            let hi = next.a * (1.0 - next.e) - ring_soi(belt_after);
             let belt_a = 0.5 * (lo + hi);
             let half = 0.3 * (hi - lo);
             // a dense belt between the inner and outer system: lots of small, cheap-to-reach claims
@@ -420,5 +463,41 @@ mod tests {
                 assert!(days < 21.0, "{size:?} seed {seed}: outer year {days:.1} d");
             }
         }
+    }
+
+    #[test]
+    fn rules_9_gives_about_four_planets_per_pilot() {
+        for (size, per) in [(SystemSize::Small, 3), (SystemSize::Medium, 4), (SystemSize::Large, 5)] {
+            for slots in 2..=8 {
+                for seed in 0..20 {
+                    let s = generate_rules(seed, size, slots, PLANETS_PER_PILOT_RULES);
+                    sane(&s);
+                    let rocky = s.bodies.iter().filter(|b| b.kind == BodyKind::Planet).count();
+                    let giants = s.bodies.iter().filter(|b| b.kind == BodyKind::GasGiant).count();
+                    assert!(rocky + giants >= per * slots, "{size:?} {slots}p seed {seed}: {rocky} + {giants}");
+                    assert!(rocky >= giants, "inner/outer balance: {rocky} rocky vs {giants} giants");
+                    assert!(s.bodies.iter().any(|b| b.kind == BodyKind::Asteroid), "belt");
+                    let suns: Vec<&Body> = s.bodies.iter().filter(|b| b.parent == Some(BodyId(0)) && b.kind != BodyKind::Asteroid).collect();
+                    let days = suns.iter().map(|b| b.orbit.unwrap().period()).fold(0.0, f64::max) / 86_400.0;
+                    assert!(days < 21.0, "{size:?} {slots}p seed {seed}: outer year {days:.1} d");
+                    // planets sharing a ring never come near each other
+                    for (x, p) in suns.iter().enumerate() {
+                        for q in &suns[x + 1..] {
+                            let (op, oq) = (p.orbit.unwrap(), q.orbit.unwrap());
+                            if (op.a - oq.a).abs() < 1.0 {
+                                for step in 0..48 {
+                                    let t = op.period() * step as f64 / 48.0;
+                                    let d = (op.state(t).0 - oq.state(t).0).len();
+                                    assert!(d > 2.0 * (p.soi + q.soi), "{} and {} meet", p.name, q.name);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // older rules keep the old systems
+        let (a, b) = (generate_for(4, SystemSize::Medium, 8), generate_rules(4, SystemSize::Medium, 8, 8));
+        assert!(a.bodies.iter().zip(&b.bodies).all(|(x, y)| x.name == y.name && x.radius == y.radius));
     }
 }

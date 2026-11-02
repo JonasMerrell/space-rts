@@ -798,8 +798,8 @@ pub const CONSTRUCTOR_POWER: f64 = 1.0;
 /// 3: slower economy (see `ECONOMY_RULES`). 4: faster base pace (see `PACE_RULES`).
 /// 5: ships cost fuel to build (see `SHIP_FUEL_RULES`). 6: live battles (see `battle::BATTLE_RULES`).
 /// 7: system scaled to the number of slots (`SCALED_SYSTEM_RULES`). 8: advanced research twice as fast
-/// (`tech::FAST_ADVANCED_RULES`).
-pub const RULES: u32 = 8;
+/// (`tech::FAST_ADVANCED_RULES`). 9: about four planets per pilot (`system::PLANETS_PER_PILOT_RULES`).
+pub const RULES: u32 = 9;
 /// Rules 7: systems for more than four pilots get a planet per extra slot (see `system::generate_for`).
 pub const SCALED_SYSTEM_RULES: u32 = 7;
 /// Rules 3 (Jonas 2026-10-28): production starts low and grows slowly, early game affords a few interceptors,
@@ -821,7 +821,7 @@ impl Game {
     /// `settings.speed` is the multiplier the host picked (1 = normal pace); it is stored as the true rate.
     pub fn new(code: String, mut settings: Settings, seed: u64, host_name: &str) -> Game {
         settings.speed *= if RULES >= PACE_RULES { PACE } else { 1.0 };
-        let system = crate::system::generate_for(seed, settings.size, settings.max_players);
+        let system = crate::system::generate_rules(seed, settings.size, settings.max_players, RULES);
         let bodies = vec![BodyState::default(); system.bodies.len()];
         let end_t = settings.length;
         let mut g = Game {
@@ -999,6 +999,16 @@ impl Game {
         self.players[id as usize].team = team;
         self.preview_homes();
         Ok(())
+    }
+
+    /// Test setups built around the rules 7-8 map (hand-picked neighbours, one planet per orbit): swap the
+    /// lobby's rules 9 system for the one older wars got from the same seed.
+    #[cfg(test)]
+    pub(crate) fn with_old_map(mut self) -> Game {
+        self.system = crate::system::generate_for(self.system.seed, self.settings.size, self.settings.max_players);
+        self.bodies = vec![BodyState::default(); self.system.bodies.len()];
+        self.preview_homes();
+        self
     }
 
     /// While waiting in the lobby, show everyone where they'll start (no owner or fleet yet).
@@ -2247,7 +2257,8 @@ mod tests {
             Settings { name: "t".into(), size: SystemSize::Medium, max_players: 4, length: 7.0 * 86_400.0, speed: 1.0, teams: 0 },
             5,
             "alice",
-        );
+        )
+        .with_old_map();
         g.add_player("bob", None).unwrap();
         g.start();
         g

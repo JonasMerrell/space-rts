@@ -4,6 +4,11 @@ Newest first. The app shows these under PATCH NOTES and once after each update.
 Format: a `## <version> — <YYYY-MM-DD>` line, then `- ` bullets in plain player language.
 Every release adds an entry here (a unit test checks the newest one matches the release version).
 
+## 0.12.0 — 2026-11-02
+- Bigger maps: new wars get about four planets per pilot (three in a Small system, five in a Large one), so an 8-pilot Medium war has 32 planets. Planets now share orbits, spread evenly around them, so the outer years stay as short as before. Rocky worlds are still on the inside and gas giants on the outside.
+- Wars already running keep their map.
+- Faster flight planning in big systems.
+
 ## 0.11.0 — 2026-10-31
 - Rewind: tap PAST on the time slider and drag back through the war to see where ships were and who held what, as your sensors saw it then.
 - Battle replays: every battle you fought or watched is marked on the rewind bar and the map, and listed under BATTLES. Play it back at 1× to 64×, pause and scrub through it. Only what you could see at the time is shown.

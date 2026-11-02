@@ -889,7 +889,9 @@ fn model_plan(g: &Game, s: &g::Ship, ship: ShipId, target: BodyId, p: &sim::plan
         fuel_needed: fuel_needed as f32,
         fuel_have: fuel_have as f32,
         fuel_problem: if flying.len() > 1 {
-            g.fleet_fuel_check(&flying, p.depart_dv, p.capture_dv).err()
+            // same burn the server checks: departure less any launch assist, plus mid-course burns
+            let assist = s.parked_at().map_or(0.0, |b| g.launch_assist(s.owner, b));
+            g.fleet_fuel_check(&flying, (p.depart_dv - assist).max(0.0) + p.mid_dv(), p.capture_dv).err()
         } else {
             (fuel_needed > fuel_have).then(|| format!("not enough fuel: needs {fuel_needed:.0} t, has {fuel_have:.0} t"))
         },
@@ -2494,7 +2496,9 @@ mod tests {
         let total: f64 = gs.iter().map(|&id| game.ship(id).unwrap().fuel).sum();
         assert!((plan.fuel_have as f64 - total).abs() < 1.0);
         assert!(plan.fuel_needed > tok.fuel, "a fleet needs more than one tank");
-        let server = game.clone().apply(0, Command::Transfer { ships: vec![gs[0]], to: target, depart_t: Some(plan.depart_t) });
+        // (sent the way the plan sheet sends it: the picked course's hint, as the confirm button does)
+        let hint: sim::plan::PlanHint = serde_json::from_str(&plan.token).expect("plan hint");
+        let server = game.clone().apply(0, Command::TransferPlanned { ships: vec![gs[0]], to: target, depart_t: plan.depart_t, hint });
         assert_eq!(plan.fuel_problem.is_none(), server.is_ok(), "{:?} vs {:?}", plan.fuel_problem, server);
         // other players see neither the fleet nor its name
         let bob = game.view_for(1);
