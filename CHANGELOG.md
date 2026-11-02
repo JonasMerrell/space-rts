@@ -4,6 +4,9 @@ Newest first. The app shows these under PATCH NOTES and once after each update.
 Format: a `## <version> — <YYYY-MM-DD>` line, then `- ` bullets in plain player language.
 Every release adds an entry here (a unit test checks the newest one matches the release version).
 
+## 0.11.2 — 2026-11-02
+- Fixed: a fleet in flight that fought a battle broke up into single ships afterwards. Its ships now leave the battle together on one course and stay one fleet.
+
 ## 0.11.1 — 2026-11-02
 - Maneuver nodes are easier to fine-tune: pick a STEP of 0.01, 0.1 or 1 km/s for the - and + buttons and the arrows, and hold a button to keep going. ZERO clears a burn.
 - New TIME row in the node editor: nudge the burn earlier or later, or jump it to the next PERI or APO of your orbit.

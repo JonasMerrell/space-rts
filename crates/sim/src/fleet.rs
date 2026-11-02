@@ -216,7 +216,8 @@ impl Game {
                 self.remove_from_fleets(&ships);
                 if let Some(name) = split {
                     let mut ships = ships;
-                    ships.dedup();
+                    let mut seen = vec![];
+                    ships.retain(|s| !seen.contains(s) && { seen.push(*s); true });
                     // leavers fly the same course already, so no plan needs unifying in flight
                     if ships.len() >= 2 && ships.iter().all(|&s| self.place(s) == self.place(ships[0])) {
                         self.new_fleet(player, ships, &name);
@@ -307,7 +308,9 @@ impl Game {
     pub(crate) fn fleet_tick(&mut self, dt: f64) {
         let mut separated: Vec<(PlayerId, ShipId, String)> = vec![];
         for fi in 0..self.fleets.len() {
-            let ships: Vec<ShipId> = self.fleets[fi].ships.iter().copied().filter(|&s| self.ship(s).is_some()).collect();
+            let all: Vec<ShipId> = self.fleets[fi].ships.iter().copied().filter(|&s| self.ship(s).is_some()).collect();
+            // members still fighting rejoin the fleet's course when they leave the battle
+            let (fighting, ships): (Vec<ShipId>, Vec<ShipId>) = all.iter().partition(|&&s| self.battle_of(crate::battle::Unit::Ship(s)).is_some());
             // keep the biggest group of members that are together (ties: the one with the first ship)
             let mut best: Vec<ShipId> = vec![];
             for &a in &ships {
@@ -317,6 +320,7 @@ impl Game {
                     best = group;
                 }
             }
+            let best: Vec<ShipId> = all.iter().copied().filter(|s| best.contains(s) || fighting.contains(s)).collect();
             for &s in ships.iter().filter(|s| !best.contains(s)) {
                 separated.push((self.fleets[fi].owner, s, self.fleets[fi].name.clone()));
             }
