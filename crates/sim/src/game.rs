@@ -798,12 +798,13 @@ pub const CONSTRUCTOR_POWER: f64 = 1.0;
 /// 3: slower economy (see `ECONOMY_RULES`). 4: faster base pace (see `PACE_RULES`).
 /// 5: ships cost fuel to build (see `SHIP_FUEL_RULES`). 6: live battles (see `battle::BATTLE_RULES`).
 /// 7: system scaled to the number of slots (`SCALED_SYSTEM_RULES`). 8: advanced research twice as fast
-/// (`tech::FAST_ADVANCED_RULES`). 9: about four planets per pilot (`system::PLANETS_PER_PILOT_RULES`). 10: every planet has the same matter
-/// base and mining levels add the full base (`EQUAL_MATTER_RULES`).
+/// (`tech::FAST_ADVANCED_RULES`). 9: about four planets per pilot (`system::PLANETS_PER_PILOT_RULES`). 10: marks wars made after the equal
+/// matter change (`EQUAL_MATTER_RULES` itself applies to every rules-3+ war since 0.12.2).
 pub const RULES: u32 = 10;
 /// Rules 10 (Jonas 2026-11-02): every planet, rocky or gas giant, yields the same 24 matter/h base (no more size
 /// scaling), and each mining level adds the whole base again (×2 / ×3 / ×4) instead of half of it.
-pub const EQUAL_MATTER_RULES: u32 = 10;
+/// Jonas (2026-11-02, 0.12.2): also applies to wars already running, so it covers every rules-3 economy.
+pub const EQUAL_MATTER_RULES: u32 = ECONOMY_RULES;
 /// Matter base of every planet and gas giant under `EQUAL_MATTER_RULES`.
 pub const PLANET_MATTER: f64 = 24.0;
 /// Rounding slack when checking a price against a stockpile.
@@ -2321,10 +2322,13 @@ mod tests {
         g.bodies[home.0 as usize].levels[Upgrade::Mining.index()] = 3;
         assert!((g.production(home).0 - 4.0 * PLANET_MATTER * m).abs() < 1e-9);
         assert!(g.describe_upgrade(Upgrade::Mining, 3).contains("×4.0"));
-        // wars from before rules 10 keep size scaling and half-base mining
-        g.rules = 9;
-        assert!((g.production(home).0 - 2.5 * g.base_yield(home).0 * m).abs() < 1e-9);
-        assert!(g.describe_upgrade(Upgrade::Mining, 3).contains("×2.5"));
+        // wars already running (rules 3+) get it too
+        g.rules = ECONOMY_RULES;
+        assert_eq!(g.base_yield(home).0, PLANET_MATTER);
+        assert!((g.production(home).0 - 4.0 * PLANET_MATTER * m).abs() < 1e-9);
+        // pre-rules-3 wars keep their own economy
+        g.rules = 2;
+        assert_ne!(g.base_yield(planets[0]).0, PLANET_MATTER);
     }
 
     #[test]

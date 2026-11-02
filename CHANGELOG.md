@@ -4,6 +4,9 @@ Newest first. The app shows these under PATCH NOTES and once after each update.
 Format: a `## <version> — <YYYY-MM-DD>` line, then `- ` bullets in plain player language.
 Every release adds an entry here (a unit test checks the newest one matches the release version).
 
+## 0.12.2 — 2026-11-02
+- The 0.12.0 economy change now applies to wars already running too: every planet and gas giant gives 24 matter an hour, and each mining level adds the full base again (×2, ×3, ×4).
+
 ## 0.12.1 — 2026-11-02
 - Fixed: a fleet in flight that fought a battle broke up into single ships afterwards. Its ships now leave the battle together on one course and stay one fleet.
 
