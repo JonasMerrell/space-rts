@@ -1532,11 +1532,23 @@ impl Game {
         // bots keep the cheaper planner (no departure probe): they plan inside the server lock
         let bot = self.players.get(ship.owner as usize).is_some_and(|p| p.bot.is_some());
         let plan_fn = if bot { plan::plan_leg_quick } else { plan::plan_leg };
-        let p = plan_fn(&self.system, from, first, self.t, depart_t)?;
-        if !p.converged {
-            return Err("couldn't find a working trajectory, try another departure time".into());
+        let p = plan_fn(&self.system, from, first, self.t, depart_t);
+        match p {
+            Ok(p) if p.converged => Ok((p, hops[1..].to_vec())),
+            _ => {
+                // a moon's straight climb out to another planet didn't close: stop over at the
+                // moon's own planet instead and go on from there
+                if let Some(home) = plan::stopover(&self.system, from, first) {
+                    let p = plan_fn(&self.system, from, home, self.t, depart_t)?;
+                    if p.converged {
+                        let mut rest = plan::route(&self.system, home, to);
+                        rest.retain(|&b| b != home);
+                        return Ok((p, rest));
+                    }
+                }
+                Err("couldn't find a working trajectory, try another departure time".into())
+            }
         }
-        Ok((p, hops[1..].to_vec()))
     }
 
     /// Re-plan a course the player picked from `plan::options` (cheap: one shooting run).
